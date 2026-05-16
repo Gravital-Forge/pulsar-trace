@@ -1,0 +1,13 @@
+<!-- pulsartrace:live -->
+## Transcript — <recording-start>
+
+**[00:00:00] Them (provisional):** So I was at the coffee shop this morning,
+**[00:00:01] Them (provisional):** the one on the corner near the bookstore,
+**[00:00:03] Them (provisional):** And the barista asked me how I wanted my
+**[00:00:06] Them (provisional):** and honestly I had no idea. I usually just
+**[00:00:10] Them (provisional):** say medium, but today I decided to be...
+**[00:00:12] Them (provisional):** Okay, quick update on the project.
+**[00:00:14] Them (provisional):** We finish the data ingestion piece,
+**[00:00:16] Them (provisional):** We tested it against three different file formats
+**[00:00:20] Them (provisional):** and it handled all of them.
+**[00:00:22] Them (provisional):** The next step is the transformation layer.

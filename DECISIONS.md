@@ -313,3 +313,84 @@ row count can undercount `other`'s true pre-merge appearances, so the
 reconstruction is approximate. That collision is already documented as rare and
 best-effort in `merge`'s own comment, and the fallback path covers the
 non-invertible case, so no separate snapshot column was added.
+
+## D19 — Live diarization uses windowed-pyannote, not `diart` (Open Question #1)
+
+**Decision:** Epic 6's live (streaming) speaker diarization runs the existing
+pyannote 4.x pipeline on a **sliding window of recent system audio** —
+"windowed-pyannote" — driven by a long-lived captive subprocess
+(`pulsartrace_ai.live_diarize`). It does **not** use `diart`, the streaming
+diarization toolkit the PRD recommended.
+
+**Why:** `diart` cannot be installed into the project's pinned venv without
+breaking the working Epic 3 offline diarization. `pip install diart` resolves
+`pyannote.audio` **down from the pinned 4.0.4 to 3.4.0** (verified with
+`pip install --dry-run diart`: it would install `pyannote.audio-3.4.0`,
+`numpy-1.26.4`, `speechbrain`, …). Epic 3 standardised on
+`pyannote/speaker-diarization-community-1`, which is a pyannote 4.x model; the
+downgrade would break offline diarization outright and break the
+cross-comparability of speaker-library centroids (R29 — embeddings must come
+from one pyannote pipeline). PRD §16's Open Question explicitly lists
+windowed-pyannote as the viable alternative ("more accurate but adds ~30s
+lag"), so that is what PulsarTrace ships. The added lag is acceptable: live
+diarization is best-effort and provisional (R16), the post-pass is the source
+of truth, and the windowing here uses a ~10 s window stepped every ~5 s — far
+short of 30 s.
+
+**Design of the windowed approach:** the Swift `LiveDiarizer` launches the
+Python `live_diarize` module **once** (the ~10–30 s model load is paid a single
+time, not per chunk) and streams it windows over a newline-framed JSON protocol
+on stdin/stdout — `{window_wav, window_start}` request → `{speakers, spans,
+embeddings}` response. pyannote's per-window labels are not stable across
+windows (windowed online diarization spawns labels freely), so `LiveDiarizer`
+**stitches** them into stable per-recording provisional keys (`Them`, `Them #2`,
+…) by matching each window-speaker's embedding against a running set of
+live-speaker centroids by cosine similarity. The post-pass corrects everything.
+
+The PRD's risk register flags "choosing diart vs windowed-pyannote" as an
+ask-first item; the Epic 6 brief delegated this decision to the implementer and
+required it be documented here — this entry is that documentation. The choice
+was forced by a hard dependency conflict, not a preference: shipping `diart`
+was not possible without regressing a committed epic.
+
+## D20 — Streaming transcription: anchored-window whisper + LocalAgreement-2
+
+**Decision:** The live pass transcribes with a sliding **anchored** whisper
+window plus a **LocalAgreement-2** committer, rather than whisper.cpp's bundled
+`stream` example or a free-sliding window.
+
+**Why LocalAgreement-2:** `live.md` is strictly append-only (invariant #4 /
+R36) — a word, once written, can never be revised. But the tail of any single
+whisper hypothesis over a short window is unstable (a word near the window edge
+often changes once more audio arrives). LocalAgreement-2 (Liu et al. 2020, the
+algorithm `whisper_streaming` uses) commits a word only once **two consecutive
+hypotheses agree on it** — the longest common prefix of the two. Unstable tail
+words are simply held back, never emitted. This is what makes append-only
+`live.md` correct: every committed word survived two independent decodes, so it
+never has to be taken back.
+
+**Why an *anchored* window, not a free-sliding one:** an early implementation
+slid the window's *start* forward with real time. That fails: two consecutive
+windows then cover different audio spans and share only a *middle*, never a
+*prefix* — and LocalAgreement-2 compares *prefixes*, so almost nothing ever
+committed (the smoke test produced one line for a 24 s recording). The fix is
+the `whisper_streaming` design: the window is **anchored at the last committed
+audio position** and only its end grows. Consecutive windows then share a
+prefix; the committer's longest-common-prefix is meaningful; the sample buffer
+is trimmed at the anchor after each commit so memory stays bounded. The
+committer's "skip already-committed words" step is **key-based** (match the
+committed tail against the new hypothesis prefix by normalized word key), not
+time-based, so it is robust to the timestamp jitter two windows give the same
+words.
+
+**Backpressure:** whisper must decode a window before the next is due. If it
+falls behind real time by more than two windows, the anchor is skipped forward
+to catch up (coarser commits, bounded memory and lag) and the overrun is
+logged — it never blocks the source or grows the buffer without limit.
+
+**Lag (R10):** on the Metal/GPU backend (production) the measured median live
+lag on the test fixtures is ~1 s, well within R10's ≤ 5 s. The test suite must
+use the CPU backend (D15), which does not keep real-time pace on the longer
+fixtures; the Pipeline realtime test therefore asserts the *backpressure
+invariant* (lag stays bounded, `live.md` grows monotonically) rather than the
+≤ 5 s figure, and R10's ≤ 5 s is verified by the manual GPU smoke test.

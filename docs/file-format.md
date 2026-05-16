@@ -8,9 +8,8 @@ changes require a major version bump and a migration note (PRD §17).
 > Status: Epic 1 establishes this spec. Epics 2 and 4 implement the offline
 > generators (`final.md` + `metadata.json`); Epic 5 replaces positional
 > `Speaker_N` labels with persistent speaker-library names and adds
-> `metadata.json`'s `speaker_id` field; Epic 6 adds the `live.md`
-> generator. The format below is the target shape; any field not yet emitted
-> is marked accordingly.
+> `metadata.json`'s `speaker_id` field; **Epic 6 implements the `live.md`
+> generator** — the streaming live pass. The format below is the current shape.
 
 ## Overview
 
@@ -92,6 +91,68 @@ A file begins with a marker comment and a heading:
       library unavailable) still carries `Speaker_N` labels.
   - `(provisional)` — present in `live.md` only, on speakers whose identity is
     not yet confirmed. Removed in `final.md`.
+
+## `live.md` — the live pass (Epic 6)
+
+`live.md` is the **provisional** transcript, written by the streaming live
+pass *while the recording is in progress* so an external AI agent can
+`tail -f` it during a meeting. The offline `pulsartrace refine` pass produces
+`final.md`, the source of truth; `live.md` is the low-latency companion.
+
+### Created at session start (R35a / R37)
+
+`live.md` is created **when the recording starts**, before the first word is
+spoken — not lazily on the first utterance. From the outset it carries:
+
+```
+<!-- pulsartrace:live -->
+## Transcript — 2026-05-16 14:30
+```
+
+So an agent attaching mid-meeting has an unambiguous "recording is in progress"
+signal even during silence. The engine emits a `live_md_started` event
+(`docs/events-schema.md`) once the file + header are on disk.
+
+### Strictly append-only (R36 / R12)
+
+Every write to `live.md` is a **whole line appended to the end**. The file is
+never rewritten, never edited in place, never truncated during the recording.
+A `tail -f` consumer therefore sees **strictly monotonic byte growth** and never
+a torn line or a partial UTF-8 character. Concretely:
+
+- A speaker rename mid-call applies to the **next** post-pass, never to a line
+  already in `live.md`.
+- A line is only appended once its words are *committed* — the streaming
+  transcriber holds back unstable tail words (LocalAgreement-2: a word is
+  committed only once two consecutive whisper hypotheses agree on it), so a
+  committed line never has to be revised.
+- When the post-pass runs, `final.md` **atomically replaces** `live.md`; the
+  original `live.md` is preserved as `.live.md.bak`.
+
+### Provisional speaker labels (R14 / R16 / R18)
+
+System-stream speakers in `live.md` are **provisional** — best-effort live
+diarization, corrected by the post-pass. Their labels always carry a
+`(provisional)` suffix so an agent can tell them apart from `final.md`'s
+confirmed labels:
+
+- `**[HH:MM:SS] Them (provisional):** …` — a system speaker the live pass has
+  not matched to a known person.
+- `**[HH:MM:SS] Them #2 (provisional):** …` — a second (third, …) live system
+  speaker. Live diarization may spawn more provisional speakers than there
+  really are (a known limitation — the post-pass reconciles them).
+- `**[HH:MM:SS] Steve (provisional):** …` — when the live speaker's centroid
+  matches a known speaker in the library, the library **name** is shown. The
+  match is a *read-only* library lookup (the live pass never writes the
+  library); the label is still marked `(provisional)`.
+- `**[HH:MM:SS] You:** …` — the microphone stream. Always `You`, never
+  diarized, never marked provisional (the mic is the local user by
+  definition — R17).
+
+A single piped/fixture stream (`pulsartrace-engine --live --stdin`) is treated
+as the **system stream** and diarized; the mic stream is opt-in (paired-source
+mode). When the mic plays system audio out loud and picks it up, the duplicated
+mic-side utterance is dropped (mic-echo dedup, R19) so it does not appear twice.
 
 ## Invariants
 

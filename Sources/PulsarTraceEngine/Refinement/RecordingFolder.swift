@@ -166,7 +166,7 @@ public struct RecordingFolder: Sendable {
     ///
     /// Deterministic: the same input name always yields the same id, so a
     /// re-refine of the same recording reuses its id across runs.
-    static func recordingId(forName name: String) -> String {
+    public static func recordingId(forName name: String) -> String {
         let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
         let slug = name.lowercased()
             .map { allowed.contains($0) ? $0 : "-" }

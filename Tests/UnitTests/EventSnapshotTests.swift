@@ -123,4 +123,13 @@ struct EventSnapshotTests {
             pathBasename: "speakers.sqlite",
             recoveredFromBackup: true)), as: .lines)
     }
+
+    // MARK: - Live-pass events (Epic 6)
+
+    @Test("live_md_started JSONL line matches the recorded snapshot")
+    func liveMDStartedSnapshot() throws {
+        assertSnapshot(of: try line(LiveMDStartedEvent(
+            recordingId: "rec_two-speakers-alternating",
+            pathBasename: "live.md")), as: .lines)
+    }
 }

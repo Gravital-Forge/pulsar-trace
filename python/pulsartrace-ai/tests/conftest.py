@@ -49,6 +49,21 @@ def audio_dir() -> Path:
     return AUDIO_FIXTURES
 
 
+@pytest.fixture
+def require_hf_token() -> None:
+    """Skip a test cleanly when no HF token is available.
+
+    The live-diarize *subprocess* tests spawn the real `pulsartrace_ai.live_diarize`
+    process, which loads the gated pyannote community-1 model. Without a token
+    the subprocess fails its model load and the test sees a confusing
+    `JSONDecodeError` on the missing ready line. This guard — the same pattern
+    as `diarization_pipeline` — turns that into a clean skip.
+    """
+    _load_dotenv()
+    if not os.environ.get("HF_TOKEN"):
+        pytest.skip("HF_TOKEN not set — pyannote community-1 is gated")
+
+
 @pytest.fixture(scope="session")
 def diarization_pipeline():
     """A loaded pyannote pipeline, shared across the whole test session.

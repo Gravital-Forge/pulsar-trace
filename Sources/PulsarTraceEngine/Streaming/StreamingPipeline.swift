@@ -1,0 +1,189 @@
+import Foundation
+import Logging
+
+/// The live pass, end to end (Epic 6).
+///
+/// Drives one or two `AudioFrameSource`s at real-time pace and grows an
+/// append-only `live.md` so an external AI agent can `tail -f` it during a
+/// meeting. The offline `pulsartrace refine` pass remains the source of truth;
+/// this is the low-latency companion (PRD §6 two-pass model).
+///
+/// ## What it wires together
+///
+/// - `StreamingTranscriber` — sliding-window whisper + LocalAgreement-2,
+///   producing **committed** utterances ≤ 5 s behind real time (R10).
+/// - `LiveDiarizer` — windowed-pyannote provisional speaker IDs for the system
+///   stream (R15, R16). Optional: when unavailable the system stream is still
+///   transcribed, labelled `Them (provisional)`.
+/// - `SpeakerLibrary` — opened **read-only** (R18, R32): a provisional speaker
+///   whose centroid matches a known library speaker is shown by name. The live
+///   pass **never writes** to the library — invariant #5.
+/// - `MicEchoDedup` — drops a mic utterance that is an echo of a system
+///   utterance (R19).
+/// - `LiveMarkdownWriter` — strictly append-only `live.md` (R12, R35a, R36).
+///
+/// ## Stream mapping (single-pipe input)
+///
+/// A single `--stdin` / `--source fixture` stream is treated as the **system
+/// stream**: it is diarized and labelled `Them …`. This matches Epic 4's
+/// bare-WAV rule (a lone stream is system audio) and the PRD's framing that the
+/// system stream is "the one or more Them-speakers". The mic stream is opt-in:
+/// when a paired mic source is supplied, its utterances are `You` and never
+/// diarized (R17), and run through mic-echo dedup against the system stream.
+public struct StreamingPipeline: Sendable {
+
+    /// Inputs and tunables for one live run.
+    public struct Configuration: Sendable {
+        /// The system-audio source — diarized, `Them …` labels.
+        public let recordingFolder: URL
+        /// Wall-clock recording start (R35a header, transcript offsets).
+        public let recordingStart: Date
+        /// Recording id for the `live_md_started` event.
+        public let recordingId: String
+        /// Streaming-transcription tunables.
+        public let transcriberConfig: StreamingTranscriber.Configuration
+        /// Live-diarization subprocess config. `nil` → no live diarization
+        /// (system speakers stay the generic `Them (provisional)`).
+        public let liveDiarizerConfig: LiveDiarizer.Configuration?
+        /// How often the system stream is handed to the live diarizer, and the
+        /// window length it sees.
+        public let diarizationStep: Duration
+        public let diarizationWindow: Duration
+
+        public init(
+            recordingFolder: URL,
+            recordingStart: Date,
+            recordingId: String,
+            transcriberConfig: StreamingTranscriber.Configuration = .init(),
+            liveDiarizerConfig: LiveDiarizer.Configuration? = nil,
+            diarizationStep: Duration = .seconds(5),
+            diarizationWindow: Duration = .seconds(10)
+        ) {
+            self.recordingFolder = recordingFolder
+            self.recordingStart = recordingStart
+            self.recordingId = recordingId
+            self.transcriberConfig = transcriberConfig
+            self.liveDiarizerConfig = liveDiarizerConfig
+            self.diarizationStep = diarizationStep
+            self.diarizationWindow = diarizationWindow
+        }
+
+        /// `live.md` destination inside the recording folder.
+        var liveURL: URL {
+            recordingFolder.appendingPathComponent(RecordingFolder.FileName.live)
+        }
+    }
+
+    /// Outcome of a live run — for tests and the CLI summary.
+    public struct Output: Sendable {
+        /// The `live.md` that was grown.
+        public let liveURL: URL
+        /// Total bytes written to `live.md` (strictly increased over the run).
+        public let bytesWritten: Int
+        /// Utterance lines appended (excludes the marker + header).
+        public let utteranceLines: Int
+        /// Mic utterances dropped as echoes of system audio (R19).
+        public let micEchoesDropped: Int
+        /// Median live transcription lag — the R10 metric: the median gap
+        /// between real time and a committed utterance's end, over mid-stream
+        /// commits (the end-of-stream flush is excluded).
+        public let medianLagSeconds: Double
+        /// Worst mid-stream lag observed.
+        public let maxLagSeconds: Double
+        /// Whisper's detected language for the system stream.
+        public let language: String
+    }
+
+    private let events: EventWriter?
+    private let logger: Logger
+
+    public init(
+        events: EventWriter? = nil,
+        logger: Logger = Logger(label: LogSubsystem.engine)
+    ) {
+        self.events = events
+        self.logger = logger
+    }
+
+    /// Run the live pass over a system source (and an optional mic source).
+    ///
+    /// - Parameters:
+    ///   - configuration: inputs + tunables.
+    ///   - systemTranscriber: a model-resident `WhisperTranscriber` for the
+    ///     system stream (one context per stream — D8).
+    ///   - micTranscriber: a separate transcriber for the mic stream, when a
+    ///     `micSource` is supplied.
+    ///   - systemSource: the system-audio `AudioFrameSource` (any conforming
+    ///     source — fixture, pipe, socket).
+    ///   - micSource: optional mic `AudioFrameSource` (paired-stream mode).
+    ///   - library: speaker library opened **read-only** for the live name
+    ///     lookup (R18). `nil` → generic `Them` labels only.
+    public func run(
+        configuration: Configuration,
+        systemTranscriber: WhisperTranscriber,
+        micTranscriber: WhisperTranscriber? = nil,
+        systemSource: some AudioFrameSource,
+        micSource: (any AudioFrameSource)? = nil,
+        library: SpeakerLibrary? = nil
+    ) async throws -> Output {
+
+        // --- live.md created at session start (R35a) ------------------------
+        let writer = LiveMarkdownWriter(
+            fileURL: configuration.liveURL,
+            recordingStart: configuration.recordingStart)
+        try await writer.start()
+        // Event AFTER the file + header exist on disk (Hard Invariant #8).
+        _ = try? await events?.append(LiveMDStartedEvent(
+            recordingId: configuration.recordingId,
+            pathBasename: RecordingFolder.FileName.live))
+        logger.notice("live.md created — live pass started")
+
+        // --- live diarization subprocess (optional) -------------------------
+        var liveDiarizer: LiveDiarizer?
+        if let diarConfig = configuration.liveDiarizerConfig {
+            let scratch = configuration.recordingFolder
+                .appendingPathComponent(".live-diar-scratch", isDirectory: true)
+            let diar = LiveDiarizer(
+                configuration: diarConfig,
+                scratchDirectory: scratch,
+                logger: logger)
+            do {
+                try await diar.start()
+                liveDiarizer = diar
+            } catch {
+                // A live-diarization failure must not lose the live pass:
+                // transcription continues with generic `Them` labels.
+                logger.error(
+                    "live diarization unavailable — continuing with generic Them labels")
+            }
+        }
+        // --- run the streams ------------------------------------------------
+        let runner = LiveRunner(
+            configuration: configuration,
+            writer: writer,
+            logger: logger,
+            library: library)
+        let output: StreamingPipeline.Output
+        do {
+            output = try await runner.run(
+                systemTranscriber: systemTranscriber,
+                micTranscriber: micTranscriber,
+                systemSource: systemSource,
+                micSource: micSource,
+                liveDiarizer: liveDiarizer)
+        } catch {
+            // Always release the subprocess + close the file, even on a throw.
+            await writer.finish()
+            await liveDiarizer?.stop()
+            throw error
+        }
+
+        await writer.finish()
+        await liveDiarizer?.stop()
+        let lines = output.utteranceLines
+        let echoes = output.micEchoesDropped
+        logger.notice(
+            "live pass finished — \(lines) line(s), \(echoes) mic echo(es) dropped")
+        return output
+    }
+}

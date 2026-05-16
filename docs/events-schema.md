@@ -232,6 +232,28 @@ preserved as `.live.md.bak`. Category: `file_operations`.
 {"id":"evt_01KRQD...","recording_id":"rec_demo","ts":"2026-05-16T03:30:00Z","type":"live_md_replaced_by_final","version":1}
 ```
 
+#### `live_md_started` (version 1)
+
+Emitted when the **live pass** (Epic 6) creates a recording's `live.md` at
+session start (R35a) — before the first utterance, so an agent tailing the file
+has an immediate "recording in progress" signal. Category: `file_operations`.
+
+The file already carries the `<!-- pulsartrace:live -->` marker and the
+`## Transcript — …` header when this event fires (the event is emitted *after*
+the file + header are on disk — causal order, Hard Invariant #8).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The recording whose live pass started. |
+| `path_basename` | string | Basename only — always `live.md`. Never a full path. |
+
+```jsonl
+{"id":"evt_01KRQK...","path_basename":"live.md","recording_id":"rec_two-speakers-alternating","ts":"2026-05-16T05:21:54Z","type":"live_md_started","version":1}
+```
+
+Later in the same recording's life, the post-pass emits
+`live_md_replaced_by_final` (above) when `final.md` supersedes the `live.md`.
+
 ### Speaker library
 
 Epic 5 adds the persistent speaker library (`speakers.sqlite`). Every library

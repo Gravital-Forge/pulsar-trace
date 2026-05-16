@@ -84,6 +84,12 @@ public enum EventRegistry {
             version: LiveMDReplacedByFinalEvent.schemaVersion,
             category: .fileOperations
         ),
+        // Epic 6: live-pass file operations.
+        Entry(
+            type: LiveMDStartedEvent.eventType,
+            version: LiveMDStartedEvent.schemaVersion,
+            category: .fileOperations
+        ),
         // Epic 5: speaker library operations.
         Entry(
             type: SpeakerCreatedEvent.eventType,

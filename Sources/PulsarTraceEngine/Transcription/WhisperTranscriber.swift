@@ -239,6 +239,75 @@ public final class WhisperTranscriber {
         return TranscriptionResult(segments: segments, language: language)
     }
 
+    /// Transcribe one *streaming window* — a short, recent slice of audio —
+    /// reusing this object's resident `whisper_context` (Epic 6, R10).
+    ///
+    /// Unlike `transcribe(_:)` (the offline whole-recording path), this is
+    /// called repeatedly on overlapping windows by `StreamingTranscriber`.
+    /// Every window is decoded independently (`no_context = true`) so a
+    /// hallucinated tail in one window cannot poison the next — the
+    /// LocalAgreement-2 committer upstream is what stitches windows into a
+    /// stable transcript, not whisper's own cross-window prompting.
+    ///
+    /// `windowStart` is the window's offset from the start of the *recording*;
+    /// it is added to whisper's window-relative segment timestamps so the
+    /// returned segments are recording-absolute, exactly like `transcribe(_:)`.
+    ///
+    /// Determinism matches `transcribe(_:)`: greedy, temperature 0. Runs under
+    /// the same process-wide Metal lock (D8).
+    public func transcribeWindow(
+        _ samples: [Float],
+        windowStart: Duration,
+        options: Options = Options()
+    ) throws -> TranscriptionResult {
+        guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
+
+        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        params.n_threads = Int32(options.threadCount)
+        params.print_progress = false
+        params.print_realtime = false
+        params.print_timestamps = false
+        params.print_special = false
+        params.translate = false
+        params.single_segment = false
+        params.no_context = true            // each window decoded independently
+        params.temperature = 0
+        params.temperature_inc = 0
+        params.greedy.best_of = 1
+        params.suppress_blank = true
+        params.suppress_nst = true
+        params.no_speech_thold = options.noSpeechThreshold
+
+        let langString = options.language.flatMap { isEnglishOnlyModel ? nil : $0 }
+            ?? (isEnglishOnlyModel ? "en" : "auto")
+
+        Self.metalLock.lock()
+        defer { Self.metalLock.unlock() }
+
+        let code: Int32 = langString.withCString { langPtr -> Int32 in
+            params.language = langPtr
+            params.detect_language = false
+            return runFull(&params, samples)
+        }
+        guard code == 0 else {
+            throw TranscribeError.transcriptionFailed(Int(code))
+        }
+
+        let detectedLangId = whisper_full_lang_id(ctx)
+        let language = detectedLangId >= 0
+            ? String(cString: whisper_lang_str(detectedLangId))
+            : (isEnglishOnlyModel ? "en" : "unknown")
+
+        // Window-relative segments, shifted to recording-absolute time.
+        let segments = collectSegments().map { seg in
+            TranscriptSegment(
+                start: seg.start + windowStart,
+                end: seg.end + windowStart,
+                text: seg.text)
+        }
+        return TranscriptionResult(segments: segments, language: language)
+    }
+
     // MARK: - Private
 
     private func runFull(_ params: inout whisper_full_params, _ samples: [Float]) -> Int32 {

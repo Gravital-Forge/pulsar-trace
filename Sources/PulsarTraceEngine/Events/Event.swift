@@ -271,6 +271,35 @@ public struct LiveMDReplacedByFinalEvent: EventPayload {
     }
 }
 
+// MARK: - Live-pass events (Epic 6)
+
+/// `live_md_started` — emitted when a recording's `live.md` is created at
+/// session start (R35a). Per PRD §8.13 the payload is `{recording_id,
+/// path_basename}`.
+///
+/// Causal order (Hard Invariant #8): emitted *after* `live.md` exists on disk
+/// with its marker + header, so a consumer reacting to this event always finds
+/// the file present and tail-able. The streaming pass then appends utterance
+/// lines; the post-pass eventually emits `live_md_replaced_by_final`.
+public struct LiveMDStartedEvent: EventPayload {
+    public static let eventType = "live_md_started"
+
+    /// The recording whose live pass started.
+    public let recordingId: String
+    /// Basename only (`live.md`) — never a full path (Hard Invariant #7).
+    public let pathBasename: String
+
+    public init(recordingId: String, pathBasename: String) {
+        self.recordingId = recordingId
+        self.pathBasename = pathBasename
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case pathBasename = "path_basename"
+    }
+}
+
 // MARK: - Speaker library events (Epic 5)
 
 /// `speaker_created` — emitted when a new speaker is added to the persistent

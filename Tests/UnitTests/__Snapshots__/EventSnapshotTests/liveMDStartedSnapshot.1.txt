@@ -1,0 +1,1 @@
+{"id":"evt_01HW00000000000000000000SP","path_basename":"live.md","recording_id":"rec_two-speakers-alternating","ts":"2026-04-30T14:30:05Z","type":"live_md_started","version":1}

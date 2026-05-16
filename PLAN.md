@@ -64,7 +64,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
 - [x] DONE: `pulsartrace refine meeting.wav` → working `final.md` (v0.1 ship-able);
       Unit 90/90 green; Pipeline green incl. real whisper+pyannote e2e + re-refine
 
-## Epic 5 — Speaker Library  ✅ done & verified (not committed)
+## Epic 5 — Speaker Library  ✅ committed 515d480  — v0.1 milestone complete
 - [x] SQLite store (built-in `SQLite3`, WAL, D17); centroid running-mean (R30);
       soft-delete 30-day undo (R32b); last-good backup + auto-restore on corruption
 - [x] Reconcile post-pass clusters vs library (R22/R23); `spk_<ulid>` stable IDs
@@ -78,11 +78,31 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
       pipeline test + real-pyannote CLI smoke (`Unknown #1` carried A→B)
 - New DECISIONS: D16 (Epic 5 rename/merge ≠ retroactive rewrite), D17 (built-in SQLite3)
 
-## Epic 6 — Streaming Transcription & Diarization
-- [ ] Whisper streaming + diart live speaker IDs from any `AudioFrameSource`
-- [ ] Atomic append `live.md` (R12/R35a/R36/R37), provisional labels, mic-echo dedup
-- [ ] Library lookup read-only during live (R32); event `live_md_started`
-- [ ] DONE: `ffmpeg -re fixture.wav | pulsartrace-engine --stdin --live` → growing `live.md`
+## Epic 6 — Streaming Transcription & Diarization  ✅ done & verified (not committed)
+- [x] `StreamingTranscriber`: anchored-window whisper + LocalAgreement-2
+      committer — emits only *committed* utterances; resident whisper context
+      reused; VAD-gate + `BlankTokenFilter`; backpressure handling (D20, R10)
+- [x] `LiveDiarizer`: windowed-pyannote (NOT diart — D19/Open Q #1: diart would
+      downgrade pyannote 4.0.4→3.4.0 and break Epic 3). Long-lived
+      `pulsartrace_ai.live_diarize` subprocess, newline-JSON window protocol,
+      embedding-stitched provisional `Them`/`Them #N` keys (R15, R16)
+- [x] `LiveMarkdownWriter`: strictly append-only `live.md` — created at session
+      start with marker + header (R35a/R37), monotonic byte growth, atomic
+      per-line append (R12/R36); emits `live_md_started`
+- [x] `MicEchoDedup`: text-similarity ±5s mic-echo drop (R19)
+- [x] Read-only speaker-library lookup during live → known names, still
+      `(provisional)` (R18, R32); library never written by the live pass
+- [x] `pulsartrace-engine --live [--stdin|--source fixture] [--out] [--model]
+      [--no-live-diarization]`; single piped stream → system stream; writes
+      `audio-system.wav` so a later `refine` works
+- [x] Tests: Unit (LocalAgreement-2, mic-echo, line format, append-only writer,
+      grouping, `live_md_started` snapshot); Pipeline (e2e live run, snapshot,
+      realtime-paced monotonic-growth + bounded-lag, mic-echo)
+- [x] DONE: `ffmpeg -re fixture.wav | pulsartrace-engine --stdin --live` → growing
+      `live.md` (verified monotonic), provisional labels; subsequent
+      `pulsartrace refine` → `.live.md.bak` + `final.md` + `live_md_replaced_by_final`
+- New DECISIONS: D19 (windowed-pyannote over diart), D20 (anchored-window
+  whisper + LocalAgreement-2)
 
 ---
 

@@ -23,7 +23,10 @@ struct EngineMain {
 
         let exitCode: Int32
         do {
-            if args.contains("--transcribe") {
+            if args.contains("--live") {
+                let summary = try await live(args: args, lifecycle: lifecycle)
+                FileHandle.standardOutput.write(Data((summary + "\n").utf8))
+            } else if args.contains("--transcribe") {
                 let markdown = try await transcribe(args: args, lifecycle: lifecycle)
                 FileHandle.standardOutput.write(Data(markdown.utf8))
             } else {
@@ -94,6 +97,159 @@ struct EngineMain {
             file: URL(fileURLWithPath: path), realtime: false)
         let output = try await pipeline.run(source: source, transcriber: transcriber)
         return output.markdown
+    }
+
+    /// Epic 6: run the live pass — streaming transcription + provisional live
+    /// diarization — over a source, growing an append-only `live.md`.
+    ///
+    /// A single `--stdin` / `--source fixture` stream is the **system stream**
+    /// (diarized, `Them …` labels) — see `StreamingPipeline` docs. `live.md` is
+    /// written into a recording folder: `--out <dir>` if given, else a sibling
+    /// folder named for the fixture stem (`meeting.wav` → `meeting/`), else a
+    /// timestamped folder in the cwd for a `--stdin` stream.
+    ///
+    /// Live diarization is best-effort: if the pyannote subprocess cannot
+    /// start it is skipped and system speakers stay the generic
+    /// `Them (provisional)`. `--no-live-diarization` skips it outright.
+    static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
+        // --- resolve the source ---------------------------------------------
+        let source: any AudioFrameSource
+        let stemName: String
+        if args.contains("--stdin") {
+            source = RawPCMPipeSource(fd: FileHandle.standardInput.fileDescriptor)
+            stemName = "live-" + Self.timestampStem()
+        } else if let path = fixturePath(in: args) {
+            // Realtime mode so the live pass runs at wall-clock pace (R10).
+            source = FixturePlaybackSource(
+                file: URL(fileURLWithPath: path), realtime: true)
+            stemName = URL(fileURLWithPath: path)
+                .deletingPathExtension().lastPathComponent
+        } else {
+            throw UsageError(message: """
+                usage: pulsartrace-engine --live [--stdin | --source fixture <wav>] \
+                [--out <dir>] [--model base|large-v3] [--no-live-diarization]
+                """)
+        }
+
+        // --- recording folder for live.md -----------------------------------
+        let recordingFolder: URL
+        if let out = value(after: "--out", in: args) {
+            recordingFolder = URL(fileURLWithPath: out, isDirectory: true)
+        } else {
+            recordingFolder = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(stemName, isDirectory: true)
+        }
+        let recordingStart = Date()
+        let recordingId = RecordingFolder.recordingId(forName: stemName)
+
+        // --- whisper model (resident) ---------------------------------------
+        let modelName = value(after: "--model", in: args) ?? "base"
+        guard let model = ModelCatalog.model(named: modelName) else {
+            throw UsageError(message: "unknown model '\(modelName)'")
+        }
+        let modelURL = try await ModelStore(events: lifecycle.events)
+            .ensureAvailable(model)
+        let transcriber = try WhisperTranscriber(modelURL: modelURL)
+
+        // --- live diarization config (dev venv + .env, like RefineCommand) --
+        let liveDiarizerConfig: LiveDiarizer.Configuration?
+        if args.contains("--no-live-diarization") {
+            liveDiarizerConfig = nil
+        } else {
+            liveDiarizerConfig = Self.liveDiarizerConfig()
+        }
+
+        // --- speaker library, READ-ONLY (R18/R32) ---------------------------
+        // The live pass only ever reads the library; only the post-pass writes.
+        let library = try? await SpeakerLibrary(
+            databaseURL: AppPaths.standard.speakersDatabaseURL)
+
+        let pipeline = StreamingPipeline(events: lifecycle.events)
+        let output = try await pipeline.run(
+            configuration: .init(
+                recordingFolder: recordingFolder,
+                recordingStart: recordingStart,
+                recordingId: recordingId,
+                liveDiarizerConfig: liveDiarizerConfig),
+            systemTranscriber: transcriber,
+            systemSource: source,
+            library: library)
+
+        let medianLag = String(format: "%.1f", output.medianLagSeconds)
+        let maxLag = String(format: "%.1f", output.maxLagSeconds)
+        return "live.md=\(output.liveURL.path) lines=\(output.utteranceLines) "
+            + "bytes=\(output.bytesWritten) mic_echoes_dropped=\(output.micEchoesDropped) "
+            + "median_lag_seconds=\(medianLag) max_lag_seconds=\(maxLag) "
+            + "language=\(output.language)"
+    }
+
+    /// A filesystem-safe timestamp stem for a `--stdin` live recording folder.
+    static func timestampStem() -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd-HHmmss"
+        return f.string(from: Date())
+    }
+
+    /// Build the `LiveDiarizer.Configuration` against the dev venv + repo
+    /// `.env` — mirrors `RefineCommand.makeDiarizer`'s wiring (DECISIONS.md
+    /// D3/D9). Epic 10 swaps this for the bundled python runtime.
+    static func liveDiarizerConfig() -> LiveDiarizer.Configuration {
+        let env = ProcessInfo.processInfo.environment
+        let repoRoot: URL
+        if let root = env["PULSARTRACE_REPO_ROOT"], !root.isEmpty {
+            repoRoot = URL(fileURLWithPath: root)
+        } else {
+            repoRoot = URL(fileURLWithPath: #filePath)   // …/Sources/pulsartrace-engine/main.swift
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+        }
+        let workingDir = repoRoot.appendingPathComponent("python/pulsartrace-ai")
+        let venvPython: URL
+        if let p = env["PULSARTRACE_VENV_PYTHON"], !p.isEmpty {
+            venvPython = URL(fileURLWithPath: p)
+        } else {
+            venvPython = workingDir.appendingPathComponent(".venv/bin/python")
+        }
+
+        var subprocessEnv = Self.dotEnv(repoRoot: repoRoot)
+        if let token = env["HF_TOKEN"], !token.isEmpty {
+            subprocessEnv["HF_TOKEN"] = token
+        }
+        if let caches = FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask).first {
+            subprocessEnv["HF_HOME"] = caches
+                .appendingPathComponent("PulsarTrace/huggingface").path
+        }
+        return LiveDiarizer.Configuration(
+            pythonExecutable: venvPython,
+            workingDirectory: workingDir,
+            environment: subprocessEnv)
+    }
+
+    /// Load `KEY=VALUE` pairs from the repo `.env` (dev-only, D9).
+    static func dotEnv(repoRoot: URL) -> [String: String] {
+        let envFile = repoRoot.appendingPathComponent(".env")
+        guard let text = try? String(contentsOf: envFile, encoding: .utf8) else {
+            return [:]
+        }
+        var out: [String: String] = [:]
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, !line.hasPrefix("#"),
+                  let eq = line.firstIndex(of: "=") else { continue }
+            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
+            var value = String(line[line.index(after: eq)...])
+                .trimmingCharacters(in: .whitespaces)
+            if value.count >= 2,
+               (value.hasPrefix("\"") && value.hasSuffix("\""))
+                || (value.hasPrefix("'") && value.hasSuffix("'")) {
+                value = String(value.dropFirst().dropLast())
+            }
+            out[key] = value
+        }
+        return out
     }
 
     /// Resolve the fixture WAV path from either `--fixture <p>` or
