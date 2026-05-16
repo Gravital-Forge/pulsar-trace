@@ -63,7 +63,13 @@ struct DeviceCaptureEngineTests {
 
     @Test("MicCaptureEngine delivers 16 kHz mono frames via AVFoundation")
     func micEngineDeliversFrames() async throws {
-        let engine = MicCaptureEngine(deviceID: nil)   // system default mic
+        // Prefer BlackHole — a stable, silent loopback device that does not
+        // depend on whichever physical mic the host happens to default to —
+        // and fall back to the system default input when it is not installed.
+        let blackHole = MicCaptureEngine.availableDevices().first {
+            $0.name.localizedCaseInsensitiveContains("BlackHole")
+        }
+        let engine = MicCaptureEngine(deviceID: blackHole?.id)
         let sink = FrameSink()
         engine.onEvent = { event in
             if case .frame(let frame) = event { sink.record(frame) }
