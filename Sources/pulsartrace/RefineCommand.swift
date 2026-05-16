@@ -63,6 +63,25 @@ enum RefineCommand {
             let modelStore = ModelStore(events: events)
             let modelURL = try await modelStore.ensureAvailable(model)
 
+            // The Silero VAD model gates the offline transcription so long
+            // digital-silence stretches in a stream (a paused video, a quiet
+            // far end) can't push whisper's greedy decoder into a degenerate
+            // loop. A VAD-model fetch failure must not lose a refine: fall
+            // back to a no-VAD whole-buffer decode — whisper's temperature
+            // fallback still recovers most degeneration — and warn.
+            var vadModelURL: URL?
+            do {
+                err("refine: ensuring VAD model is available…")
+                vadModelURL = try await modelStore
+                    .ensureAvailable(ModelCatalog.sileroVAD)
+            } catch {
+                err("refine: VAD model unavailable (\(error)) — "
+                    + "transcribing without VAD")
+                vadModelURL = nil
+            }
+            let whisperOptions = WhisperTranscriber.Options(
+                vadModelURL: vadModelURL)
+
             let diarizer = try makeDiarizer()
 
             // Epic 5: the persistent speaker library at the standard location.
@@ -87,6 +106,7 @@ enum RefineCommand {
                 whisperModelName: model.name,
                 whisperModelSHA256: model.sha256,
                 recordingStart: Date(),
+                whisperOptions: whisperOptions,
                 library: library,
                 progress: progress)
 

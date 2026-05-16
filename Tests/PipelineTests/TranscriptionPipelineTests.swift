@@ -11,10 +11,11 @@ import SnapshotTesting
 /// The model is fetched/verified via `ModelStore` into the shared cache on
 /// first run (R54c/R54d); subsequent runs reuse the cached, verified file.
 ///
-/// Determinism (project rule): whisper temperature 0, greedy, single thread,
-/// pinned model hash → byte-identical transcript across runs, so the snapshot
-/// is stable. The document header (`## Transcript — …`) is wall-clock, so the
-/// snapshot is taken of the *body only* (the header is covered by unit tests).
+/// Determinism (project rule): greedy, single thread, pinned model hash, and a
+/// whisper sampler RNG seeded with a fixed per-call constant → byte-identical
+/// transcript across runs even at a non-zero `Options.temperature`, so the
+/// snapshot is stable. The document header (`## Transcript — …`) is wall-clock,
+/// so the snapshot is taken of the *body only* (header covered by unit tests).
 /// `.serialized`: whisper.cpp's Metal backend is single-context per process
 /// (see `WhisperTranscriber` / project-docs/DECISIONS.md D8) — two `whisper_context`s alive
 /// at once corrupt each other's GPU compute (manifests as a garbage language
@@ -101,6 +102,40 @@ struct TranscriptionPipelineTests {
         #expect(!text.contains("[blank_audio]"))
         // The speech portion is still transcribed.
         #expect(text.contains("coffee"))
+    }
+
+    @Test("a long internal silence does not derail post-silence speech (VAD)")
+    func vadPreservesSpeechAfterLongInternalSilence() async throws {
+        let modelURL = try await baseModelURL()
+        let vadModelURL = try await WhisperTestGate.model(ModelCatalog.sileroVAD)
+
+        // Reproduce the real-recording failure shape: two copies of the 30s
+        // coffee-shop fixture separated by 60s of *pure digital silence* (a
+        // paused far end). Fed whole to `whisper_full`, the silent 30s windows
+        // drive the greedy decoder into a degenerate loop whose garbage prompt
+        // drops the second speech block entirely. whisper's built-in Silero
+        // VAD strips the silence before decoding, so both blocks survive.
+        let speech = try await OfflineTranscriptionPipeline().accumulate(
+            FixturePlaybackSource(
+                file: FixtureLocator.audio("single-speaker-30s.wav"),
+                realtime: false))
+        let silence = [Float](repeating: 0, count: AudioFormat.sampleRate * 60)
+        let buffer = speech + silence + speech
+
+        let result = try await WhisperTestGate.run {
+            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+            return try transcriber.transcribe(
+                buffer, options: .init(vadModelURL: vadModelURL))
+        }
+
+        // The block *after* the 60s silence must still be transcribed. whisper
+        // maps VAD-segment timestamps back to the original timeline, so a
+        // second-block utterance lands well past the 90s silence boundary —
+        // the regression is that block going missing.
+        let coffeeAfterSilence = result.segments.filter {
+            $0.start > .seconds(60) && $0.text.lowercased().contains("coffee")
+        }
+        #expect(!coffeeAfterSilence.isEmpty)
     }
 
     @Test("transcription is deterministic across repeated runs")

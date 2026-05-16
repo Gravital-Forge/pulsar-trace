@@ -43,10 +43,15 @@ public struct TranscriptionResult: Sendable, Equatable {
 /// chunking there are no chunk-boundary artifacts, which satisfies R11 for the
 /// offline path. Streaming/overlap-windowing is Epic 6.
 ///
-/// Determinism (the project's test-discipline rule): greedy sampling,
-/// `temperature = 0`, `temperature_inc = 0` (no fallback re-rolls), single
-/// thread by default. With a pinned model hash this yields byte-identical
-/// output across runs.
+/// Decoding (`transcribe(_:)`): greedy sampling with a small temperature and
+/// whisper's temperature fallback enabled — a window that fails whisper's
+/// quality checks is re-decoded hotter instead of its garbage tokens
+/// poisoning every later window in the same `whisper_full` call. whisper.cpp
+/// seeds its sampler RNG with a fixed per-call constant (`std::mt19937(0)`),
+/// so output is still byte-reproducible run-to-run on a given build. An
+/// optional Silero VAD model drops non-speech regions before decoding so a
+/// long digital-silence stretch can't drive the decoder into that degenerate
+/// state in the first place. See `Options`.
 ///
 /// Not `Sendable`: `whisper_context` is not thread-safe. Use one transcriber
 /// per source from a single task.
@@ -88,8 +93,8 @@ public final class WhisperTranscriber {
         }
     }
 
-    /// Tunables for a transcription run. Defaults are the deterministic test
-    /// configuration; production may raise `threadCount`.
+    /// Tunables for a transcription run. The defaults target the offline
+    /// refine pass; production may raise `threadCount`.
     public struct Options: Sendable {
         /// `nil` → auto-detect (whisper picks the language). A two-letter code
         /// forces that language. The default multilingual `base`/`large-v3`
@@ -102,15 +107,43 @@ public final class WhisperTranscriber {
         /// being non-speech are dropped by whisper before they reach us. Guards
         /// against silence hallucinations ("thanks for watching").
         public var noSpeechThreshold: Float
+        /// Decoder temperature for the *first* decode pass. whisper.cpp samples
+        /// the token distribution when this is > 0; its sampler RNG is seeded
+        /// with a fixed constant per `whisper_full` call, so a non-zero value
+        /// is still byte-reproducible run-to-run on a given build. `0` is pure
+        /// argmax. Read by `transcribe(_:)` only — `transcribeWindow` keeps
+        /// argmax for committer stability.
+        public var temperature: Float
+        /// Temperature step for whisper's fallback re-decode. When a segment
+        /// fails whisper's quality checks (compression-ratio / avg-logprob /
+        /// no-speech), whisper retries it at `temperature + step`, then
+        /// `+ 2·step`, … up to 1.0. This is whisper's primary escape from a
+        /// degenerate greedy-decode loop: at `0` a failed window has no
+        /// fallback and its garbage tokens poison every later window in the
+        /// same call. Read by `transcribe(_:)` only.
+        public var temperatureFallbackStep: Float
+        /// Path to a ggml Silero VAD model. When set, `transcribe(_:)` enables
+        /// whisper.cpp's built-in voice-activity detection: non-speech regions
+        /// are dropped before decoding, so a long digital-silence stretch in a
+        /// recording can't drive the decoder into a degenerate state. `nil`
+        /// disables VAD (whole-buffer decode). Ignored by `transcribeWindow`,
+        /// which the streaming pipeline already VAD-gates upstream.
+        public var vadModelURL: URL?
 
         public init(
             language: String? = nil,
             threadCount: Int = 1,
-            noSpeechThreshold: Float = 0.6
+            noSpeechThreshold: Float = 0.6,
+            temperature: Float = 0.2,
+            temperatureFallbackStep: Float = 0.2,
+            vadModelURL: URL? = nil
         ) {
             self.language = language
             self.threadCount = threadCount
             self.noSpeechThreshold = noSpeechThreshold
+            self.temperature = temperature
+            self.temperatureFallbackStep = temperatureFallbackStep
+            self.vadModelURL = vadModelURL
         }
     }
 
@@ -213,9 +246,13 @@ public final class WhisperTranscriber {
         params.translate = false
         params.single_segment = false
         params.no_context = true            // offline: each run is independent
-        // Determinism: temperature 0, no fallback re-rolls.
-        params.temperature = 0
-        params.temperature_inc = 0
+        // Temperature + fallback. whisper.cpp seeds its sampler RNG with a
+        // fixed per-call constant, so a non-zero temperature is still
+        // reproducible; `temperature_inc` lets a window that fails whisper's
+        // quality checks re-decode hotter instead of its garbage tokens
+        // poisoning every later window in this same `whisper_full` call.
+        params.temperature = options.temperature
+        params.temperature_inc = options.temperatureFallbackStep
         params.greedy.best_of = 1
         // Hallucination suppression (Epic 2 edge case): drop blank/non-speech
         // tokens at the decoder, and gate on the no-speech probability.
@@ -234,10 +271,43 @@ public final class WhisperTranscriber {
         Self.metalLock.lock()
         defer { Self.metalLock.unlock() }
 
-        let code: Int32 = langString.withCString { langPtr -> Int32 in
-            params.language = langPtr
-            params.detect_language = false   // whisper_full auto-detects on "auto"
-            return runFull(&params, samples)
+        // Decode under the (forced/auto) language. A nested func so it can be
+        // invoked either directly or nested inside the VAD-path `withCString`
+        // below; it captures the local `var params` by reference, so the
+        // `vad_*` / `language` fields set just before the call are seen by
+        // `runFull`. `decode()` must not escape this stack frame — it borrows
+        // `params` and `samples` by reference.
+        //
+        // C-string lifetime: `params.language` and (caller-set)
+        // `params.vad_model_path` are borrowed `withCString` pointers, valid
+        // only inside their closures. That is sufficient: `whisper_full` takes
+        // `whisper_full_params` *by value*, so it copies the struct — and
+        // dereferences those pointers — entirely within the `runFull` call,
+        // before any `withCString` closure unwinds. Keep each `runFull` call
+        // nested inside the closures that own the pointers it reads.
+        func decode() -> Int32 {
+            langString.withCString { langPtr -> Int32 in
+                params.language = langPtr
+                params.detect_language = false  // whisper_full auto-detects on "auto"
+                return runFull(&params, samples)
+            }
+        }
+
+        // whisper.cpp's built-in Silero VAD, when a model is supplied: it
+        // drops non-speech regions before decoding, so a long digital-silence
+        // stretch can't push the greedy decoder into a degenerate loop.
+        // whisper maps the segment timestamps back to original-audio time
+        // internally, so `collectSegments()` needs no adjustment.
+        let code: Int32
+        if let vadModelURL = options.vadModelURL {
+            params.vad = true
+            params.vad_params = whisper_vad_default_params()
+            code = vadModelURL.path.withCString { vadPtr -> Int32 in
+                params.vad_model_path = vadPtr
+                return decode()
+            }
+        } else {
+            code = decode()
         }
         guard code == 0 else {
             throw TranscribeError.transcriptionFailed(Int(code))
@@ -270,8 +340,14 @@ public final class WhisperTranscriber {
     /// it is added to whisper's window-relative segment timestamps so the
     /// returned segments are recording-absolute, exactly like `transcribe(_:)`.
     ///
-    /// Determinism matches `transcribe(_:)`: greedy, temperature 0. Runs under
-    /// the same process-wide Metal lock (D8).
+    /// Deliberately greedy at temperature 0 with no fallback re-decode and no
+    /// whisper VAD — unlike the offline `transcribe(_:)`. A streaming window
+    /// is short and already VAD-gated upstream by `StreamingTranscriber`, so
+    /// the degenerate-decode failure mode `transcribe(_:)` guards against
+    /// can't arise here; and LocalAgreement-2 relies on two consecutive
+    /// windows decoding their shared audio *identically*, which argmax gives
+    /// and sampling would not. `Options.temperature` / `.vadModelURL` are
+    /// therefore ignored. Runs under the same process-wide Metal lock (D8).
     public func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
@@ -288,6 +364,8 @@ public final class WhisperTranscriber {
         params.translate = false
         params.single_segment = false
         params.no_context = true            // each window decoded independently
+        // Argmax, no fallback (see the doc comment): LocalAgreement-2 needs
+        // overlapping windows to decode their shared audio identically.
         params.temperature = 0
         params.temperature_inc = 0
         params.greedy.best_of = 1

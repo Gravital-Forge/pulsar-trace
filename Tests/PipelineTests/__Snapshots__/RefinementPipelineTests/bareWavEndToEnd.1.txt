@@ -2,7 +2,7 @@
 ## Transcript — <recording-start>
 
 **[00:00:00] Speaker_0:** So I was at the coffee shop this morning, the one on the corner near the bookstore, and
-**[00:00:04] Speaker_0:** the barista asked me how I wanted my coffee, and honestly I had no idea.
+**[00:00:04] Speaker_0:** the barista asked me how I wanted my coffee, and honestly, I had no idea.
 **[00:00:09] Speaker_0:** I usually just say medium, but today I decided to be okay.
 **[00:00:13] Speaker_1:** Quick update on the project.
 **[00:00:14] Speaker_1:** We finished the data ingestion piece.

@@ -92,4 +92,20 @@ struct ModelStoreTests {
         #expect(url.host == "huggingface.co")
         #expect(url.absoluteString.hasSuffix("ggml-base.bin"))
     }
+
+    @Test("Silero VAD model is pinned and resolves to its own HF repo")
+    func vadModelIsPinned() {
+        #expect(ModelCatalog.sileroVAD.sha256.count == 64)
+        #expect(ModelCatalog.sileroVAD.sizeBytes == 885_098)
+        // The VAD model lives in a different repo from the whisper models.
+        #expect(ModelCatalog.sileroVAD.repoPath == "ggml-org/whisper-vad")
+        // It is not a `--model` choice.
+        #expect(ModelCatalog.model(named: "silero-vad") == nil)
+
+        let url = ModelCatalog.downloadURL(for: ModelCatalog.sileroVAD)
+        #expect(url.query == nil)
+        #expect(url.host == "huggingface.co")
+        #expect(url.absoluteString
+            == "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin")
+    }
 }

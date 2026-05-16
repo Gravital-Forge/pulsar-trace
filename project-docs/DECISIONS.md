@@ -496,3 +496,37 @@ defaulting the refine pass to the PRD's `large-v3` would trigger an unasked-for
 ~3 GB download. `base` is fast enough for the live pass and adequate for the
 post-pass; a user wanting `large-v3` quality passes `--model large-v3` or runs
 `pulsartrace refine` separately afterward.
+
+## D25 — Offline refine decodes with a non-zero whisper temperature + fallback and built-in VAD; the streaming pass keeps temperature 0
+
+**Decision:** The offline `WhisperTranscriber.transcribe(_:)` path (the
+`refine` pass) now decodes at `temperature = 0.2` with `temperature_inc = 0.2`
+(fallback ladder 0.2 → 0.4 → … → 1.0) and, when a Silero VAD model is
+supplied, enables whisper.cpp's built-in VAD (`whisper_full_params.vad`). This
+deviates from PRD R64 / §860 ("whisper temperature 0" for determinism). The
+VAD model (`ggml-silero-v5.1.2.bin`, ~885 KB, from the `ggml-org/whisper-vad`
+Hugging Face repo) is pinned in `ModelCatalog.sileroVAD` and fetched by
+`ModelStore` exactly like the whisper models (R54c/R54d); a VAD-fetch failure
+degrades gracefully to a no-VAD whole-buffer decode rather than failing the
+refine. The streaming `transcribeWindow` path is **unchanged** — temperature
+0, greedy, no whisper VAD.
+
+**Why:** fed a whole recording in one `whisper_full` call, the offline path
+degenerated on long stretches of pure digital silence (a paused far end, a
+loopback stream with nothing playing → exact-zero samples). A silent 30-second
+window sent the greedy decoder into a repetition loop, and with
+`temperature_inc = 0` there was no fallback re-decode to escape it — the
+degenerate tokens became the prompt for the next window, so every later window
+in the call collapsed to a single garbage token and skipped ~30 s of real
+speech. Observed on a real recording: the system stream's monologue reduced to
+`The` / `have` / `to` fragments while the mic stream (no fully-silent window)
+transcribed fine. Temperature fallback is whisper.cpp's own recovery mechanism;
+VAD removes the silent windows before they can trigger the failure at all. The
+streaming path never hit this — it VAD-gates short windows upstream — which is
+why it keeps temperature 0: LocalAgreement-2 needs two overlapping windows to
+decode their shared audio *identically*, which argmax gives and sampling does
+not. Determinism (R64's intent) is preserved: whisper.cpp seeds its sampler
+RNG with a fixed per-call constant (`std::mt19937(0)`), so a non-zero
+temperature is still byte-reproducible run-to-run on a given build — the
+mechanism shifts from "temperature 0" to "fixed-seed sampler", the guarantee
+does not. Confirmed with the user.
