@@ -23,20 +23,39 @@ enum CaptureTest {
             let result = try await CaptureSelfTest.run()
             let detected = String(format: "%.0f", result.dominantFrequencyHz)
             let expected = String(format: "%.0f", result.expectedFrequencyHz)
-            if result.passed {
-                out("  [ ok ]  captured \(result.capturedSampleCount) samples "
-                    + "from \(result.micDevice)")
+            let rms = String(format: "%.5f", result.capturedRMS)
+            let samples = "\(result.capturedSampleCount) samples from "
+                + result.micDevice
+
+            switch result.outcome {
+            case .passed:
+                out("  [ ok ]  captured \(samples) (RMS \(rms))")
                 out("  [ ok ]  dominant frequency \(detected) Hz "
                     + "≈ expected \(expected) Hz")
                 out("")
                 out("Capture path verified.")
                 return baseFailure ? 1 : 0
-            } else {
-                out("  [FAIL]  dominant frequency \(detected) Hz "
-                    + "≠ expected \(expected) Hz")
-                out("          captured \(result.capturedSampleCount) samples "
-                    + "from \(result.micDevice) — the tone was not heard; "
-                    + "check the microphone and output volume")
+
+            case .silent:
+                // Distinct from a frequency mismatch: no signal was captured
+                // at all, so there is no detected frequency to report.
+                out("  [FAIL]  no audio signal captured — the microphone path "
+                    + "is silent")
+                out("          captured \(samples), but RMS is \(rms) "
+                    + "(digital silence)")
+                out("          captured audio written to "
+                    + "\(result.capturedAudioURL.path) — it plays as silence")
+                out("          possible causes: this process lacks effective "
+                    + "Microphone access (TCC), or the mic is muted")
+                return 1
+
+            case .frequencyMismatch:
+                out("  [FAIL]  captured audio carries no \(expected) Hz tone "
+                    + "(dominant \(detected) Hz)")
+                out("          captured \(samples) (RMS \(rms)) — audio is "
+                    + "present, but not the test tone; check audio routing")
+                out("          captured audio written to "
+                    + "\(result.capturedAudioURL.path) — play it to hear it")
                 return 1
             }
         } catch {

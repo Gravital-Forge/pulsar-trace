@@ -13,18 +13,44 @@ import PulsarTraceEngine
 /// separately.
 public enum CaptureSelfTest {
 
+    /// What a capture self-test resolved to. The two failure modes are
+    /// genuinely different problems and must not be conflated: `silent` means
+    /// the capture path delivered no signal at all (a permission/routing fault
+    /// upstream of any analysis), whereas `frequencyMismatch` means real audio
+    /// arrived but did not carry the test tone (an audio-routing issue).
+    public enum Outcome: String, Sendable {
+        /// The captured audio carried the test tone within tolerance.
+        case passed
+        /// The captured audio was silent — no signal reached the analysis.
+        case silent
+        /// Audio was captured, but its dominant frequency was not the tone.
+        case frequencyMismatch
+    }
+
+    /// An RMS level at or below this is treated as silence — no usable signal
+    /// (a real microphone in a real room never reads a true zero).
+    public static let silenceThreshold = 0.001
+
     /// The outcome of a capture self-test.
     public struct Result: Sendable {
         /// Microphone the audio was captured from.
         public let micDevice: String
         /// Number of audio samples captured.
         public let capturedSampleCount: Int
+        /// RMS level of the captured audio (0 ⇒ pure silence). A diagnostic:
+        /// a near-zero RMS means the capture path delivered silent buffers.
+        public let capturedRMS: Double
+        /// A WAV of exactly what was captured — written so a failed self-test
+        /// can be diagnosed by ear.
+        public let capturedAudioURL: URL
         /// Frequency that was played.
         public let expectedFrequencyHz: Double
-        /// Dominant frequency found in the captured audio.
+        /// Dominant frequency found in the captured audio. Meaningful only
+        /// when `outcome` is `passed` or `frequencyMismatch` — for `silent`
+        /// audio there is no frequency to find.
         public let dominantFrequencyHz: Double
-        /// Whether the captured tone matched within tolerance.
-        public let passed: Bool
+        /// What the self-test resolved to.
+        public let outcome: Outcome
     }
 
     /// A self-test that could not even run (as opposed to one that ran and
@@ -99,18 +125,42 @@ public enum CaptureSelfTest {
         let captured = collector.samples()
         guard !captured.isEmpty else { throw SelfTestError.noAudioCaptured }
 
+        // Diagnostics: the RMS level distinguishes silence (a broken capture
+        // path) from a real signal the analysis simply could not match, and
+        // the WAV lets a failed run be inspected by ear.
+        let rms = (captured.isEmpty)
+            ? 0
+            : (captured.reduce(0.0) { $0 + Double($1) * Double($1) }
+                / Double(captured.count)).squareRoot()
+        let capturedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulsartrace-capture-test.wav")
+        try? WAVWriter.write(samples: captured, to: capturedURL)
+
+        // Silence is decided first, before any frequency analysis: running a
+        // detector over silent buffers only yields a meaningless artifact
+        // (the bottom of the search band), which must not be presented as if
+        // a tone were detected.
         let dominant = ToneDetector.dominantFrequency(
             captured, sampleRate: sampleRate,
             range: ToneDetector.searchBand(around: frequencyHz))
-        let passed = ToneDetector.matches(
-            captured, expectedHz: frequencyHz, sampleRate: sampleRate)
+        let outcome: Outcome
+        if rms <= Self.silenceThreshold {
+            outcome = .silent
+        } else if ToneDetector.matches(
+            captured, expectedHz: frequencyHz, sampleRate: sampleRate) {
+            outcome = .passed
+        } else {
+            outcome = .frequencyMismatch
+        }
 
         return Result(
             micDevice: mic.deviceName,
             capturedSampleCount: captured.count,
+            capturedRMS: rms,
+            capturedAudioURL: capturedURL,
             expectedFrequencyHz: frequencyHz,
             dominantFrequencyHz: dominant,
-            passed: passed)
+            outcome: outcome)
     }
 }
 
