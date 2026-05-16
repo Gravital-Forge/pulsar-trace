@@ -100,3 +100,173 @@ public struct ModelDownloadedEvent: EventPayload {
         case sourceHost = "source_host"
     }
 }
+
+// MARK: - Refinement lifecycle events (Epic 4)
+
+/// `refinement_started` — emitted once when `pulsartrace refine` begins work on
+/// a recording, before any transcription/diarization (§8.13, Epic 4).
+///
+/// Causal order: this is the *first* event a refine emits, so a consumer
+/// tailing the log sees the cause before any of its file-write effects.
+public struct RefinementStartedEvent: EventPayload {
+    public static let eventType = "refinement_started"
+
+    /// The recording ID (`rec_<short>`) being refined.
+    public let recordingId: String
+    /// The whisper model name used for the refine pass (e.g. `large-v3`).
+    public let modelRefine: String
+
+    public init(recordingId: String, modelRefine: String) {
+        self.recordingId = recordingId
+        self.modelRefine = modelRefine
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case modelRefine = "model_refine"
+    }
+}
+
+/// `refinement_completed` — emitted once, last, after a refine pass has written
+/// `final.md` and `metadata.json` to disk (§8.13, Epic 4).
+///
+/// For Epic 4 there is no speaker library yet, so every identified speaker is
+/// "new": `speakersNew` equals `speakersIdentified` and `speakersMatched` is 0.
+/// Epic 5 reconciles against the library and these split meaningfully.
+public struct RefinementCompletedEvent: EventPayload {
+    public static let eventType = "refinement_completed"
+
+    public let recordingId: String
+    /// Wall-clock seconds the refine pass took.
+    public let durationSeconds: Double
+    /// Total distinct speakers in the final transcript.
+    public let speakersIdentified: Int
+    /// Speakers not matched to the library (Epic 4: all of them).
+    public let speakersNew: Int
+    /// Speakers matched to an existing library entry (Epic 4: always 0).
+    public let speakersMatched: Int
+
+    public init(
+        recordingId: String,
+        durationSeconds: Double,
+        speakersIdentified: Int,
+        speakersNew: Int,
+        speakersMatched: Int
+    ) {
+        self.recordingId = recordingId
+        self.durationSeconds = durationSeconds
+        self.speakersIdentified = speakersIdentified
+        self.speakersNew = speakersNew
+        self.speakersMatched = speakersMatched
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case durationSeconds = "duration_seconds"
+        case speakersIdentified = "speakers_identified"
+        case speakersNew = "speakers_new"
+        case speakersMatched = "speakers_matched"
+    }
+}
+
+/// `refinement_failed` — emitted when a refine pass aborts (§8.13, Epic 4).
+///
+/// `errorClass` is a coarse, stable category (never a raw error string with a
+/// file path in it — Hard Invariant #7). `retryAvailable` tells a consumer
+/// whether re-running `refine` could succeed.
+public struct RefinementFailedEvent: EventPayload {
+    public static let eventType = "refinement_failed"
+
+    public let recordingId: String
+    /// Coarse failure category, e.g. `transcription`, `diarization`, `io`, `input`.
+    public let errorClass: String
+    /// Whether re-running `refine` could plausibly succeed.
+    public let retryAvailable: Bool
+
+    public init(recordingId: String, errorClass: String, retryAvailable: Bool) {
+        self.recordingId = recordingId
+        self.errorClass = errorClass
+        self.retryAvailable = retryAvailable
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case errorClass = "error_class"
+        case retryAvailable = "retry_available"
+    }
+}
+
+// MARK: - File-operation events (Epic 4)
+
+/// `final_md_written` — emitted after `final.md` is durably on disk for the
+/// first time (no prior `final.md` existed). Category: `file_operations`.
+///
+/// Causal order: emitted *after* the atomic rename completes, so a consumer
+/// that reacts to this event will always find the file present.
+public struct FinalMDWrittenEvent: EventPayload {
+    public static let eventType = "final_md_written"
+
+    public let recordingId: String
+    /// Basename only (`final.md`) — never a full path (Hard Invariant #7).
+    public let pathBasename: String
+    /// Lowercase-hex SHA-256 of the written file's bytes.
+    public let sha256: String
+
+    public init(recordingId: String, pathBasename: String, sha256: String) {
+        self.recordingId = recordingId
+        self.pathBasename = pathBasename
+        self.sha256 = sha256
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case pathBasename = "path_basename"
+        case sha256
+    }
+}
+
+/// `final_md_rewritten` — emitted when an existing `final.md` is replaced
+/// (a re-refine, R27, or — in Epic 5 — a speaker rename/merge).
+///
+/// `reason` is a stable code: Epic 4 emits `re_refine`. Always paired with the
+/// cause that triggered it (Hard Invariant #8) — for Epic 4 the cause is the
+/// `refinement_started` of the re-refine pass.
+public struct FinalMDRewrittenEvent: EventPayload {
+    public static let eventType = "final_md_rewritten"
+
+    public let recordingId: String
+    public let pathBasename: String
+    public let sha256: String
+    /// Why the file was rewritten — Epic 4: `re_refine`.
+    public let reason: String
+
+    public init(recordingId: String, pathBasename: String, sha256: String, reason: String) {
+        self.recordingId = recordingId
+        self.pathBasename = pathBasename
+        self.sha256 = sha256
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case pathBasename = "path_basename"
+        case sha256
+        case reason
+    }
+}
+
+/// `live_md_replaced_by_final` — emitted when refinement supersedes an existing
+/// `live.md` (§8.13, Epic 4). The `live.md` is preserved as `.live.md.bak`.
+public struct LiveMDReplacedByFinalEvent: EventPayload {
+    public static let eventType = "live_md_replaced_by_final"
+
+    public let recordingId: String
+
+    public init(recordingId: String) {
+        self.recordingId = recordingId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+    }
+}

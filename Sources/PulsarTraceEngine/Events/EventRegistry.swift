@@ -52,6 +52,38 @@ public enum EventRegistry {
             version: ModelDownloadedEvent.schemaVersion,
             category: .system
         ),
+        // Epic 4: refinement lifecycle (`pulsartrace refine`).
+        Entry(
+            type: RefinementStartedEvent.eventType,
+            version: RefinementStartedEvent.schemaVersion,
+            category: .refinementLifecycle
+        ),
+        Entry(
+            type: RefinementCompletedEvent.eventType,
+            version: RefinementCompletedEvent.schemaVersion,
+            category: .refinementLifecycle
+        ),
+        Entry(
+            type: RefinementFailedEvent.eventType,
+            version: RefinementFailedEvent.schemaVersion,
+            category: .refinementLifecycle
+        ),
+        // Epic 4: file operations produced by a refine pass.
+        Entry(
+            type: FinalMDWrittenEvent.eventType,
+            version: FinalMDWrittenEvent.schemaVersion,
+            category: .fileOperations
+        ),
+        Entry(
+            type: FinalMDRewrittenEvent.eventType,
+            version: FinalMDRewrittenEvent.schemaVersion,
+            category: .fileOperations
+        ),
+        Entry(
+            type: LiveMDReplacedByFinalEvent.eventType,
+            version: LiveMDReplacedByFinalEvent.schemaVersion,
+            category: .fileOperations
+        ),
     ]
 
     /// Look up a registered entry by its `type` string.

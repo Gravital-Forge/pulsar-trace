@@ -292,11 +292,23 @@ public actor Diarizer {
     }
 
     /// Read a file handle to EOF off the actor, on a detached task so the
-    /// blocking `readDataToEndOfFile` never stalls the actor's executor.
+    /// blocking read never stalls the actor's executor.
+    ///
+    /// Uses the Swift-throwing `FileHandle.readToEnd()` rather than the legacy
+    /// `readDataToEndOfFile()`. The legacy method reports a failure (e.g. the
+    /// fd was closed/invalidated because the child was SIGKILL'd, or fd churn
+    /// under a heavily parallel test run) by raising an Objective-C
+    /// `NSFileHandleOperationException` — which Swift cannot catch, so it
+    /// reaches `std::terminate` and aborts the whole process. `readToEnd()`
+    /// surfaces the same failure as a catchable Swift error; on failure the
+    /// pipe simply yields no more bytes (`Data()`), which the caller already
+    /// tolerates (a missing-stdout/empty-stderr child is handled downstream).
     private static func readToEnd(_ handle: FileHandle) async -> Data {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let data = handle.readDataToEndOfFile()
+                // `try?` flattens `readToEnd()`'s `Data?` and the throw into
+                // `Data??`; `?? nil ?? Data()` collapses both to `Data`.
+                let data = (try? handle.readToEnd()) ?? nil ?? Data()
                 continuation.resume(returning: data)
             }
         }

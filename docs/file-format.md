@@ -5,9 +5,10 @@ PulsarTrace writes per recording. External tools — your AI agent, scripts,
 integrations — depend on this format. It is a **public API surface**: breaking
 changes require a major version bump and a migration note (PRD §17).
 
-> Status: Epic 1 establishes this spec. Epics 2, 4 and 6 implement the
-> generators and extend the detail here. The format below is the target shape;
-> any field not yet emitted is marked accordingly.
+> Status: Epic 1 establishes this spec. Epics 2 and 4 implement the offline
+> generators (`final.md` + `metadata.json`); Epic 6 adds the `live.md`
+> generator. The format below is the target shape; any field not yet emitted
+> is marked accordingly.
 
 ## Overview
 
@@ -19,8 +20,22 @@ Each recording lives in its own folder under the output directory:
   audio-system.wav     ← 16kHz mono Int16 PCM
   live.md              ← provisional transcript, written during the call
   final.md             ← refined transcript, replaces live.md after refinement
-  metadata.json        ← sidecar (Epic 4)
+  metadata.json        ← machine-readable sidecar (Epic 4)
 ```
+
+### Input shapes for `pulsartrace refine` (Epic 4)
+
+`pulsartrace refine PATH` accepts two input shapes (see DECISIONS.md D13):
+
+- **A recording folder** already in the layout above. `refine` transcribes
+  `audio-system.wav` (diarized) and, if present, `audio-mic.wav` (the `You`
+  stream, never diarized — R17), merges them by timestamp, and writes
+  `final.md` + `metadata.json` back into the folder.
+- **A bare WAV file** (`meeting.wav`). `refine` treats it as a single-stream
+  recording, creates a sibling output folder named for the WAV's stem
+  (`meeting/`), and writes `final.md` + `metadata.json` there. The original
+  WAV is left untouched. A bare WAV has no separate mic stream, so all its
+  speakers are `Speaker_N` — there is no `You` label.
 
 There are two transcript files, reflecting the product's two-pass model:
 
@@ -86,9 +101,66 @@ assumptions:
    `final.md` via write-then-rename; `live.md` is preserved as `.live.md.bak`.
 4. **The mic stream is always `You`** and is never diarized.
 
+## `metadata.json` sidecar (Epic 4, R39)
+
+Alongside `final.md`, a refine pass writes `metadata.json` — the machine-readable
+summary of the refined recording. An AI agent or script reads it instead of
+parsing `final.md` prose. It is a public API surface; it is written atomically
+(write-then-rename) like `final.md`.
+
+```json
+{
+  "schema_version": 1,
+  "recording_id": "rec_two-speakers-alternating",
+  "recording_start": "2026-05-16T03:26:49Z",
+  "refined_at": "2026-05-16T03:26:49Z",
+  "duration_seconds": 24,
+  "language": "en",
+  "source_basename": "two-speakers-alternating.wav",
+  "speakers": [
+    { "label": "Speaker_0", "is_microphone": false },
+    { "label": "Speaker_1", "is_microphone": false }
+  ],
+  "whisper_model": {
+    "name": "base",
+    "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+  },
+  "pyannote_model": {
+    "id": "pyannote/speaker-diarization-community-1",
+    "revision": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
+    "library_version": "4.0.4"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_version` | integer | Sidecar schema version. Starts at 1; bumped on a breaking change. |
+| `recording_id` | string | `rec_<short>`, derived from the recording folder / WAV name. Stable across re-refines. |
+| `recording_start` | string | Wall-clock recording start, ISO-8601 UTC. Mirrors the `final.md` heading. |
+| `refined_at` | string | Wall-clock start of the refine pass that produced this file, ISO-8601 UTC. |
+| `duration_seconds` | number | Audio duration (the longer of the streams). |
+| `language` | string | Transcription language whisper detected/used (ISO-639-1). |
+| `source_basename` | string | Basename of the user-supplied `refine` input — never a full path. |
+| `speakers` | array | One entry per distinct speaker in `final.md`. |
+| `speakers[].label` | string | Transcript-facing label (`You`, `Speaker_0`, …). |
+| `speakers[].is_microphone` | boolean | `true` for the `You` (mic) speaker — never diarized (R17). |
+| `whisper_model.name` | string | Whisper model name (`base`, `large-v3`). |
+| `whisper_model.sha256` | string | Pinned SHA-256 of the ggml model file (its version identity). |
+| `pyannote_model` | object\|null | pyannote model identity. `null` when diarization was skipped (e.g. no speech detected). |
+| `pyannote_model.id` | string | Model id, e.g. `pyannote/speaker-diarization-community-1`. |
+| `pyannote_model.revision` | string | Hugging Face hub commit SHA of the model checkpoint. |
+| `pyannote_model.library_version` | string | pyannote.audio library version. |
+
+When a recording has no usable speech, `final.md` still carries the
+`<!-- pulsartrace:final -->` marker and a single explanatory note line
+(`_(no speech detected in this recording)_`); `metadata.json` is still written
+with an empty `speakers` array and `pyannote_model: null`.
+
 ## Versioning
 
-The format is SemVer-stable. Adding a new optional line kind or an optional
-annotation is a minor change. Removing or repurposing the marker comment, the
-heading shape, or the utterance-line grammar is a breaking change requiring a
-major version bump and a migration note.
+The format is SemVer-stable. Adding a new optional line kind, an optional
+annotation, or an optional `metadata.json` field is a minor change. Removing or
+repurposing the marker comment, the heading shape, the utterance-line grammar,
+or a `metadata.json` field is a breaking change requiring a major version bump
+and a migration note.

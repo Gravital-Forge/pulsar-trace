@@ -59,6 +59,13 @@ public struct TranscriptionResult: Sendable, Equatable {
 /// once. A process-wide lock makes context create/free and each `whisper_full`
 /// call mutually exclusive — correctness over a theoretical parallel speedup
 /// that the offline path doesn't need anyway. See DECISIONS.md D8.
+///
+/// GPU backend: `useGPU` defaults to `true` (production — Metal). The test/CI
+/// path passes `useGPU: false` to use whisper's CPU backend, which avoids the
+/// ggml-metal device entirely and so cannot trip the upstream
+/// `ggml_metal_device_free` residency-set assertion that fires at process exit
+/// when many `whisper_context`s are created/freed in one process. See
+/// DECISIONS.md D15.
 public final class WhisperTranscriber {
 
     /// Guards `whisper_context` lifecycle and `whisper_full` across the
@@ -115,8 +122,18 @@ public final class WhisperTranscriber {
 
     /// Load a ggml whisper model file and keep it resident.
     ///
-    /// - Parameter modelURL: a `ggml-*.bin` file (`base`, `large-v3`, …).
-    public init(modelURL: URL, logger: Logger = Logger(label: LogSubsystem.engine)) throws {
+    /// - Parameters:
+    ///   - modelURL: a `ggml-*.bin` file (`base`, `large-v3`, …).
+    ///   - useGPU: `true` (default) loads the model on the Metal backend — the
+    ///     production path. `false` uses whisper's CPU backend; the test/CI
+    ///     suite passes `false` so it never touches the ggml-metal device and
+    ///     so cannot trip the upstream exit-time residency-set assertion
+    ///     (DECISIONS.md D15).
+    public init(
+        modelURL: URL,
+        useGPU: Bool = true,
+        logger: Logger = Logger(label: LogSubsystem.engine)
+    ) throws {
         self.modelURL = modelURL
         self.logger = logger
         self.isEnglishOnlyModel =
@@ -127,7 +144,9 @@ public final class WhisperTranscriber {
         }
 
         var cparams = whisper_context_default_params()
-        cparams.use_gpu = true   // Metal — the library is built -DGGML_METAL=ON.
+        // Metal (production) — the library is built -DGGML_METAL=ON — or the
+        // CPU backend for tests/CI (DECISIONS.md D15).
+        cparams.use_gpu = useGPU
 
         Self.metalLock.lock()
         let loaded = modelURL.path.withCString {
@@ -139,7 +158,8 @@ public final class WhisperTranscriber {
             throw TranscribeError.modelLoadFailed(modelURL.path)
         }
         self.ctx = loaded
-        logger.notice("whisper model loaded; multilingual=\(!isEnglishOnlyModel)")
+        logger.notice(
+            "whisper model loaded; multilingual=\(!isEnglishOnlyModel), gpu=\(useGPU)")
     }
 
     deinit {

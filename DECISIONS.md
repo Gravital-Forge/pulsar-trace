@@ -28,6 +28,14 @@ is deferred to Epic 10 (app packaging, out of scope).
 For building and testing the pipeline a pinned venv is equivalent and faster to iterate.
 The Swift↔Python IPC boundary is identical either way, so Epic 10 can swap the runtime
 without engine changes.
+**Addendum (env-var overrides):** `RefineCommand` resolves the repo root (and from
+it the venv interpreter) from `#filePath` — a build-machine path baked into the binary.
+As a cheap robustness improvement ahead of full Epic 10 packaging, three environment
+variables now take precedence when set: `PULSARTRACE_REPO_ROOT` (overrides the repo
+root), `PULSARTRACE_VENV_PYTHON` (overrides the venv interpreter outright), and
+`HF_TOKEN` (a real-environment token wins over the repo `.env`). The `#filePath`-derived
+path remains the dev-tree fallback. This is not full packaging — it just lets the binary
+run off a machine other than the build host.
 
 ## D4 — Test models: `base`; production default unchanged
 **Decision:** The automated test suite uses whisper `base` (and small pyannote configs
@@ -184,3 +192,66 @@ activity. `model_revision` is recorded because the pyannote.audio *library*
 version is not a reliable proxy for *checkpoint* identity — the same library
 can load different checkpoints — and Epic 5 must key centroid compatibility on
 the actual checkpoint.
+
+## D13 — `refine` bare-WAV input writes outputs to a sibling folder named for the WAV stem
+**Decision:** `pulsartrace refine PATH` accepts two input shapes. A
+**recording folder** (already holding `audio-system.wav` + optional
+`audio-mic.wav`) gets `final.md` / `metadata.json` written back into it. A
+**bare WAV file** (`meeting.wav`) has no recording folder yet, so `refine`
+creates one as a *sibling* of the WAV named for the WAV's stem (`meeting.wav`
+→ `meeting/`) and writes the outputs there; the original WAV is left in place
+and `metadata.json` records its basename in `source_basename`. A bare WAV is
+treated as a single (system) stream — it is diarized and all its speakers are
+`Speaker_N`; there is no separate mic stream and therefore no `You` label.
+**Why:** PRD §6 fixes the storage model as "one folder per recording" holding
+the audio, `final.md`, `metadata.json` (and later `live.md`). A bare-WAV input
+predates that folder, so one must be created. Putting outputs in a dedicated
+sibling folder (rather than next to the WAV, or inside a folder that also
+absorbs the WAV) keeps the user's original audio file untouched, groups
+`final.md` + `metadata.json` together, and matches the §6 model exactly. The
+recording id is a deterministic slug of the folder/WAV stem, so a re-refine of
+the same recording reuses its id across runs.
+
+## D14 — Atomic write-then-rename for `final.md` / `metadata.json`; cross-suite whisper test gate
+**Decision:** `final.md` and `metadata.json` are written via `AtomicFile`: the
+bytes go to a sibling temp file in the destination directory and are
+`replaceItemAt`-renamed into place, so a consumer (an AI agent, or an editor
+with the file open) ever sees either the whole old file or the whole new file,
+never a torn one (R24, Epic 4 "file replacement while editor is open" edge
+case). On a re-refine (R27) the prior `final.md` is copied to `final.md.bak`
+*before* the atomic replace; a pre-existing `live.md` is renamed to
+`.live.md.bak`. Separately, the test suite gains a process-wide
+`WhisperTestGate` actor: `@Suite(.serialized)` only serializes tests *within*
+one suite, but `TranscriptionPipelineTests` and `RefinementPipelineTests` both
+load whisper, and two `whisper_context`s alive at once in one process corrupt
+each other's Metal residency set (DECISIONS.md D8). Every whisper-using test
+body runs inside `WhisperTestGate.run { … }`, serializing them across the whole
+process — mirroring the engine's real "one transcriber at a time" usage and
+keeping the deterministic snapshots stable (PRD §12).
+**Why:** The temp file must be on the *same volume* as the destination or the
+rename silently degrades to a non-atomic copy — hence the sibling temp file,
+not `NSTemporaryDirectory()`. The whisper gate was added after the new Epic 4
+suite intermittently corrupted the Epic 2 transcription snapshot when the two
+whisper-heavy suites ran in parallel; per-suite `.serialized` could not cover
+a cross-suite race.
+
+## D15 — Tests use whisper's CPU backend; production keeps Metal
+**Decision:** `WhisperTranscriber.init` gains a `useGPU` parameter, defaulting
+to `true` (production — the Metal backend, `-DGGML_METAL=ON`). The test/CI
+transcription path constructs every transcriber with `useGPU: false` (whisper's
+CPU backend), via the `WhisperTestTranscriber.make(modelURL:)` helper used by
+`TranscriptionPipelineTests` and `RefinementPipelineTests`.
+**Why:** `swift test --filter Pipeline` intermittently aborted at *process exit*
+with `GGML_ASSERT([rsets->data count] == 0)` / signal 6 inside
+`ggml_metal_device_free` — an upstream whisper.cpp/ggml-metal residency-set bug
+triggered on this M1 host once several `whisper_context`s have been created and
+freed in one process (the test suite loads whisper many times). The crash is at
+teardown, after the assertions have passed, but a suite that aborts on exit is
+unacceptable — PRD §12's test discipline depends on `swift test --filter
+Pipeline` being reliably green. whisper's CPU backend never constructs a
+ggml-metal device, so it cannot reach that assertion; `base` over the short
+committed fixtures is plenty fast on CPU. Production is unaffected: `useGPU`
+defaults to `true`, so the engine and the `pulsartrace` CLI still run on Metal.
+This is orthogonal to D8's `metalLock` / `WhisperTestGate` serialization —
+those address concurrent-context corruption *during* a run; D15 addresses the
+exit-time device-free assertion.

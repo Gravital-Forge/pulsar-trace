@@ -43,6 +43,11 @@ struct Pipeline_IPC_Tests {
 
         let source = SocketSource(socketPath: socketPath)
         try await source.start()
+        // `start()` has connected; wait until the server thread is past
+        // `accept()` so it is guaranteed to be serving frames before the
+        // consumer reads — closes a real thread-scheduling race that could
+        // otherwise yield a premature EOF.
+        server.waitForAccept()
         let overSocket = try await FrameConsumer().consume(source).frameCount
 
         #expect(overSocket == inProcess)
@@ -58,6 +63,7 @@ struct Pipeline_IPC_Tests {
 
         let source = SocketSource(socketPath: socketPath)
         try await source.start()
+        server.waitForAccept()
         let result = try await FrameConsumer().consume(source)
         #expect(result.frameCount == 250)  // 5 s / 20 ms
     }
@@ -80,6 +86,7 @@ struct Pipeline_IPC_Tests {
 
         let source = SocketSource(socketPath: socketPath)
         try await source.start()
+        server.waitForAccept()
 
         var firstFrameSamples: [Float]?
         for try await event in source {

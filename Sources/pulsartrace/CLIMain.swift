@@ -13,14 +13,14 @@ struct CLIMain {
         let args = Array(CommandLine.arguments.dropFirst())
         let lifecycle = await AppLifecycle.start()
 
-        let exitCode = await dispatch(args)
+        let exitCode = await dispatch(args, events: lifecycle.events)
 
         await lifecycle.stop()
         exit(exitCode)
     }
 
     /// Route to a subcommand. Returns the process exit code.
-    static func dispatch(_ args: [String]) async -> Int32 {
+    static func dispatch(_ args: [String], events: EventWriter) async -> Int32 {
         guard let subcommand = args.first else {
             printUsage()
             return 0
@@ -33,8 +33,7 @@ struct CLIMain {
             out("pulsartrace \(HostInfo.appVersion)")
             return 0
         case "refine":
-            err("`pulsartrace refine` is delivered in Epic 4 (Refinement Pipeline).")
-            return 1
+            return await RefineCommand.run(Array(args.dropFirst()), events: events)
         case "record":
             err("`pulsartrace record` is delivered in Epic 9 (CLI Surface).")
             return 1
@@ -61,7 +60,8 @@ struct CLIMain {
             usage: pulsartrace <subcommand> [options]
 
             subcommands:
-              refine <audio>     Transcribe + diarize a recording   (Epic 4)
+              refine <audio>     Transcribe + diarize a recording
+                                 [--model base|large-v3]
               record             Record a meeting headlessly        (Epic 9)
               speakers           Manage the speaker library         (Epic 5)
               events tail        Tail the events log                (Epic 9)

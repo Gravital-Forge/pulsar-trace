@@ -139,6 +139,18 @@ public final class FixtureSocketServer: @unchecked Sendable {
     private var clientFD: Int32 = -1
     private var stopped = false
     private var serverThread: Thread?
+    /// Signalled by the server thread the instant `accept()` returns (success
+    /// or failure). `start()` does not return until this fires, so a consumer
+    /// can never `connect()` + read before the server is actually accepting —
+    /// closing a real thread-scheduling race where `accept()` had not yet run
+    /// and the consumer saw a premature EOF.
+    private let acceptConfirmed = DispatchSemaphore(value: 0)
+    /// Signalled by the server thread as its very last act. `stop()` waits on
+    /// it so the thread is fully finished — past every `accept`/`write`/`close`
+    /// — before `stop()` returns. Otherwise a dangling server thread from a
+    /// just-finished test can read or write a *recycled* file-descriptor
+    /// number a later test has since reused, corrupting that test's stream.
+    private let threadFinished = DispatchSemaphore(value: 0)
 
     /// - Parameters:
     ///   - socketPath: where to bind the listening socket.
@@ -185,8 +197,26 @@ public final class FixtureSocketServer: @unchecked Sendable {
 
         let listen = listenFD
         let thread = Thread { [self] in
+            // Signalled as the thread's last act on every exit path so
+            // `stop()` can join it before any fd is recycled.
+            defer { threadFinished.signal() }
+
             let client = accept(listen, nil, nil)
+            // Confirm accept() has returned — success or failure — so a waiter
+            // (`waitForAccept()`) knows the server is past the accept point and
+            // a consumer's frames will be served, not dropped on a premature
+            // EOF caused by the server thread not yet having been scheduled.
+            acceptConfirmed.signal()
             guard client >= 0 else { return }
+            // Suppress SIGPIPE on this socket: when the consumer stops reading
+            // and closes its end (a test finishing, `source.stop()`), a pending
+            // `write()` here would otherwise raise SIGPIPE and kill the whole
+            // test process. `SO_NOSIGPIPE` makes `write()` return `EPIPE`
+            // instead, which `writeAll` already handles by returning `false`.
+            var noSigPipe: Int32 = 1
+            _ = setsockopt(
+                client, SOL_SOCKET, SO_NOSIGPIPE,
+                &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
             lock.lock()
             if stopped { lock.unlock(); close(client); return }
             clientFD = client
@@ -194,28 +224,52 @@ public final class FixtureSocketServer: @unchecked Sendable {
 
             streamFrames(to: client)
 
+            // Close `client` exactly once: whoever transitions `clientFD` from
+            // `client` to `-1` under the lock owns the close. If `stop()` got
+            // there first it already closed the fd — closing it again here
+            // could close an fd number a later test has recycled.
             lock.lock()
-            if clientFD == client { clientFD = -1 }
+            let ownsClose = (clientFD == client)
+            if ownsClose { clientFD = -1 }
             lock.unlock()
-            close(client)
+            if ownsClose { close(client) }
         }
         thread.start()
         serverThread = thread
     }
 
+    /// Block until the server thread's `accept()` has returned.
+    ///
+    /// `accept()` only returns once a client has connected, so a consumer must
+    /// call `start()` (which `connect()`s) *before* this. Once this returns the
+    /// server is guaranteed to be past `accept()` and about to stream frames —
+    /// closing the thread-scheduling race where a consumer could read EOF
+    /// before the server began serving.
+    public func waitForAccept() {
+        acceptConfirmed.wait()
+    }
+
     /// Stop listening, close any open client connection, remove the socket
-    /// file. Closing the client fd unblocks a `write` stalled on a reader that
-    /// stopped consuming, so the server thread cannot hang the test.
+    /// file, and join the server thread.
+    ///
+    /// Closing the listen/client fds unblocks the server thread's `accept()` /
+    /// `write()`, so it cannot hang. `stop()` then waits on `threadFinished`
+    /// before returning: the server thread is guaranteed fully done — past
+    /// every fd operation — so it can never touch a file-descriptor number a
+    /// later test has recycled.
     public func stop() {
         lock.lock()
         stopped = true
         let listen = listenFD
         let client = clientFD
+        let thread = serverThread
         listenFD = -1
         clientFD = -1
         lock.unlock()
         if listen >= 0 { close(listen) }
         if client >= 0 { close(client) }
+        // Join the server thread (if one was ever started) before returning.
+        if thread != nil { threadFinished.wait() }
         unlink(socketPath)
     }
 

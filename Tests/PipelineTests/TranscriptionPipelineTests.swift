@@ -25,9 +25,12 @@ import SnapshotTesting
 struct TranscriptionPipelineTests {
 
     /// Fetch (or reuse) the verified `base` model. Returns its on-disk URL.
+    ///
+    /// Routed through `WhisperTestGate` so the model is fetched once
+    /// process-wide — two suites resolving it via separate `ModelStore`
+    /// instances would otherwise race on the shared cache files.
     private func baseModelURL() async throws -> URL {
-        let store = ModelStore()
-        return try await store.ensureAvailable(ModelCatalog.base)
+        try await WhisperTestGate.model(ModelCatalog.base)
     }
 
     /// Body of a rendered transcript (everything after the wall-clock header).
@@ -43,16 +46,18 @@ struct TranscriptionPipelineTests {
     @Test("single-speaker-30s.wav transcribes to recognisable coffee-shop text")
     func singleSpeakerTranscript() async throws {
         let modelURL = try await baseModelURL()
-        let transcriber = try WhisperTranscriber(modelURL: modelURL)
+        let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
         let pipeline = OfflineTranscriptionPipeline()
         let source = FixturePlaybackSource(
             file: FixtureLocator.audio("single-speaker-30s.wav"), realtime: false)
 
-        let output = try await pipeline.run(
-            source: source,
-            transcriber: transcriber,
-            recordingStart: Date(timeIntervalSince1970: 1_777_000_000)
-        )
+        let output = try await WhisperTestGate.run {
+            try await pipeline.run(
+                source: source,
+                transcriber: transcriber,
+                recordingStart: Date(timeIntervalSince1970: 1_777_000_000)
+            )
+        }
 
         // R13 structure.
         #expect(output.markdown.hasPrefix("<!-- pulsartrace:final -->\n"))
@@ -79,12 +84,14 @@ struct TranscriptionPipelineTests {
     @Test("silence-then-speech.wav produces no hallucinated text in the silence")
     func silenceProducesNoHallucination() async throws {
         let modelURL = try await baseModelURL()
-        let transcriber = try WhisperTranscriber(modelURL: modelURL)
+        let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
         let pipeline = OfflineTranscriptionPipeline()
         let source = FixturePlaybackSource(
             file: FixtureLocator.audio("silence-then-speech.wav"), realtime: false)
 
-        let output = try await pipeline.run(source: source, transcriber: transcriber)
+        let output = try await WhisperTestGate.run {
+            try await pipeline.run(source: source, transcriber: transcriber)
+        }
 
         // Epic 2 edge case: whisper must not hallucinate "thanks for watching"
         // (or any stock phrase) over the leading silence.
@@ -102,15 +109,17 @@ struct TranscriptionPipelineTests {
         let pipeline = OfflineTranscriptionPipeline()
 
         func transcribeOnce() async throws -> String {
-            let transcriber = try WhisperTranscriber(modelURL: modelURL)
-            let source = FixturePlaybackSource(
-                file: FixtureLocator.audio("single-speaker-30s.wav"), realtime: false)
-            let out = try await pipeline.run(
-                source: source,
-                transcriber: transcriber,
-                recordingStart: Date(timeIntervalSince1970: 1_777_000_000)
-            )
-            return out.markdown
+            try await WhisperTestGate.run {
+                let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+                let source = FixturePlaybackSource(
+                    file: FixtureLocator.audio("single-speaker-30s.wav"), realtime: false)
+                let out = try await pipeline.run(
+                    source: source,
+                    transcriber: transcriber,
+                    recordingStart: Date(timeIntervalSince1970: 1_777_000_000)
+                )
+                return out.markdown
+            }
         }
 
         let first = try await transcribeOnce()

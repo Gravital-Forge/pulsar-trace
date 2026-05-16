@@ -128,6 +128,110 @@ exactly one model is now cached and trustworthy.
 {"id":"evt_01KR...","model_name":"base","sha256":"60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe","size_bytes":147951465,"source_host":"huggingface.co","ts":"2026-05-16T01:59:45Z","type":"model_downloaded","version":1}
 ```
 
+### Refinement lifecycle
+
+These three events bracket a `pulsartrace refine` pass (Epic 4). They are
+emitted in causal order: `refinement_started` before any work,
+`refinement_completed` last; a failure emits `refinement_failed` instead of
+`refinement_completed`.
+
+#### `refinement_started` (version 1)
+
+Emitted once when a refine pass begins, before any transcription/diarization.
+Category: `refinement_lifecycle`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The recording being refined (`rec_<short>`). |
+| `model_refine` | string | Whisper model used for the refine pass, e.g. `large-v3`, `base`. |
+
+```jsonl
+{"id":"evt_01KRQD...","model_refine":"base","recording_id":"rec_two-speakers-alternating","ts":"2026-05-16T03:26:32Z","type":"refinement_started","version":1}
+```
+
+#### `refinement_completed` (version 1)
+
+Emitted once, last, after `final.md` and `metadata.json` are durably on disk.
+Category: `refinement_lifecycle`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The refined recording. |
+| `duration_seconds` | number | Wall-clock seconds the refine pass took. |
+| `speakers_identified` | integer | Distinct speakers in the final transcript. |
+| `speakers_new` | integer | Speakers not matched to the library. In Epic 4 there is no speaker library, so this equals `speakers_identified`. |
+| `speakers_matched` | integer | Speakers matched to an existing library entry. Always `0` in Epic 4; meaningful from Epic 5. |
+
+```jsonl
+{"duration_seconds":7.67,"id":"evt_01KRQD...","recording_id":"rec_two-speakers-alternating","speakers_identified":2,"speakers_matched":0,"speakers_new":2,"ts":"2026-05-16T03:26:57Z","type":"refinement_completed","version":1}
+```
+
+#### `refinement_failed` (version 1)
+
+Emitted when a refine pass aborts. Category: `refinement_lifecycle`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The recording the refine was attempted on. |
+| `error_class` | string | Coarse, stable failure category: `input`, `transcription`, `diarization`, `io`. Never a raw error string with a path. |
+| `retry_available` | boolean | Whether re-running `refine` could plausibly succeed (`false` for a bad input path). |
+
+```jsonl
+{"error_class":"diarization","id":"evt_01KRQD...","recording_id":"rec_demo","retry_available":true,"ts":"2026-05-16T03:30:00Z","type":"refinement_failed","version":1}
+```
+
+### File operations
+
+A refine pass produces one of `final_md_written` / `final_md_rewritten` after
+its `final.md` is on disk, plus `live_md_replaced_by_final` when it supersedes a
+recording's `live.md`. These are causally paired with the `refinement_started`
+that triggered them (see *Causal pairing* below).
+
+#### `final_md_written` (version 1)
+
+Emitted after `final.md` is durably on disk for the **first time** (no prior
+`final.md` existed). Category: `file_operations`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The refined recording. |
+| `path_basename` | string | Basename only — always `final.md`. Never a full path. |
+| `sha256` | string | Lowercase-hex SHA-256 of the written file's bytes. |
+
+```jsonl
+{"id":"evt_01KRQD...","path_basename":"final.md","recording_id":"rec_two-speakers-alternating","sha256":"c2c71868d9e21ffd3f3192d32a033050fb2993ffacf1d15d16d77f425ba3df16","ts":"2026-05-16T03:26:48Z","type":"final_md_written","version":1}
+```
+
+#### `final_md_rewritten` (version 1)
+
+Emitted when an **existing** `final.md` is replaced. Category: `file_operations`.
+In Epic 4 the cause is a re-refine (R27); from Epic 5 a speaker rename/merge can
+also trigger it. The prior file is preserved as `final.md.bak`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The refined recording. |
+| `path_basename` | string | Always `final.md`. |
+| `sha256` | string | Lowercase-hex SHA-256 of the new file's bytes. |
+| `reason` | string | Why it was rewritten — Epic 4 emits `re_refine`. |
+
+```jsonl
+{"id":"evt_01KRQD...","path_basename":"final.md","reason":"re_refine","recording_id":"rec_two-speakers-alternating","sha256":"c2c71868d9e21ffd3f3192d32a033050fb2993ffacf1d15d16d77f425ba3df16","ts":"2026-05-16T03:26:57Z","type":"final_md_rewritten","version":1}
+```
+
+#### `live_md_replaced_by_final` (version 1)
+
+Emitted when refinement supersedes a recording's `live.md`. The `live.md` is
+preserved as `.live.md.bak`. Category: `file_operations`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The refined recording. |
+
+```jsonl
+{"id":"evt_01KRQD...","recording_id":"rec_demo","ts":"2026-05-16T03:30:00Z","type":"live_md_replaced_by_final","version":1}
+```
+
 ### Reserved for later epics
 
 The following types are specified in PRD §8.13 and will be documented here in
@@ -136,20 +240,25 @@ the planned surface:
 
 - **Recording lifecycle** (Epic 6/7): `recording_started`, `recording_paused`,
   `recording_resumed`, `recording_stopped`.
-- **Refinement lifecycle** (Epic 4): `refinement_started`,
-  `refinement_completed`, `refinement_failed`.
 - **Speaker library** (Epic 5): `speaker_created`, `speaker_renamed`,
   `speaker_merged`, `speaker_split`, `speaker_deleted`, `speaker_undeleted`,
   `speaker_unmerged`, `speaker_unsplit`, `speaker_centroid_updated`.
-- **File operations** (Epic 4/6): `live_md_started`, `final_md_written`,
-  `final_md_rewritten`, `live_md_replaced_by_final`.
+- **File operations** (Epic 6): `live_md_started`.
 - **System** (Epic 7): `permission_changed`, `library_backup_created`,
   `library_corruption_detected`. (`model_downloaded` is documented above —
   implemented in Epic 2.)
 
 ### Causal pairing
 
-Some events must be emitted together, in causal order (PRD §8.13, invariant 8):
-a `speaker_renamed` / `speaker_merged` / `speaker_split` is always followed by
-the corresponding `final_md_rewritten` for each affected recording. A file
-change is never emitted without the cause event that triggered it.
+Some events must be emitted together, in causal order (PRD §8.13, invariant 8).
+A file-operation event is never emitted without the cause event that triggered
+it, and the cause always precedes the effect in the log:
+
+- A refine pass emits `refinement_started` first; its `final_md_written` /
+  `final_md_rewritten` (and any `live_md_replaced_by_final`) follow once the
+  files are durably on disk; `refinement_completed` is last. So the order
+  within one refine is always `refinement_started` → `live_md_replaced_by_final`
+  (if any) → `final_md_written` | `final_md_rewritten` → `refinement_completed`.
+- From Epic 5, a `speaker_renamed` / `speaker_merged` / `speaker_split` is
+  always followed by the corresponding `final_md_rewritten` for each affected
+  recording.
