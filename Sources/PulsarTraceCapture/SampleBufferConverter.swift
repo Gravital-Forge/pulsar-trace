@@ -31,12 +31,47 @@ final class SampleBufferConverter {
         converter?.flush()
     }
 
+    /// Repair a 2-channel format whose channel layout `AVAudioConverter`
+    /// cannot downmix.
+    ///
+    /// Some capture devices — notably USB microphones — deliver a 2-channel
+    /// stream whose `CMFormatDescription` describes its channels with raw
+    /// `kAudioChannelLayoutTag_UseChannelDescriptions` entries rather than a
+    /// layout tag. `AVAudioConverter` cannot derive downmix coefficients from
+    /// such a layout and silently emits an **all-zero** mono output — the
+    /// cause of the "microphone delivers pure silence" bug. `ScreenCaptureKit`
+    /// is unaffected: its `channelCount` configuration yields a tagged layout
+    /// the converter downmixes normally.
+    ///
+    /// Substituting the standard stereo layout fixes the downmix without
+    /// touching the samples — the byte layout (`commonFormat`, sample rate,
+    /// interleaving) is preserved, so `CMSampleBufferCopyPCMDataIntoAudioBufferList`
+    /// still copies correctly. Only this 2-channel `UseChannelDescriptions`
+    /// pathology is repaired; every other format — a tagged layout, a missing
+    /// layout, mono, non-standard PCM, or a 3-or-more-channel device — is
+    /// returned unchanged.
+    static func downmixableFormat(_ format: AVAudioFormat) -> AVAudioFormat {
+        guard format.channelCount == 2,
+              format.commonFormat != .otherFormat,
+              format.channelLayout?.layoutTag
+                == kAudioChannelLayoutTag_UseChannelDescriptions,
+              let stereo = AVAudioChannelLayout(
+                layoutTag: kAudioChannelLayoutTag_Stereo)
+        else { return format }
+        return AVAudioFormat(
+            commonFormat: format.commonFormat,
+            sampleRate: format.sampleRate,
+            interleaved: format.isInterleaved,
+            channelLayout: stereo)
+    }
+
     /// Copy a `CMSampleBuffer`'s PCM data into an `AVAudioPCMBuffer` carrying
     /// the buffer's own format. Returns `nil` for a non-PCM or empty buffer.
     private static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)
         else { return nil }
-        let format = AVAudioFormat(cmAudioFormatDescription: formatDescription)
+        let format = downmixableFormat(
+            AVAudioFormat(cmAudioFormatDescription: formatDescription))
 
         let sampleCount = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
         guard sampleCount > 0,

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AVFoundation
 @testable import PulsarTraceCapture
 @testable import PulsarTraceEngine
 
@@ -91,6 +92,79 @@ struct DeviceCaptureEngineTests {
             "expected 16 kHz mono frames from MicCaptureEngine, got \(sink.frameCount)")
         #expect(sink.everyFrameIsCanonical, "every frame must be 320 samples")
         #expect(engine.deviceName != "none", "the resolved device should be named")
+    }
+
+    /// Thread-safe accumulator of every captured sample, for amplitude checks.
+    private final class SampleAccumulator: @unchecked Sendable {
+        private let lock = NSLock()
+        private var samples: [Float] = []
+        func append(_ values: [Float]) {
+            lock.withLock { samples.append(contentsOf: values) }
+        }
+        /// Root-mean-square level of everything captured so far.
+        var rms: Float {
+            lock.withLock {
+                guard !samples.isEmpty else { return 0 }
+                let sumSquares = samples.reduce(Float(0)) { $0 + $1 * $1 }
+                return (sumSquares / Float(samples.count)).squareRoot()
+            }
+        }
+        /// `true` if any captured sample is non-zero — the precise inverse of
+        /// the all-zeros "pure digital silence" failure.
+        var containsSignal: Bool { lock.withLock { samples.contains { $0 != 0 } } }
+        var isEmpty: Bool { lock.withLock { samples.isEmpty } }
+    }
+
+    @Test("MicCaptureEngine captures non-silent audio while a tone plays")
+    func micEngineCapturesNonSilentAudio() async throws {
+        // Regression guard for BUG-mic-capture-silent: the microphone path
+        // downmixed real audio to *pure digital silence* — every sample zero,
+        // RMS exactly 0. This asserts the path delivers real audio: a working
+        // mic always reports at least its noise floor, so the check needs only
+        // an unmuted mic, not an audible play→capture path. A tone is played
+        // so a host with a loopback path also exercises a strong signal.
+        // See project-docs/BUG-mic-capture-silent.md.
+        //
+        // A noise floor sits far above zero yet well below a heard tone; the
+        // bug produced 0. Anything above this proves the path is not silent.
+        let silenceFloor: Float = 0.0001
+
+        let tone = ToneDetector.sine(
+            frequencyHz: 440, sampleRate: AudioFormat.sampleRate,
+            duration: .seconds(2))
+        let toneURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-mic-nonsilent-\(UUID().uuidString).wav")
+        try WAVWriter.write(samples: tone, to: toneURL)
+        defer { try? FileManager.default.removeItem(at: toneURL) }
+
+        let engine = MicCaptureEngine(deviceID: nil)
+        let accumulator = SampleAccumulator()
+        engine.onEvent = { event in
+            if case .frame(let frame) = event { accumulator.append(frame.samples) }
+        }
+        do {
+            try engine.start()
+        } catch {
+            withKnownIssue("microphone capture could not start: \(error)") {
+                Issue.record("MicCaptureEngine.start() failed")
+            }
+            return
+        }
+        defer { engine.stop() }
+
+        let player = try AVAudioPlayer(contentsOf: toneURL)
+        player.play()
+        try await Task.sleep(for: .seconds(2.5))
+        player.stop()
+        engine.stop()
+
+        #expect(!accumulator.isEmpty, "expected captured frames from MicCaptureEngine")
+        #expect(
+            accumulator.containsSignal,
+            "captured audio is pure digital silence — every sample is zero (BUG-mic-capture-silent)")
+        #expect(
+            accumulator.rms > silenceFloor,
+            "captured audio is effectively silent (RMS \(accumulator.rms)) — the microphone capture/conversion path delivered no real signal")
     }
 
     @Test("MicCaptureEngine exposes the available input devices (R5)")
