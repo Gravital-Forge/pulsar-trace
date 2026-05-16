@@ -158,6 +158,27 @@ struct LiveMarkdownWriterTests {
         }
     }
 
+    @Test("gap annotations render as italic notes and stay append-only (R7)")
+    func gapAnnotations() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("live.md")
+
+        let writer = LiveMarkdownWriter(fileURL: url, recordingStart: fixedStart)
+        try await writer.start()
+        try await writer.appendUtterance(
+            offset: .seconds(1), speakerLabel: "You", text: "before the gap")
+        let beforeGap = await writer.bytesWritten
+        try await writer.appendGapAnnotation(.paused)
+        try await writer.appendGapAnnotation(.resumed(.seconds(125)))
+        #expect(await writer.bytesWritten > beforeGap)
+        await writer.finish()
+
+        let text = try String(contentsOf: url, encoding: .utf8)
+        #expect(text.contains("_(recording paused)_"))
+        #expect(text.contains("_(recording resumed after 2m 05s)_"))
+    }
+
     @Test("multi-byte UTF-8 content is written whole (no torn character, R12)")
     func multibyteContentIntact() async throws {
         let dir = tempDir()

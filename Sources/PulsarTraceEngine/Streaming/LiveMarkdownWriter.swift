@@ -119,6 +119,30 @@ public actor LiveMarkdownWriter {
         try appendLine("**[\(stamp)] \(speakerLabel):** \(text)")
     }
 
+    /// A capture pause/resume to annotate in `live.md` (Epic 7, R7).
+    public enum GapKind: Sendable {
+        /// Capture paused — the Mac slept or the audio device changed.
+        case paused
+        /// Capture resumed; carries how long it was paused.
+        case resumed(Duration)
+    }
+
+    /// Append a gap-annotation line marking a capture pause or resume (R7).
+    ///
+    /// Rendered as an italic note (`_(recording paused)_`) — the same line
+    /// kind `final.md` uses for "no speech detected", clearly distinct from an
+    /// utterance line. An optional annotation line is a non-breaking format
+    /// addition (`docs/file-format.md`, Versioning).
+    public func appendGapAnnotation(_ kind: GapKind) throws {
+        guard handle != nil else { throw WriteError.notStarted }
+        switch kind {
+        case .paused:
+            try appendLine("_(recording paused)_")
+        case .resumed(let gap):
+            try appendLine("_(recording resumed after \(Self.formatGap(gap)))_")
+        }
+    }
+
     /// fsync and close the handle — call at end of session. Idempotent.
     public func finish() {
         try? handle?.synchronize()
@@ -162,6 +186,17 @@ public actor LiveMarkdownWriter {
             }
         }
         bytesWritten += data.count
+    }
+
+    /// Format a pause gap for a resume annotation: `45s`, `2m 05s`.
+    private nonisolated static func formatGap(_ gap: Duration) -> String {
+        let total = max(0, Int(gap.components.seconds))
+        let minutes = total / 60
+        let seconds = total % 60
+        if minutes > 0 {
+            return "\(minutes)m \(String(format: "%02d", seconds))s"
+        }
+        return "\(seconds)s"
     }
 
     /// `YYYY-MM-DD HH:MM` local-time header stamp (R35a) — identical shape to

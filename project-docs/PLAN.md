@@ -1,7 +1,11 @@
 # PulsarTrace — Implementation Plan (checkpointed)
 
-Scope for this run: **v0.1 (Epics 1–5) delivered solid + verified, then Epic 6 (streaming).**
-Epics 7–10 are explicitly out of scope (no audio devices / UI session / signing on this host).
+Scope: **v0.1 (Epics 1–5), Epic 6 (streaming), and Epic 6's successor Epic 7
+(real device capture) are delivered + verified.** Epics 8–10 (menubar UI, full
+CLI, distribution) remain for later runs.
+
+Epics 1–6 were built on an audio-deviceless host; Epic 7 was built on a
+real-audio-capable Mac (BlackHole + TCC grants — see `PREWORK.md`).
 
 Source of truth: `PRD.md`. Architectural deviations logged in `DECISIONS.md`.
 
@@ -107,6 +111,35 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
       `pulsartrace refine` → `.live.md.bak` + `final.md` + `live_md_replaced_by_final`
 - New DECISIONS: D19 (windowed-pyannote over diart), D20 (anchored-window
   whisper + LocalAgreement-2)
+
+## Epic 7 — Real Device Capture  ✅ done & verified
+- [x] `PulsarTraceCapture` library + thin `pulsartrace-capture` executable
+      (D22); `CaptureTests` imports the library for device-gated tests
+- [x] `DeviceCaptureSource` orchestrator: two `CaptureSocketServer`s (system +
+      mic), `MicCaptureEngine` (AVFoundation, R1, R5), `SystemAudioCaptureEngine`
+      (ScreenCaptureKit, R2 — no BlackHole in production), `AudioConverter`
+      resample/downmix to 16 kHz mono Float32 at the source boundary (R54e)
+- [x] Two Unix sockets, each a single-stream `FrameProtocol`; engine consumes
+      via `SocketSource` — `pulsartrace-engine --live --system-socket S
+      --mic-socket M` (R3); listen-before-connect handshake via a `ready` line
+- [x] `FrameProtocol` in-band pause/resume control frames (D21); `SleepWakeMonitor`
+      (IORegisterForSystemPower → dispatch queue) drives pause/resume across
+      sleep (R7) and device change (R8); `LiveRunner` annotates `live.md` with
+      `_(recording paused)_` / `_(recording resumed after …)_`
+- [x] `PermissionChecker` — Microphone + Screen Recording TCC; the capture
+      daemon is the only TCC-gated process (R4)
+- [x] Events: `recording_started/paused/resumed/stopped`, `permission_changed`
+      — emitted by `pulsartrace-capture`; schema in `docs/events-schema.md`
+- [x] Tests: Unit (`FrameProtocol` control frames, `AppPaths` sockets, event
+      snapshots, `live.md` gap annotation); CaptureTests non-device
+      (`AudioConverter`, `CaptureSocketServer` round-trip) + device-gated
+      (`SystemAudioCaptureEngine`/`MicCaptureEngine` real capture); Pipeline
+      IPC two-socket + pause/resume integration
+- [x] DONE: device tests pass real SCK + AVFoundation capture
+      (`PULSARTRACE_DEVICE_TESTS=1`); two-socket live pass produces `live.md`;
+      pause/resume control frames annotate the gap
+- New DECISIONS: D21 (in-band pause/resume control frames), D22 (`PulsarTraceCapture`
+  module layout)
 
 ---
 

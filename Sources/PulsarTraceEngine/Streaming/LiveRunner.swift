@@ -23,9 +23,14 @@ final class LiveRunner: Sendable {
 
     /// Which physical stream a merged frame came from.
     enum StreamTag: Sendable { case system, mic }
-    /// One merged-stream item: a frame plus its origin, or an end marker.
+    /// One merged-stream item: a frame plus its origin, a pause/resume marker
+    /// (Epic 7 — capture daemon sleep/wake), or an end marker.
     enum MergedItem: Sendable {
         case frame(StreamTag, AudioFrame)
+        /// The stream paused (capture daemon: system sleep / device change).
+        case paused(StreamTag)
+        /// The stream resumed; carries which one and the paused gap.
+        case resumed(StreamTag, Duration)
         /// A stream ended; carries which one.
         case ended(StreamTag)
     }
@@ -143,6 +148,20 @@ final class LiveRunner: Sendable {
                     }
                 }
 
+            case .paused(.system):
+                // The capture daemon paused (sleep / device change). Annotate
+                // the gap in live.md once — driven off the system stream; the
+                // mic stream's paired marker is ignored to avoid a double note.
+                await sink.appendGap(.paused)
+
+            case .resumed(.system, let gap):
+                await sink.appendGap(.resumed(gap))
+
+            case .paused(.mic), .resumed(.mic, _):
+                // The mic stream carries the same pause/resume markers; the
+                // gap is annotated once, off the system stream above.
+                break
+
             case .ended(.system):
                 let elapsedNow = ContinuousClock.now - startWall
                 for utt in systemStreamer.finish() {
@@ -207,9 +226,18 @@ final class LiveRunner: Sendable {
     ) async {
         do {
             try await source.start()
+            // Iterating `any AudioFrameSource` erases the element to `Any`;
+            // recover the concrete `AudioStreamEvent` to dispatch on it.
             for try await event in source {
-                if case AudioStreamEvent.frame(let frame) = event {
-                    continuation.yield(MergedItem.frame(tag, frame))
+                switch event as? AudioStreamEvent {
+                case .frame(let frame):
+                    continuation.yield(.frame(tag, frame))
+                case .paused:
+                    continuation.yield(.paused(tag))
+                case .resumed(let gap):
+                    continuation.yield(.resumed(tag, gap))
+                case .none:
+                    break
                 }
             }
         } catch {
@@ -356,6 +384,16 @@ actor LiveSink {
         }
         await append(
             utterance, label: "You", realElapsed: realElapsed, isFlush: isFlush)
+    }
+
+    /// Append a capture pause/resume gap annotation to `live.md` (R7). A
+    /// failed append must not crash the live pass.
+    func appendGap(_ kind: LiveMarkdownWriter.GapKind) async {
+        do {
+            try await writer.appendGapAnnotation(kind)
+        } catch {
+            // An annotation failure is non-fatal — the live pass continues.
+        }
     }
 
     func noteSystemLanguage(_ language: String) {

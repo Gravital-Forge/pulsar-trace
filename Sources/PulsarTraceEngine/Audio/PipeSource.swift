@@ -32,18 +32,16 @@ public final class PipeSource: AudioFrameSource {
     public struct Iterator: AsyncIteratorProtocol {
         /// The per-iteration stream iterator. Lives in this value type — never
         /// on the shared reader — so its `mutating next()` is not shared.
-        private var frames: AsyncThrowingStream<[Float], Error>.AsyncIterator
+        private var frames: AsyncThrowingStream<FrameProtocol.DecodedItem, Error>.AsyncIterator
         private var frameIndex = 0
 
-        init(frames: AsyncThrowingStream<[Float], Error>.AsyncIterator) {
+        init(frames: AsyncThrowingStream<FrameProtocol.DecodedItem, Error>.AsyncIterator) {
             self.frames = frames
         }
 
         public mutating func next() async throws -> AudioStreamEvent? {
-            guard let samples = try await frames.next() else { return nil }
-            let frame = AudioFrame(samples: samples, sequenceIndex: frameIndex)
-            frameIndex += 1
-            return .frame(frame)
+            guard let item = try await frames.next() else { return nil }
+            return DecodedItemMapper.event(for: item, frameIndex: &frameIndex)
         }
     }
 }

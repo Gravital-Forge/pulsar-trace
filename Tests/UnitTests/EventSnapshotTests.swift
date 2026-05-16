@@ -132,4 +132,39 @@ struct EventSnapshotTests {
             recordingId: "rec_two-speakers-alternating",
             pathBasename: "live.md")), as: .lines)
     }
+
+    // MARK: - Recording-lifecycle events (Epic 7)
+
+    @Test("recording_started JSONL line matches the recorded snapshot")
+    func recordingStartedSnapshot() throws {
+        assertSnapshot(of: try line(RecordingStartedEvent(
+            recordingId: "rec_4f2a", outputDirBasename: "meeting-2026-05-16",
+            micDevice: "MacBook Air Microphone", systemAudioEnabled: true,
+            modelLive: "base")), as: .lines)
+    }
+
+    @Test("recording_paused JSONL line matches the recorded snapshot")
+    func recordingPausedSnapshot() throws {
+        assertSnapshot(of: try line(RecordingPausedEvent(
+            recordingId: "rec_4f2a", reason: "sleep")), as: .lines)
+    }
+
+    @Test("recording_resumed JSONL line matches the recorded snapshot")
+    func recordingResumedSnapshot() throws {
+        assertSnapshot(of: try line(RecordingResumedEvent(
+            recordingId: "rec_4f2a", reason: "sleep")), as: .lines)
+    }
+
+    @Test("recording_stopped JSONL line matches the recorded snapshot")
+    func recordingStoppedSnapshot() throws {
+        assertSnapshot(of: try line(RecordingStoppedEvent(
+            recordingId: "rec_4f2a", durationSeconds: 1843.5,
+            reason: "user_stop")), as: .lines)
+    }
+
+    @Test("permission_changed JSONL line matches the recorded snapshot")
+    func permissionChangedSnapshot() throws {
+        assertSnapshot(of: try line(PermissionChangedEvent(
+            permission: "screen_recording", granted: true)), as: .lines)
+    }
 }

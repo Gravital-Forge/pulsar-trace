@@ -11,6 +11,10 @@ are not attempted.
 signing certificates. Epics 7–10 cannot be *verified* here; shipping unverified code for
 them would violate the project's test-discipline invariant ("if you can't write the test,
 the code isn't done"). Confirmed with the user.
+**Addendum (Epic 7):** A later run continued on a real-audio-capable host (Apple M2,
+BlackHole installed, Microphone + Screen Recording TCC granted — see `PREWORK.md`), so
+**Epic 7 (Real Device Capture) was implemented and verified** there, including the
+opt-in device tests (`PULSARTRACE_DEVICE_TESTS=1`). Epics 8–10 remain for later runs.
 
 ## D2 — Pure SwiftPM for v0.1; no Xcode project / `.app`
 **Decision:** v0.1 + Epic 6 build as a SwiftPM package (`Package.swift`). No `.xcodeproj`,
@@ -394,3 +398,57 @@ use the CPU backend (D15), which does not keep real-time pace on the longer
 fixtures; the Pipeline realtime test therefore asserts the *backpressure
 invariant* (lag stays bounded, `live.md` grows monotonically) rather than the
 ≤ 5 s figure, and R10's ≤ 5 s is verified by the manual GPU smoke test.
+
+## D21 — Pause/resume travels the capture socket as in-band `FrameProtocol` control frames
+
+**Decision:** `pulsartrace-capture` signals a recording pause/resume (system
+sleep, R7; audio-device change, R8) to the engine **in-band** on the existing
+`capture.sock` stream, by extending `FrameProtocol` with **control frames**: a
+length prefix that is neither the `0` end-of-stream sentinel nor a positive
+multiple of 4 (a value a Float32 PCM frame can never have), whose payload is a
+one-byte opcode plus opcode data. `paused` is a 1-byte frame (`length 1`);
+`resumed` is a 9-byte frame (`length 9`: opcode + an 8-byte little-endian
+nanosecond gap). `SocketSource` decodes them into `AudioStreamEvent.paused` /
+`.resumed(gap:)`, which `LiveRunner` turns into a `live.md` gap annotation.
+
+**Why:** the alternatives were a separate control side-channel socket, or a
+tagged-frame protocol wrapping every PCM frame with a type byte. The in-band
+sentinel approach is the smallest change and is consistent with how
+`FrameProtocol` already signals end-of-stream (a reserved `length 0`). It is
+**purely additive and backward-compatible**: a PCM frame's length is always a
+positive multiple of 4, so a control length can never be mistaken for one;
+`FixtureSocketServer`, `PipeSource`, `RawPCMPipeSource`, and every Epic 1–6
+test write only PCM frames + the `0` sentinel, so none are affected. The
+read-exactly-`length`-bytes invariant is preserved (the opcode + data are the
+frame's whole payload). `capture.sock` is an internal IPC contract between
+PulsarTrace's own processes — not one of the three public API surfaces
+(`live.md`, `final.md`, `events/*.jsonl`) — so extending it needs no public
+version bump. The `live.md` gap annotation reuses the italic-note line kind
+`final.md` already uses for "no speech detected" (`docs/file-format.md`
+Versioning lists an optional annotation line as a non-breaking addition).
+
+## D22 — `pulsartrace-capture` is a thin executable over a `PulsarTraceCapture` library that depends on `PulsarTraceEngine`
+
+**Decision:** Epic 7's capture code lives in a new SwiftPM **library** target
+`PulsarTraceCapture` (the `DeviceCaptureSource` orchestrator, the AVFoundation
+and ScreenCaptureKit capture engines, `AudioConverter`, `CaptureSocketServer`,
+the sleep/wake monitor, the permission checker). The `pulsartrace-capture`
+executable target is a thin `main.swift` over it. `PulsarTraceCapture`
+**depends on `PulsarTraceEngine`** for the shared wire types (`FrameProtocol`,
+`AudioFrame`/`AudioFormat`, `AudioStreamEvent`) and the events log.
+
+**Why:** two consumers need the capture code — the `pulsartrace-capture`
+executable and the `CaptureTests` target (which `@testable import`s it for the
+device-gated tests) — so it cannot live inside the executable target. The open
+choice was whether to also extract the shared wire types into a third
+`PulsarTraceIPC` library so `PulsarTraceCapture` need not depend on the whole
+engine. That was rejected: it would create a diamond
+(`PulsarTraceCapture → PulsarTraceIPC ← PulsarTraceEngine`) and force every
+consumer to import two modules, for no real benefit — `PulsarTraceCapture`
+genuinely needs only a handful of engine types, and duplicating the wire codec
+(a contract both sides must agree on byte-for-byte) is a worse risk than a
+build-time dependency edge. The PRD's "the capture daemon is the only process
+that needs TCC permissions" (R4) is about *runtime* TCC grants, not the
+compile-time module graph: linking the engine library into the capture binary
+does not give it TCC requirements — only *calling* AVFoundation/SCK does, and
+only `PulsarTraceCapture` does that.

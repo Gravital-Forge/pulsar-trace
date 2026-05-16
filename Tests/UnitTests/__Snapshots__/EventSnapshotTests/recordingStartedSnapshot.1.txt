@@ -1,0 +1,1 @@
+{"id":"evt_01HW00000000000000000000SP","mic_device":"MacBook Air Microphone","model_live":"base","output_dir_basename":"meeting-2026-05-16","recording_id":"rec_4f2a","system_audio_enabled":true,"ts":"2026-04-30T14:30:05Z","type":"recording_started","version":1}

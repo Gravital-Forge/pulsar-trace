@@ -22,6 +22,7 @@ let package = Package(
         .library(name: "PulsarTraceEngine", targets: ["PulsarTraceEngine"]),
         .executable(name: "pulsartrace-engine", targets: ["pulsartrace-engine"]),
         .executable(name: "pulsartrace", targets: ["pulsartrace"]),
+        .executable(name: "pulsartrace-capture", targets: ["pulsartrace-capture"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
@@ -62,6 +63,21 @@ let package = Package(
             name: "pulsartrace",
             dependencies: ["PulsarTraceEngine"]
         ),
+        // Epic 7: real device capture. Owns AVFoundation (mic) and
+        // ScreenCaptureKit (system audio) — the only code that needs TCC
+        // grants — and writes 16 kHz mono Float32 frames to Unix domain
+        // sockets the engine reads via `SocketSource`. Depends on
+        // PulsarTraceEngine for the shared `FrameProtocol`/`AudioFrame` wire
+        // types and the events log; it does not use the transcription stack.
+        .target(
+            name: "PulsarTraceCapture",
+            dependencies: ["PulsarTraceEngine"]
+        ),
+        // The capture daemon binary. Thin wrapper over `DeviceCaptureSource`.
+        .executableTarget(
+            name: "pulsartrace-capture",
+            dependencies: ["PulsarTraceCapture"]
+        ),
         // Layer 1: unit tests — pure logic, <5s, no devices.
         .testTarget(
             name: "UnitTests",
@@ -88,7 +104,7 @@ let package = Package(
         // Layer 3: capture tests — require BlackHole; skip gracefully when absent.
         .testTarget(
             name: "CaptureTests",
-            dependencies: ["PulsarTraceEngine"]
+            dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
         ),
     ]
 )

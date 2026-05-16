@@ -111,18 +111,40 @@ public final class SocketSource: AudioFrameSource, @unchecked Sendable {
     public struct Iterator: AsyncIteratorProtocol {
         /// The per-iteration stream iterator. Lives in this value type — never
         /// on the shared reader — so its `mutating next()` is not shared.
-        private var frames: AsyncThrowingStream<[Float], Error>.AsyncIterator
+        private var frames: AsyncThrowingStream<FrameProtocol.DecodedItem, Error>.AsyncIterator
         private var frameIndex = 0
 
-        init(frames: AsyncThrowingStream<[Float], Error>.AsyncIterator) {
+        init(frames: AsyncThrowingStream<FrameProtocol.DecodedItem, Error>.AsyncIterator) {
             self.frames = frames
         }
 
         public mutating func next() async throws -> AudioStreamEvent? {
-            guard let samples = try await frames.next() else { return nil }
+            guard let item = try await frames.next() else { return nil }
+            return DecodedItemMapper.event(for: item, frameIndex: &frameIndex)
+        }
+    }
+}
+
+/// Maps a `FrameProtocol.DecodedItem` off the wire to an `AudioStreamEvent`.
+/// Shared by `SocketSource` and `PipeSource` so both wire-fed sources surface
+/// pause/resume identically.
+enum DecodedItemMapper {
+    static func event(
+        for item: FrameProtocol.DecodedItem,
+        frameIndex: inout Int
+    ) -> AudioStreamEvent {
+        switch item {
+        case .frame(let samples):
             let frame = AudioFrame(samples: samples, sequenceIndex: frameIndex)
             frameIndex += 1
             return .frame(frame)
+        case .paused:
+            return .paused
+        case .resumed(let gapNanoseconds):
+            // Clamp to the representable range; a realistic sleep gap is
+            // seconds, far below `Duration.nanoseconds`' `Int` ceiling.
+            let clamped = Int(min(gapNanoseconds, UInt64(Int.max)))
+            return .resumed(gap: .nanoseconds(clamped))
         }
     }
 }

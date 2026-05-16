@@ -1,0 +1,1 @@
+{"duration_seconds":1843.5,"id":"evt_01HW00000000000000000000SP","reason":"user_stop","recording_id":"rec_4f2a","ts":"2026-04-30T14:30:05Z","type":"recording_stopped","version":1}

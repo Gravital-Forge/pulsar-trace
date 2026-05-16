@@ -147,6 +147,33 @@ public enum EventRegistry {
             version: LibraryCorruptionDetectedEvent.schemaVersion,
             category: .system
         ),
+        // Epic 7: recording lifecycle (`pulsartrace-capture`).
+        Entry(
+            type: RecordingStartedEvent.eventType,
+            version: RecordingStartedEvent.schemaVersion,
+            category: .recordingLifecycle
+        ),
+        Entry(
+            type: RecordingPausedEvent.eventType,
+            version: RecordingPausedEvent.schemaVersion,
+            category: .recordingLifecycle
+        ),
+        Entry(
+            type: RecordingResumedEvent.eventType,
+            version: RecordingResumedEvent.schemaVersion,
+            category: .recordingLifecycle
+        ),
+        Entry(
+            type: RecordingStoppedEvent.eventType,
+            version: RecordingStoppedEvent.schemaVersion,
+            category: .recordingLifecycle
+        ),
+        // Epic 7: TCC permission changes (system category).
+        Entry(
+            type: PermissionChangedEvent.eventType,
+            version: PermissionChangedEvent.schemaVersion,
+            category: .system
+        ),
     ]
 
     /// Look up a registered entry by its `type` string.

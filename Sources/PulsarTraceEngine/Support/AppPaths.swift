@@ -38,6 +38,26 @@ public struct AppPaths: Sendable {
     public var speakersDatabaseURL: URL {
         applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
     }
+
+    /// Directory for per-session capture sockets: `…/PulsarTrace/sockets/`
+    /// (Epic 7). `pulsartrace-capture` binds its Unix domain sockets here;
+    /// `pulsartrace-engine` connects to them via `SocketSource`.
+    public var socketDirectory: URL {
+        applicationSupport.appendingPathComponent("sockets", isDirectory: true)
+    }
+
+    /// The system-audio capture socket for one recording session (Epic 7).
+    /// The `recordingId` keeps concurrent sessions from colliding.
+    public func systemSocketURL(recordingId: String) -> URL {
+        socketDirectory.appendingPathComponent(
+            "\(recordingId)-system.sock", isDirectory: false)
+    }
+
+    /// The microphone capture socket for one recording session (Epic 7).
+    public func micSocketURL(recordingId: String) -> URL {
+        socketDirectory.appendingPathComponent(
+            "\(recordingId)-mic.sock", isDirectory: false)
+    }
 }
 
 /// ISO-8601 / UTC formatting used by both the operational log and events log.

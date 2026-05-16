@@ -1,0 +1,1 @@
+{"granted":true,"id":"evt_01HW00000000000000000000SP","permission":"screen_recording","ts":"2026-04-30T14:30:05Z","type":"permission_changed","version":1}

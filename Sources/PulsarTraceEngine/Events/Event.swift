@@ -300,6 +300,141 @@ public struct LiveMDStartedEvent: EventPayload {
     }
 }
 
+// MARK: - Recording-lifecycle events (Epic 7)
+
+/// `recording_started` — emitted by `pulsartrace-capture` once a recording
+/// session begins producing audio (§8.13, Epic 7).
+///
+/// Causal order: emitted after hardware capture has started and the first
+/// frame has reached a socket — not at socket bind time — so a consumer
+/// reacting to this event knows audio is genuinely flowing.
+public struct RecordingStartedEvent: EventPayload {
+    public static let eventType = "recording_started"
+
+    /// The recording ID (`rec_<short>`) for this session.
+    public let recordingId: String
+    /// Basename of the recording's output folder — never a full path (Inv. #7).
+    public let outputDirBasename: String
+    /// The microphone device in use (its localized name), or `none`.
+    public let micDevice: String
+    /// Whether system-audio capture is enabled for this session (R6).
+    public let systemAudioEnabled: Bool
+    /// The whisper model name used for the live pass.
+    public let modelLive: String
+
+    public init(
+        recordingId: String,
+        outputDirBasename: String,
+        micDevice: String,
+        systemAudioEnabled: Bool,
+        modelLive: String
+    ) {
+        self.recordingId = recordingId
+        self.outputDirBasename = outputDirBasename
+        self.micDevice = micDevice
+        self.systemAudioEnabled = systemAudioEnabled
+        self.modelLive = modelLive
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case outputDirBasename = "output_dir_basename"
+        case micDevice = "mic_device"
+        case systemAudioEnabled = "system_audio_enabled"
+        case modelLive = "model_live"
+    }
+}
+
+/// `recording_paused` — emitted by `pulsartrace-capture` when capture pauses
+/// mid-session (§8.13, Epic 7): the Mac went to sleep (R7) or the active audio
+/// device changed (R8).
+public struct RecordingPausedEvent: EventPayload {
+    public static let eventType = "recording_paused"
+
+    public let recordingId: String
+    /// Why capture paused — a stable code: `sleep` or `device_change`.
+    public let reason: String
+
+    public init(recordingId: String, reason: String) {
+        self.recordingId = recordingId
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case reason
+    }
+}
+
+/// `recording_resumed` — emitted by `pulsartrace-capture` when capture resumes
+/// after a pause (§8.13, Epic 7). Always paired with the `recording_paused`
+/// that preceded it (Hard Invariant #8).
+public struct RecordingResumedEvent: EventPayload {
+    public static let eventType = "recording_resumed"
+
+    public let recordingId: String
+    /// Why capture had paused — `sleep` or `device_change`.
+    public let reason: String
+
+    public init(recordingId: String, reason: String) {
+        self.recordingId = recordingId
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case reason
+    }
+}
+
+/// `recording_stopped` — emitted by `pulsartrace-capture` once a recording
+/// session ends and both audio streams are flushed (§8.13, Epic 7).
+public struct RecordingStoppedEvent: EventPayload {
+    public static let eventType = "recording_stopped"
+
+    public let recordingId: String
+    /// Total wall-clock seconds the recording captured.
+    public let durationSeconds: Double
+    /// Why the recording ended — a stable code: `user_stop`, `force_quit`,
+    /// `sleep_timeout`, or `disk_full`.
+    public let reason: String
+
+    public init(recordingId: String, durationSeconds: Double, reason: String) {
+        self.recordingId = recordingId
+        self.durationSeconds = durationSeconds
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case durationSeconds = "duration_seconds"
+        case reason
+    }
+}
+
+/// `permission_changed` — emitted by `pulsartrace-capture` when a TCC
+/// permission it depends on (Microphone or Screen Recording) changes state
+/// (§8.13, Epic 7). Checked at launch and on the system's TCC-change
+/// notification.
+public struct PermissionChangedEvent: EventPayload {
+    public static let eventType = "permission_changed"
+
+    /// Which permission changed — `microphone` or `screen_recording`.
+    public let permission: String
+    /// Whether the permission is now granted.
+    public let granted: Bool
+
+    public init(permission: String, granted: Bool) {
+        self.permission = permission
+        self.granted = granted
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case permission
+        case granted
+    }
+}
+
 // MARK: - Speaker library events (Epic 5)
 
 /// `speaker_created` — emitted when a new speaker is added to the persistent

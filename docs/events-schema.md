@@ -378,17 +378,91 @@ recovery from the last-good backup was attempted. Category: `system`.
 | `path_basename` | string | Basename of the corrupt database — `speakers.sqlite`. |
 | `recovered_from_backup` | bool | `true` when a usable backup was found and restored. |
 
-### Reserved for later epics
+### Recording lifecycle
 
-The following types are specified in PRD §8.13 and will be documented here in
-full as each epic implements emission. They are listed now so integrators see
-the planned surface:
+Epic 7 adds real device capture. `pulsartrace-capture` — the only process that
+holds TCC permissions — is the authoritative emitter of these four events: it
+owns the audio hardware and the session clock. They bracket one recording
+session: `recording_started` first, `recording_stopped` last, with any number
+of `recording_paused` / `recording_resumed` pairs in between (system sleep, R7;
+audio-device change, R8). Each `recording_resumed` is paired with the
+`recording_paused` that preceded it (causal order, Hard Invariant #8).
 
-- **Recording lifecycle** (Epic 6/7): `recording_started`, `recording_paused`,
-  `recording_resumed`, `recording_stopped`.
-- **File operations** (Epic 6): `live_md_started`.
-- **System** (Epic 7): `permission_changed`. (`model_downloaded` is documented
-  above — implemented in Epic 2.)
+#### `recording_started` (version 1)
+
+Emitted once when a recording session begins producing audio — after hardware
+capture has started and the first frame has reached a socket, so a consumer
+reacting to this event knows audio is genuinely flowing. Category:
+`recording_lifecycle`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The recording (`rec_<short>`). |
+| `output_dir_basename` | string | Basename of the recording's output folder — never a full path. |
+| `mic_device` | string | The microphone in use (its localized name), or `none`. |
+| `system_audio_enabled` | boolean | Whether system-audio capture is on for this session (R6). |
+| `model_live` | string | Whisper model name used for the live pass, e.g. `base`. |
+
+```jsonl
+{"id":"evt_01KR...","mic_device":"MacBook Air Microphone","model_live":"base","output_dir_basename":"meeting-2026-05-16","recording_id":"rec_4f2a","system_audio_enabled":true,"ts":"2026-05-16T14:30:05Z","type":"recording_started","version":1}
+```
+
+#### `recording_paused` (version 1)
+
+Emitted when capture pauses mid-session. Category: `recording_lifecycle`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The recording. |
+| `reason` | string | Stable code: `sleep` (Mac slept, R7) or `device_change` (active audio device changed, R8). |
+
+```jsonl
+{"id":"evt_01KR...","reason":"sleep","recording_id":"rec_4f2a","ts":"2026-05-16T14:42:11Z","type":"recording_paused","version":1}
+```
+
+#### `recording_resumed` (version 1)
+
+Emitted when capture resumes after a pause. Always paired with — and emitted
+after — the `recording_paused` that preceded it. Category: `recording_lifecycle`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The recording. |
+| `reason` | string | The reason capture had paused — `sleep` or `device_change`. |
+
+```jsonl
+{"id":"evt_01KR...","reason":"sleep","recording_id":"rec_4f2a","ts":"2026-05-16T14:48:33Z","type":"recording_resumed","version":1}
+```
+
+#### `recording_stopped` (version 1)
+
+Emitted once when a recording session ends and both audio streams are flushed.
+Category: `recording_lifecycle`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recording_id` | string | The recording. |
+| `duration_seconds` | number | Total wall-clock seconds captured. |
+| `reason` | string | Stable code: `user_stop`, `force_quit`, `sleep_timeout`, or `disk_full`. |
+
+```jsonl
+{"duration_seconds":1843.5,"id":"evt_01KR...","reason":"user_stop","recording_id":"rec_4f2a","ts":"2026-05-16T15:00:48Z","type":"recording_stopped","version":1}
+```
+
+#### `permission_changed` (version 1)
+
+Emitted by `pulsartrace-capture` when a TCC permission it depends on changes
+state — checked at launch and on the system's TCC-change notification.
+Category: `system`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `permission` | string | Which permission — `microphone` or `screen_recording`. |
+| `granted` | boolean | Whether the permission is now granted. |
+
+```jsonl
+{"granted":true,"id":"evt_01KR...","permission":"screen_recording","ts":"2026-05-16T14:29:50Z","type":"permission_changed","version":1}
+```
 
 ### Causal pairing
 

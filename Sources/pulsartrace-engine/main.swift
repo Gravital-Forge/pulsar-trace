@@ -99,21 +99,27 @@ struct EngineMain {
         return output.markdown
     }
 
-    /// Epic 6: run the live pass — streaming transcription + provisional live
-    /// diarization — over a source, growing an append-only `live.md`.
+    /// Epic 6/7: run the live pass — streaming transcription + provisional
+    /// live diarization — over a source, growing an append-only `live.md`.
     ///
-    /// A single `--stdin` / `--source fixture` stream is the **system stream**
-    /// (diarized, `Them …` labels) — see `StreamingPipeline` docs. `live.md` is
-    /// written into a recording folder: `--out <dir>` if given, else a sibling
-    /// folder named for the fixture stem (`meeting.wav` → `meeting/`), else a
-    /// timestamped folder in the cwd for a `--stdin` stream.
+    /// Sources:
+    /// - `--stdin` / `--source fixture <wav>` — a single stream, treated as the
+    ///   **system stream** (diarized, `Them …` labels).
+    /// - `--system-socket <path>` (+ optional `--mic-socket <path>`) — Epic 7
+    ///   real-capture mode: the system stream and, when paired, the `You` mic
+    ///   stream, each read from a `pulsartrace-capture` Unix domain socket.
+    ///
+    /// `live.md` is written into a recording folder: `--out <dir>` if given,
+    /// else a sibling folder named for the fixture stem, else a timestamped
+    /// folder in the cwd.
     ///
     /// Live diarization is best-effort: if the pyannote subprocess cannot
     /// start it is skipped and system speakers stay the generic
     /// `Them (provisional)`. `--no-live-diarization` skips it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
-        // --- resolve the source ---------------------------------------------
+        // --- resolve the source(s) ------------------------------------------
         let source: any AudioFrameSource
+        var micSource: (any AudioFrameSource)?
         let stemName: String
         if args.contains("--stdin") {
             source = RawPCMPipeSource(fd: FileHandle.standardInput.fileDescriptor)
@@ -124,10 +130,23 @@ struct EngineMain {
                 file: URL(fileURLWithPath: path), realtime: true)
             stemName = URL(fileURLWithPath: path)
                 .deletingPathExtension().lastPathComponent
+        } else if let systemSocket = value(after: "--system-socket", in: args)
+                    ?? value(after: "--mic-socket", in: args) {
+            // Epic 7: capture-daemon sockets. The system socket is the primary
+            // (diarized) stream; a mic socket is a paired `You` stream only
+            // when a system socket is also present.
+            source = SocketSource(socketPath: URL(fileURLWithPath: systemSocket))
+            if value(after: "--system-socket", in: args) != nil,
+               let micPath = value(after: "--mic-socket", in: args) {
+                micSource = SocketSource(socketPath: URL(fileURLWithPath: micPath))
+            }
+            stemName = value(after: "--recording-id", in: args)
+                ?? "live-" + Self.timestampStem()
         } else {
             throw UsageError(message: """
-                usage: pulsartrace-engine --live [--stdin | --source fixture <wav>] \
-                [--out <dir>] [--model base|large-v3] [--no-live-diarization]
+                usage: pulsartrace-engine --live \
+                [--stdin | --source fixture <wav> | --system-socket <path> [--mic-socket <path>]] \
+                [--out <dir>] [--recording-id <id>] [--model base|large-v3] [--no-live-diarization]
                 """)
         }
 
@@ -150,6 +169,11 @@ struct EngineMain {
         let modelURL = try await ModelStore(events: lifecycle.events)
             .ensureAvailable(model)
         let transcriber = try WhisperTranscriber(modelURL: modelURL)
+        // A paired mic stream needs its own resident whisper context — one
+        // context per stream (D8); the Metal lock serializes their creation.
+        let micTranscriber: WhisperTranscriber? = micSource != nil
+            ? try WhisperTranscriber(modelURL: modelURL)
+            : nil
 
         // --- live diarization config (dev venv + .env, like RefineCommand) --
         let liveDiarizerConfig: LiveDiarizer.Configuration?
@@ -172,7 +196,9 @@ struct EngineMain {
                 recordingId: recordingId,
                 liveDiarizerConfig: liveDiarizerConfig),
             systemTranscriber: transcriber,
+            micTranscriber: micTranscriber,
             systemSource: source,
+            micSource: micSource,
             library: library)
 
         let medianLag = String(format: "%.1f", output.medianLagSeconds)
