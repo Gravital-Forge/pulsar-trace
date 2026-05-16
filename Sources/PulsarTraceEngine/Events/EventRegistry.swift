@@ -46,6 +46,12 @@ public enum EventRegistry {
             version: AppStoppedEvent.schemaVersion,
             category: .system
         ),
+        // Epic 2: whisper model downloaded + SHA-256 verified.
+        Entry(
+            type: ModelDownloadedEvent.eventType,
+            version: ModelDownloadedEvent.schemaVersion,
+            category: .system
+        ),
     ]
 
     /// Look up a registered entry by its `type` string.

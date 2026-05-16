@@ -5,6 +5,10 @@
 *.xcodeproj
 .swiftpm/
 
+# Vendored whisper.cpp: cloned + built by scripts/build-whisper.sh,
+# pinned by commit in DECISIONS.md (D7). Reproducible, not committed.
+vendor/
+
 # Python venv and caches
 python/pulsartrace-ai/.venv/
 __pycache__/

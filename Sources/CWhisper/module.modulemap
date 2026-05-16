@@ -1,0 +1,13 @@
+// CWhisper — SwiftPM system-library wrapper around the vendored whisper.cpp.
+//
+// The header lives in the build script's install tree
+// (vendor/whisper-install/include); this module's `umbrella header` is a thin
+// shim that #includes it. The dylib is linked via `linkerSettings` in
+// Package.swift (an -L/-l pair plus an rpath). whisper.cpp is built by
+// scripts/build-whisper.sh and pinned to a commit (DECISIONS.md D7); it is not
+// checked into git.
+module CWhisper {
+    umbrella header "shim.h"
+    link "whisper"
+    export *
+}

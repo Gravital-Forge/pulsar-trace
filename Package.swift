@@ -1,5 +1,17 @@
 // swift-tools-version: 6.0
 import PackageDescription
+import Foundation
+
+// whisper.cpp is vendored + built by `scripts/build-whisper.sh` into
+// `vendor/whisper-install/` (gitignored, reproducible from the pinned commit in
+// DECISIONS.md D7). SwiftPM can't run that script, so PulsarTraceEngine reaches
+// the built library through absolute -I/-L/-rpath flags computed here from the
+// package directory. `swift build` works once the script has run.
+let whisperInstall = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appendingPathComponent("vendor/whisper-install")
+let whisperInclude = whisperInstall.appendingPathComponent("include").path
+let whisperLib = whisperInstall.appendingPathComponent("lib").path
 
 let package = Package(
     name: "PulsarTrace",
@@ -16,11 +28,28 @@ let package = Package(
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.17.0"),
     ],
     targets: [
+        // System-library wrapper around the vendored whisper.cpp (Epic 2).
+        // The dylib + headers are produced by scripts/build-whisper.sh; see
+        // DECISIONS.md D7 for the integration approach and pinned commit.
+        .systemLibrary(name: "CWhisper"),
         // Core library: the engine, all AudioFrameSources, logging, events log, IPC.
         .target(
             name: "PulsarTraceEngine",
             dependencies: [
                 .product(name: "Logging", package: "swift-log"),
+                "CWhisper",
+            ],
+            cSettings: [
+                .unsafeFlags(["-I", whisperInclude]),
+            ],
+            swiftSettings: [
+                .unsafeFlags(["-I", whisperInclude]),
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-L", whisperLib,
+                    "-Xlinker", "-rpath", "-Xlinker", whisperLib,
+                ]),
             ]
         ),
         // The streaming engine binary. Consumes an AudioFrameSource; counts/logs frames.
@@ -53,7 +82,8 @@ let package = Package(
             dependencies: [
                 "PulsarTraceEngine",
                 .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
-            ]
+            ],
+            exclude: ["__Snapshots__"]
         ),
         // Layer 3: capture tests — require BlackHole; skip gracefully when absent.
         .testTarget(

@@ -36,22 +36,30 @@ UTF-8, line-oriented, so consumers can `tail -f` the file.
 A file begins with a marker comment and a heading:
 
 ```
-<!-- pulsartrace:live -->
+<!-- pulsartrace:final -->
 ## Transcript — 2026-04-30 14:30
 
-**[14:30:05] You:** So the main issue is the authentication flow breaks on mobile.
+**[00:00:05] You:** So the main issue is the authentication flow breaks on mobile.
 
-**[14:30:12] Sarah (provisional):** Right, I think the redirect URI isn't being handled correctly by the webview.
+**[00:00:12] Sarah:** Right, I think the redirect URI isn't being handled correctly by the webview.
 ```
 
 - **Marker comment** — `<!-- pulsartrace:live -->` in `live.md`,
   `<!-- pulsartrace:final -->` in `final.md`. Always the first line. A consumer
   uses it to tell the two file kinds apart.
-- **Heading** — `## Transcript — YYYY-MM-DD HH:MM` (local time).
+- **Heading** — `## Transcript — YYYY-MM-DD HH:MM` (R13). The local wall-clock
+  at which **recording started**, captured once at session start and never
+  recomputed. Epic 4 also stores it in `metadata.json`.
 - **Utterance line** — `**[HH:MM:SS] <speaker>:** <text>`
-  - `[HH:MM:SS]` — local time the utterance started.
+  - `[HH:MM:SS]` — **seconds since recording start** (R13), not wall-clock:
+    `00:00:00` at the start of the recording, growing to end-of-recording. The
+    hours field simply grows for long recordings (e.g. `04:12:33`); there is no
+    wraparound. An elapsed offset rather than wall-clock sidesteps DST and
+    timezone-shift edge cases mid-recording.
   - `<speaker>` — `You` for the mic stream; a speaker name or `Unknown #N` for
-    system-audio speakers.
+    system-audio speakers. **Epic 2 (offline transcription) has no diarization
+    yet**: it emits a single placeholder label `Speaker` on every line. Epic 3
+    replaces it with diarized labels.
   - `(provisional)` — present in `live.md` only, on speakers whose identity is
     not yet confirmed. Removed in `final.md`.
 

@@ -6,8 +6,9 @@ significant operation in PulsarTrace. It is a **public API surface** alongside
 it to understand "what's happened in PulsarTrace recently."
 
 > Status: Epic 1 establishes the envelope contract, the rotation/retention
-> behavior, and the `app_started` / `app_stopped` system events. Later epics
-> append their event types to the catalogue below as they implement emission.
+> behavior, and the `app_started` / `app_stopped` system events. Epic 2 adds
+> `model_downloaded`. Later epics append their event types to the catalogue
+> below as they implement emission.
 
 ## File layout
 
@@ -106,6 +107,27 @@ Emitted once when a PulsarTrace process exits cleanly. Same payload shape as
 {"app_version":"0.1.0-dev","id":"evt_01HW...","macos_version":"26.3.1","ts":"2026-04-30T15:12:48Z","type":"app_stopped","version":1}
 ```
 
+#### `model_downloaded` (version 1)
+
+Emitted once after a whisper model file is downloaded **and** its SHA-256
+verified against the pinned hash (R54c, R54d). Category: `system`.
+
+A download that fails or fails verification emits **nothing** — the partial /
+corrupt file is deleted and the download retried (resuming via HTTP Range); only
+a fully-verified model produces this event. So one `model_downloaded` line means
+exactly one model is now cached and trustworthy.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model_name` | string | Short model name, e.g. `base`, `large-v3`. |
+| `size_bytes` | integer | Verified file size in bytes. |
+| `sha256` | string | Lowercase-hex SHA-256 the file was verified against. |
+| `source_host` | string | Bare hostname the model came from, e.g. `huggingface.co`. Never a full URL — no query params, no path (privacy + no-telemetry). |
+
+```jsonl
+{"id":"evt_01KR...","model_name":"base","sha256":"60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe","size_bytes":147951465,"source_host":"huggingface.co","ts":"2026-05-16T01:59:45Z","type":"model_downloaded","version":1}
+```
+
 ### Reserved for later epics
 
 The following types are specified in PRD §8.13 and will be documented here in
@@ -121,8 +143,9 @@ the planned surface:
   `speaker_unmerged`, `speaker_unsplit`, `speaker_centroid_updated`.
 - **File operations** (Epic 4/6): `live_md_started`, `final_md_written`,
   `final_md_rewritten`, `live_md_replaced_by_final`.
-- **System** (Epic 2/7): `model_downloaded`, `permission_changed`,
-  `library_backup_created`, `library_corruption_detected`.
+- **System** (Epic 7): `permission_changed`, `library_backup_created`,
+  `library_corruption_detected`. (`model_downloaded` is documented above —
+  implemented in Epic 2.)
 
 ### Causal pairing
 

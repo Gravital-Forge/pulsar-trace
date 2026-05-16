@@ -11,25 +11,28 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
 
 ---
 
-## Epic 1 — Foundations
-- [~] SwiftPM package structure: `PulsarTraceEngine` lib, `pulsartrace-engine` exe, `pulsartrace` CLI exe
-- [~] Test targets `UnitTests` / `PipelineTests` / `CaptureTests` (Swift Testing) + snapshot testing wired
-- [~] `swift-log` dual backend (os.Logger + rotating file logger), 7-day retention, content-leak test
-- [~] Events log: JSONL writer, ULID, common envelope, `app_started`/`app_stopped`, 30-day rotation
-- [~] `AudioFrameSource` protocol + `FixturePlaybackSource`, `PipeSource`, `SocketSource`
-- [~] IPC scaffolding: `control.sock` (JSON-line) + `capture.sock` (binary frame protocol def)
-- [~] Python package skeleton (`python/pulsartrace-ai`), venv build script, pytest harness
-- [~] Audio fixtures committed; `ffmpeg -re | pulsartrace-engine --stdin` frame-count smoke
-- [~] DONE: Unit+Pipeline green <30s; pytest green; pipe smoke works; event pair emitted
-      (implemented + verified; `[x]` once the coordinator commits on `main`)
+## Epic 1 — Foundations  ✅ committed b7c1cfa
+- [x] SwiftPM package structure: `PulsarTraceEngine` lib, `pulsartrace-engine` exe, `pulsartrace` CLI exe
+- [x] Test targets `UnitTests` / `PipelineTests` / `CaptureTests` (Swift Testing) + snapshot testing wired
+- [x] `swift-log` dual backend (os.Logger + rotating file logger), 7-day retention, content-leak test
+- [x] Events log: JSONL writer, ULID, common envelope, `app_started`/`app_stopped`, 30-day rotation
+- [x] `AudioFrameSource` protocol + `FixturePlaybackSource`, `PipeSource`, `SocketSource`
+- [x] IPC scaffolding: `control.sock` (JSON-line) + `capture.sock` (binary frame protocol def)
+- [x] Python package skeleton (`python/pulsartrace-ai`), venv build script, pytest harness
+- [x] Audio fixtures committed; `ffmpeg -re | pulsartrace-engine --stdin` frame-count smoke
+- [x] DONE: Unit+Pipeline green <30s; pytest green; pipe smoke works; event pair emitted
 
-## Epic 2 — Offline Transcription
-- [ ] whisper.cpp built with Metal; resident model; multilingual `base` + `large-v3`
-- [ ] Model download (HTTP Range resume R54c) + SHA-256 verify (R54d)
-- [ ] Canonical Int16 16kHz mono WAV storage (R54e)
-- [ ] Transcribe any `AudioFrameSource`; overlap windowing / LocalAgreement-2 (R11)
-- [ ] Output format R13; VAD-gate + `[BLANK_AUDIO]` filter
-- [ ] DONE: `pulsartrace-engine --source fixture --transcribe` → snapshot-matched markdown
+## Epic 2 — Offline Transcription  ✅ done & verified (not committed)
+- [x] whisper.cpp v1.8.4 vendored + built with Metal (scripts/build-whisper.sh, D7);
+      `CWhisper` systemLibrary target; resident model via `WhisperTranscriber` (R9)
+- [x] `ModelStore`: HF download, HTTP Range resume (R54c) + SHA-256 verify (R54d);
+      `model_downloaded` event; multilingual `base` + `large-v3` pinned in `ModelCatalog`
+- [x] `WAVWriter`: canonical Int16 16kHz mono WAV storage (R54e)
+- [x] Offline transcribe from any `AudioFrameSource` — single `whisper_full` over the
+      whole stream, so no chunk-boundary artifacts (R11); `OfflineTranscriptionPipeline`
+- [x] `TranscriptDocument` R13 format; `BlankTokenFilter` + no-speech threshold
+- [x] DONE: `pulsartrace-engine --source fixture --transcribe` → snapshot-matched markdown;
+      Unit+Pipeline green; determinism confirmed (6× stable). D8: Metal single-context lock.
 
 ## Epic 3 — Offline Diarization
 - [ ] pyannote community-1 via embedded Python; speaker spans + embeddings

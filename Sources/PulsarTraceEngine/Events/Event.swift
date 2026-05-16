@@ -64,3 +64,39 @@ public struct AppStoppedEvent: EventPayload {
         case macosVersion = "macos_version"
     }
 }
+
+// MARK: - System events (Epic 2)
+
+/// `model_downloaded` — emitted once after a whisper model is downloaded *and*
+/// its SHA-256 verified (R54d). A failed/corrupt download emits nothing — the
+/// file is deleted and the download retried; only a verified model is an event.
+///
+/// `source_host` is the bare hostname (`huggingface.co`), never a full URL with
+/// query params — invariant 7 (no full paths in logs) and the no-telemetry
+/// rule both apply.
+public struct ModelDownloadedEvent: EventPayload {
+    public static let eventType = "model_downloaded"
+
+    /// Short model name, e.g. `base` / `large-v3`.
+    public let modelName: String
+    /// Verified file size in bytes.
+    public let sizeBytes: Int
+    /// The lowercase-hex SHA-256 the file was verified against.
+    public let sha256: String
+    /// Bare hostname the model came from (e.g. `huggingface.co`).
+    public let sourceHost: String
+
+    public init(modelName: String, sizeBytes: Int, sha256: String, sourceHost: String) {
+        self.modelName = modelName
+        self.sizeBytes = sizeBytes
+        self.sha256 = sha256
+        self.sourceHost = sourceHost
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case modelName = "model_name"
+        case sizeBytes = "size_bytes"
+        case sha256
+        case sourceHost = "source_host"
+    }
+}

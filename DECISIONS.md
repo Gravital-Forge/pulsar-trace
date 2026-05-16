@@ -60,3 +60,37 @@ fixtures as a SwiftPM `.copy` resource would require them to sit inside a specif
 target's directory and would duplicate ~3.9 MB. Resolving by path keeps one committed
 copy. Tests run from a normal `swift test`; only the path case and the resource-bundling
 mechanism differ from the PRD's wording.
+
+## D7 — whisper.cpp vendored + built from source, pinned by commit; linked as a SwiftPM systemLibrary
+**Decision:** Transcription uses whisper.cpp's C API via FFI from Swift (not
+pywhispercpp, not a `whisper-cli` subprocess). whisper.cpp is **vendored**:
+`scripts/build-whisper.sh` clones `https://github.com/ggml-org/whisper.cpp.git`
+pinned to **v1.8.4 — commit `9386f239401074690479731c1e41683fbbeac557`** and
+builds it with cmake + Metal (`-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON`,
+shared libs, deployment target 14.0, arm64). The build installs headers + dylibs
+into `vendor/whisper-install/`. `Package.swift` declares a `CWhisper`
+`systemLibrary` target (a modulemap + shim header) and `PulsarTraceEngine`
+reaches the built library through absolute `-I`/`-L`/`-rpath` flags computed
+from the package directory.
+**Why:** The skill forbids pywhispercpp (embedded Python is reserved for
+pyannote/diart) and per-chunk `whisper-cli` subprocesses (the model must be
+resident). A vendored, commit-pinned source build with Metal embedded gives a
+reproducible, hardware-accelerated, single-process resident model. The checkout
+and install tree are `.gitignore`d (`vendor/`); the pinned commit + build script
+make them reproducible without bloating the repo. SwiftPM cannot run the build
+script itself, so the `-I/-L/-rpath` flags are `unsafeFlags` — acceptable
+because the package is not consumed as a dependency by anything else.
+
+## D8 — whisper.cpp Metal backend is single-context per process; serialized by a lock
+**Decision:** `WhisperTranscriber` guards `whisper_context` creation/free and the
+entire `whisper_full`+result-read region with a process-wide `NSLock`. The
+offline transcription test suite is additionally marked `.serialized`.
+**Why:** whisper.cpp's Metal backend keeps a per-device residency set that
+asserts (`GGML_ASSERT(rsets->data count == 0)`) when contexts are created/freed
+concurrently, and two contexts whose GPU compute overlaps corrupt each other's
+results (observed as a garbage detected language like "af" with empty
+segments). Epic 2's real usage is one source = one transcriber, so serialization
+costs nothing on the offline path; it makes the single-context invariant
+enforced rather than incidental. If Epic 4/6 ever need true parallel
+transcription, that needs a separate design (e.g. multiple processes), not
+shared Metal contexts.
