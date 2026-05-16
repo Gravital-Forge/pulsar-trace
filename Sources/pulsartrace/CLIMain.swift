@@ -38,8 +38,7 @@ struct CLIMain {
             err("`pulsartrace record` is delivered in Epic 9 (CLI Surface).")
             return 1
         case "speakers":
-            err("`pulsartrace speakers` is delivered in Epic 5 (Speaker Library).")
-            return 1
+            return await SpeakersCommand.run(Array(args.dropFirst()), events: events)
         case "events":
             err("`pulsartrace events tail` is delivered in Epic 9 (CLI Surface).")
             return 1

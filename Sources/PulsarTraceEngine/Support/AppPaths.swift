@@ -32,6 +32,12 @@ public struct AppPaths: Sendable {
     public var eventsDirectory: URL {
         applicationSupport.appendingPathComponent("events", isDirectory: true)
     }
+
+    /// Persistent speaker-library SQLite database:
+    /// `…/PulsarTrace/speakers.sqlite` (R28).
+    public var speakersDatabaseURL: URL {
+        applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
+    }
 }
 
 /// ISO-8601 / UTC formatting used by both the operational log and events log.

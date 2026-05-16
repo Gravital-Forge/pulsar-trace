@@ -1,0 +1,1 @@
+{"id":"evt_01HW00000000000000000000SP","path_basename":"speakers.sqlite","recovered_from_backup":true,"ts":"2026-04-30T14:30:05Z","type":"library_corruption_detected","version":1}

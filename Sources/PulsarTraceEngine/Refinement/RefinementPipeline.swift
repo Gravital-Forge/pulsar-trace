@@ -162,6 +162,14 @@ public struct RefinementPipeline: Sendable {
     ///   - whisperModelName: model name recorded in `metadata.json` / events.
     ///   - whisperModelSHA256: pinned model hash recorded in `metadata.json`.
     ///   - recordingStart: wall-clock recording start for the `final.md` header.
+    ///   - library: the persistent speaker library (Epic 5). When supplied,
+    ///     post-pass clusters are reconciled against it — known speakers get
+    ///     their library name, new speakers an `Unknown #N` placeholder
+    ///     (R22, R23). `nil` keeps the Epic 4 `Speaker_N` behaviour.
+    ///   - precomputedDiarization: an injected diarization result that bypasses
+    ///     the `diarizer` subprocess. The seam that lets Epic 5's reconciliation
+    ///     be tested deterministically against committed JSON fixtures without
+    ///     spawning pyannote; production passes `nil`.
     ///   - progress: optional progress sink (R26).
     public func run(
         inputPath: URL,
@@ -171,6 +179,8 @@ public struct RefinementPipeline: Sendable {
         whisperModelSHA256: String,
         recordingStart: Date = Date(),
         whisperOptions: WhisperTranscriber.Options = .init(),
+        library: SpeakerLibrary? = nil,
+        precomputedDiarization: DiarizationResult? = nil,
         progress: ProgressReporter? = nil
     ) async throws -> Output {
         let started = clock()
@@ -203,6 +213,8 @@ public struct RefinementPipeline: Sendable {
                 whisperModelSHA256: whisperModelSHA256,
                 recordingStart: recordingStart,
                 whisperOptions: whisperOptions,
+                library: library,
+                precomputedDiarization: precomputedDiarization,
                 startedAt: started,
                 sourceBasename: inputPath.lastPathComponent,
                 progress: progress)
@@ -229,6 +241,8 @@ public struct RefinementPipeline: Sendable {
         whisperModelSHA256: String,
         recordingStart: Date,
         whisperOptions: WhisperTranscriber.Options,
+        library: SpeakerLibrary?,
+        precomputedDiarization: DiarizationResult?,
         startedAt: Date,
         sourceBasename: String,
         progress: ProgressReporter?
@@ -248,14 +262,40 @@ public struct RefinementPipeline: Sendable {
         var diarization: DiarizationResult?
         if !systemTranscription.segments.isEmpty {
             progress?(.diarizing)
-            do {
-                diarization = try await diarizer.diarizeSystemStream(
-                    wavPath: folder.systemStream.url)
-            } catch {
-                throw RefineError.diarization(error)
+            if let precomputedDiarization {
+                // Test seam: a committed diarization JSON fixture stands in for
+                // the pyannote subprocess so Epic 5 reconciliation is
+                // deterministic without spawning Python.
+                diarization = precomputedDiarization
+            } else {
+                do {
+                    diarization = try await diarizer.diarizeSystemStream(
+                        wavPath: folder.systemStream.url)
+                } catch {
+                    throw RefineError.diarization(error)
+                }
             }
         } else {
             logger.notice("no speech in system stream — skipping diarization")
+        }
+
+        // --- Stage 3b: reconcile clusters against the speaker library -------
+        // (R22, R23) — known speakers get their library name, new speakers an
+        // `Unknown #N` placeholder; returning-speaker centroids are refined.
+        var reconciliation: SpeakerReconciler.Outcome?
+        if let library, let diarization {
+            do {
+                reconciliation = try await SpeakerReconciler(library: library)
+                    .reconcile(
+                        diarization: diarization,
+                        recordingId: folder.recordingId,
+                        recordingFolderName: folder.directory.lastPathComponent)
+            } catch {
+                // A library failure must not lose a refine: fall back to the
+                // raw `Speaker_N` labels and continue.
+                logger.error("speaker reconciliation failed — using Speaker_N labels")
+                reconciliation = nil
+            }
         }
 
         // --- Stage 4: transcribe + merge the mic stream (if any) ------------
@@ -272,6 +312,7 @@ public struct RefinementPipeline: Sendable {
         let merged = mergeStreams(
             system: systemTranscription,
             diarization: diarization,
+            reconciliation: reconciliation,
             mic: micTranscription,
             recordingStart: recordingStart)
 
@@ -326,6 +367,7 @@ public struct RefinementPipeline: Sendable {
         let metadata = buildMetadata(
             folder: folder,
             speakers: merged.speakers,
+            speakerIdByLabel: merged.speakerIdByLabel,
             systemTranscription: systemTranscription,
             diarization: diarization,
             recordingStart: recordingStart,
@@ -343,13 +385,17 @@ public struct RefinementPipeline: Sendable {
         // --- Done ------------------------------------------------------------
         progress?(.done)
         let wallSeconds = clock().timeIntervalSince(startedAt)
+        // Epic 5: `speakers_new` / `speakers_matched` are now real — the
+        // reconciler reports how many clusters were new vs. library matches.
+        // Without a library (Epic 4 behaviour) every speaker counts as "new".
+        let speakersNew = reconciliation?.newCount ?? merged.speakers.count
+        let speakersMatched = reconciliation?.matchedCount ?? 0
         _ = try? await events?.append(RefinementCompletedEvent(
             recordingId: folder.recordingId,
             durationSeconds: wallSeconds,
             speakersIdentified: merged.speakers.count,
-            // Epic 4 has no speaker library: every speaker is "new".
-            speakersNew: merged.speakers.count,
-            speakersMatched: 0))
+            speakersNew: speakersNew,
+            speakersMatched: speakersMatched))
         let speakerCount = merged.speakers.count
         let wallSecondsText = String(format: "%.1f", wallSeconds)
         logger.notice(
@@ -412,11 +458,21 @@ public struct RefinementPipeline: Sendable {
     /// The merged transcript and its distinct speaker labels.
     private struct MergedTranscript {
         let document: TranscriptDocument
+        /// Distinct speaker display labels, first-appearance order.
         let speakers: [String]
+        /// Display label → stable library speaker id, for reconciled speakers
+        /// (Epic 5). `You` and unreconciled speakers are absent.
+        let speakerIdByLabel: [String: String]
     }
 
-    /// Merge the system stream (diarized → `Speaker_N`) with the optional mic
-    /// stream (always `You`) into one time-ordered `TranscriptDocument`.
+    /// Merge the system stream (diarized → library names, or `Speaker_N`) with
+    /// the optional mic stream (always `You`) into one time-ordered
+    /// `TranscriptDocument`.
+    ///
+    /// When a `reconciliation` is supplied (Epic 5), each diarized speaker's
+    /// `Speaker_N` label is replaced by the persistent library name
+    /// (`Steve`, `Unknown #1`) — R22. Without it, the Epic 4 `Speaker_N`
+    /// behaviour is kept.
     ///
     /// When there are no utterances at all, an empty-transcript `final.md` is
     /// still produced — with a single explanatory note line — so a consumer
@@ -424,12 +480,13 @@ public struct RefinementPipeline: Sendable {
     private func mergeStreams(
         system: StreamTranscription,
         diarization: DiarizationResult?,
+        reconciliation: SpeakerReconciler.Outcome?,
         mic: StreamTranscription?,
         recordingStart: Date
     ) -> MergedTranscript {
         // System-stream labels: real `Speaker_N` from diarization, or the
         // unknown-speaker fallback when diarization was skipped.
-        let systemLabels: [String]
+        var systemLabels: [String]
         if let diarization {
             systemLabels = DiarizationMerge.speakerLabels(
                 for: system.segments, diarization: diarization)
@@ -437,6 +494,30 @@ public struct RefinementPipeline: Sendable {
             systemLabels = Array(
                 repeating: DiarizationMerge.unknownSpeaker,
                 count: system.segments.count)
+        }
+
+        // Epic 5 (R22): rewrite each `Speaker_N` display label to its
+        // reconciled library name. `DiarizationMerge` emits `Speaker_N` and
+        // co-attributed `Speaker_0+Speaker_1`; build a `Speaker_N → name` map
+        // (via the raw-label round-trip) and remap each `+`-joined component.
+        var speakerIdByLabel: [String: String] = [:]
+        if let diarization, let reconciliation {
+            var nameByDisplay: [String: String] = [:]
+            for rawLabel in diarization.speakers {
+                let display = diarization.displayLabel(for: rawLabel)
+                if let name = reconciliation.nameByRawLabel[rawLabel] {
+                    nameByDisplay[display] = name
+                    if let id = reconciliation.speakerIdByRawLabel[rawLabel] {
+                        speakerIdByLabel[name] = id
+                    }
+                }
+            }
+            systemLabels = systemLabels.map { label in
+                label.split(separator: "+")
+                    .map { nameByDisplay[String($0)] ?? String($0) }
+                    .sorted()
+                    .joined(separator: "+")
+            }
         }
 
         // Index-aligned (segment, label) for both streams, then a stable
@@ -469,7 +550,8 @@ public struct RefinementPipeline: Sendable {
                 segments: [note],
                 speakerLabels: ["pulsartrace"],
                 marker: .final)
-            return MergedTranscript(document: document, speakers: [])
+            return MergedTranscript(
+                document: document, speakers: [], speakerIdByLabel: [:])
         }
 
         let document = TranscriptDocument(
@@ -487,7 +569,10 @@ public struct RefinementPipeline: Sendable {
                 if seen.insert(component).inserted { speakers.append(component) }
             }
         }
-        return MergedTranscript(document: document, speakers: speakers)
+        return MergedTranscript(
+            document: document,
+            speakers: speakers,
+            speakerIdByLabel: speakerIdByLabel)
     }
 
     // MARK: - final.md write + backups
@@ -552,6 +637,7 @@ public struct RefinementPipeline: Sendable {
     private func buildMetadata(
         folder: RecordingFolder,
         speakers: [String],
+        speakerIdByLabel: [String: String],
         systemTranscription: StreamTranscription,
         diarization: DiarizationResult?,
         recordingStart: Date,
@@ -561,8 +647,13 @@ public struct RefinementPipeline: Sendable {
         sourceBasename: String,
         audioDurationSeconds: Double
     ) -> RefinementMetadata {
+        // `metadata.json` records the stable `speaker_id` ↔ name mapping (R83):
+        // an agent keys off the id across renames.
         let speakerEntries = speakers.map { label in
-            RefinementMetadata.Speaker(label: label, isMicrophone: label == "You")
+            RefinementMetadata.Speaker(
+                label: label,
+                isMicrophone: label == "You",
+                speakerId: speakerIdByLabel[label])
         }
         let pyannote = diarization.map {
             RefinementMetadata.PyannoteModelInfo(

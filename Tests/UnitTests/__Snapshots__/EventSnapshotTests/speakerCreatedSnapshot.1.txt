@@ -1,0 +1,1 @@
+{"id":"evt_01HW00000000000000000000SP","initial_name":"Unknown #3","source_recording_id":"rec_4f2a","speaker_id":"spk_a1b2","ts":"2026-04-30T14:30:05Z","type":"speaker_created","version":1}

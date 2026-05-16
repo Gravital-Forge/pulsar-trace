@@ -232,6 +232,130 @@ preserved as `.live.md.bak`. Category: `file_operations`.
 {"id":"evt_01KRQD...","recording_id":"rec_demo","ts":"2026-05-16T03:30:00Z","type":"live_md_replaced_by_final","version":1}
 ```
 
+### Speaker library
+
+Epic 5 adds the persistent speaker library (`speakers.sqlite`). Every library
+operation emits exactly one `speaker_*` event; the database's own health is
+reported by the two `library_*` events. Speaker ids are `spk_<ulid>` and are
+**forever stable** (R83) — a rename changes only the `name`.
+
+> Privacy note: these events MAY carry user-assigned speaker names
+> (`initial_name`, `old_name`, `new_name`). The events log is local-only and
+> never leaves the device, so that is allowed. The *operational* log
+> (`~/Library/Logs/PulsarTrace/`) must never contain a speaker name.
+
+#### `speaker_created` (version 1)
+
+A new speaker was added to the library — either a refinement cluster that
+matched no existing speaker, or the new speaker produced by a `speaker_split`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `speaker_id` | string | Stable `spk_<ulid>` id. |
+| `initial_name` | string | Name at creation — an `Unknown #N` placeholder for a refinement-discovered speaker. |
+| `source_recording_id` | string | The recording whose refinement first surfaced this speaker. |
+
+```jsonl
+{"id":"evt_01HW...","initial_name":"Unknown #3","source_recording_id":"rec_4f2a","speaker_id":"spk_a1b2","ts":"2026-04-29T15:42:12Z","type":"speaker_created","version":1}
+```
+
+#### `speaker_renamed` (version 1)
+
+A speaker's display name changed. The `speaker_id` is unchanged (R83).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `speaker_id` | string | Stable id — unchanged by the rename. |
+| `old_name` | string | The previous name. |
+| `new_name` | string | The new name. |
+| `applied_to_recordings` | array | Recordings whose `final.md` was rewritten as a result. **Empty** for an Epic 5 CLI rename — Epic 5 does not retroactively rewrite past `final.md` files (that is Epic 8 scope, DECISIONS.md D16). |
+
+```jsonl
+{"applied_to_recordings":[],"id":"evt_01HX...","new_name":"Steve","old_name":"Unknown #3","speaker_id":"spk_a1b2","ts":"2026-04-30T09:14:33Z","type":"speaker_renamed","version":1}
+```
+
+#### `speaker_merged` (version 1)
+
+Two speakers were merged: `merged_speaker_id` is soft-deleted, its appearances
+re-attributed to `primary_speaker_id`, whose centroid is recomputed.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `primary_speaker_id` | string | The surviving speaker. |
+| `merged_speaker_id` | string | The speaker folded in (soft-deleted, recoverable). |
+| `applied_to_recordings` | array | Recordings rewritten. Empty in Epic 5 (D16). |
+
+#### `speaker_split` (version 1)
+
+A subset of one speaker's appearances was peeled into a brand-new speaker.
+Always followed by a `speaker_created` for the new speaker.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `original_speaker_id` | string | The speaker the appearances came from. |
+| `new_speaker_id` | string | The new speaker holding the peeled-off appearances. |
+| `applied_to_recordings` | array | Recordings rewritten. Empty in Epic 5 (D16). |
+
+#### `speaker_deleted` (version 1)
+
+A speaker was soft-deleted (R32b). The record is hidden but recoverable for 30
+days via the "Recently deleted" view.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `speaker_id` | string | The deleted speaker. |
+| `soft_delete` | bool | Always `true` — Epic 5 deletes are always soft. |
+| `recoverable_until` | string | ISO-8601 UTC instant after which recovery is no longer possible. |
+
+```jsonl
+{"id":"evt_01HW...","recoverable_until":"2026-05-30T14:30:05Z","soft_delete":true,"speaker_id":"spk_a1b2","ts":"2026-04-30T14:30:05Z","type":"speaker_deleted","version":1}
+```
+
+#### `speaker_undeleted` / `speaker_unmerged` / `speaker_unsplit` (version 1)
+
+The undo operations for delete / merge / split (R32b — one-click undo).
+
+| Event | Fields |
+|-------|--------|
+| `speaker_undeleted` | `{speaker_id}` |
+| `speaker_unmerged` | `{primary_speaker_id, merged_speaker_id}` |
+| `speaker_unsplit` | `{original_speaker_id, new_speaker_id}` |
+
+#### `speaker_centroid_updated` (version 1)
+
+A returning speaker's centroid was refined by a new appearance via the
+count-weighted running mean (R30).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `speaker_id` | string | The speaker whose centroid was refined. |
+| `recording_id` | string | The recording whose appearance was averaged in. |
+| `appearance_count` | int | The speaker's appearance count *after* this update. |
+
+```jsonl
+{"appearance_count":3,"id":"evt_01HW...","recording_id":"rec_4f2a","speaker_id":"spk_a1b2","ts":"2026-04-30T14:30:05Z","type":"speaker_centroid_updated","version":1}
+```
+
+#### `library_backup_created` (version 1)
+
+The `speakers.sqlite` file was copied to its last-good `.bak` ahead of a
+mutating write (R32a resilience). Category: `system`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path_basename` | string | Basename of the backup — `speakers.sqlite.bak`. |
+| `sha256` | string | Lowercase-hex SHA-256 of the backed-up database file. |
+
+#### `library_corruption_detected` (version 1)
+
+The `speakers.sqlite` database failed to open / integrity-check on launch, and
+recovery from the last-good backup was attempted. Category: `system`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path_basename` | string | Basename of the corrupt database — `speakers.sqlite`. |
+| `recovered_from_backup` | bool | `true` when a usable backup was found and restored. |
+
 ### Reserved for later epics
 
 The following types are specified in PRD §8.13 and will be documented here in
@@ -240,13 +364,9 @@ the planned surface:
 
 - **Recording lifecycle** (Epic 6/7): `recording_started`, `recording_paused`,
   `recording_resumed`, `recording_stopped`.
-- **Speaker library** (Epic 5): `speaker_created`, `speaker_renamed`,
-  `speaker_merged`, `speaker_split`, `speaker_deleted`, `speaker_undeleted`,
-  `speaker_unmerged`, `speaker_unsplit`, `speaker_centroid_updated`.
 - **File operations** (Epic 6): `live_md_started`.
-- **System** (Epic 7): `permission_changed`, `library_backup_created`,
-  `library_corruption_detected`. (`model_downloaded` is documented above —
-  implemented in Epic 2.)
+- **System** (Epic 7): `permission_changed`. (`model_downloaded` is documented
+  above — implemented in Epic 2.)
 
 ### Causal pairing
 
@@ -259,6 +379,14 @@ it, and the cause always precedes the effect in the log:
   files are durably on disk; `refinement_completed` is last. So the order
   within one refine is always `refinement_started` → `live_md_replaced_by_final`
   (if any) → `final_md_written` | `final_md_rewritten` → `refinement_completed`.
-- From Epic 5, a `speaker_renamed` / `speaker_merged` / `speaker_split` is
-  always followed by the corresponding `final_md_rewritten` for each affected
-  recording.
+- A `speaker_renamed` / `speaker_merged` / `speaker_split` performed in **Epic 8**
+  (the menubar editor / full CLI) is followed by a `final_md_rewritten` for each
+  affected past recording — its `applied_to_recordings` lists them.
+- In **Epic 5**, a `speaker_renamed` / `speaker_merged` from the
+  `pulsartrace speakers` CLI updates the library only — it does **not**
+  retroactively rewrite past `final.md` files, so `applied_to_recordings` is
+  empty and no `final_md_rewritten` is paired with it (DECISIONS.md D16). The
+  new name takes effect on the next `pulsartrace refine` of a recording, when
+  reconciliation applies it. A refine pass that reconciles speakers emits its
+  `speaker_created` / `speaker_centroid_updated` events between
+  `refinement_started` and `refinement_completed`.

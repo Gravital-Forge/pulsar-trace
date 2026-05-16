@@ -255,3 +255,61 @@ defaults to `true`, so the engine and the `pulsartrace` CLI still run on Metal.
 This is orthogonal to D8's `metalLock` / `WhisperTestGate` serialization —
 those address concurrent-context corruption *during* a run; D15 addresses the
 exit-time device-free assertion.
+
+## D16 — Epic 5 CLI rename/merge updates the library only; retroactive `final.md` rewrite is Epic 8
+**Decision:** A `pulsartrace speakers rename` / `merge` in Epic 5 updates the
+speaker library and emits the corresponding `speaker_renamed` / `speaker_merged`
+event with an **empty** `applied_to_recordings`. It does **not** rewrite any
+past `final.md` file, and emits **no** `final_md_rewritten`. The new name takes
+effect on the next `pulsartrace refine` of a recording, when reconciliation
+applies it.
+**Why:** PRD §15 explicitly scopes the retroactive rewrite of past `final.md`
+files (and the paired `final_md_rewritten` event, one per affected recording)
+to **Epic 8** (the menubar editor / full management surface). Keeping Epic 5's
+CLI to a library-only mutation honours Hard Invariant #8 (events paired with
+their causes): because Epic 5 emits no file change, it needs no
+`final_md_rewritten` to pair with. The appearances table records every
+speaker↔recording link (with the recording folder basename) precisely so Epic 8
+can later enumerate and rewrite those files. The `speaker_renamed` event's
+`applied_to_recordings` field is in the schema from Epic 5 (empty) so Epic 8 can
+populate it without a schema version bump.
+
+## D17 — Speaker library uses the built-in `SQLite3` C module, not a SwiftPM dependency
+**Decision:** `SpeakerLibrary` persists to `speakers.sqlite` through a thin
+hand-rolled wrapper (`SQLiteDatabase`) over `import SQLite3` — the C SQLite
+library that ships with macOS — rather than adding a SwiftPM package
+(GRDB, SQLite.swift, …).
+**Why:** the speaker-library schema is two small tables; the wrapper is less
+code than integrating, pinning and tracking a third-party package, and it adds
+no supply-chain surface or version-drift risk (consistent with the project's
+minimal-dependency stance — see `Package.swift`, which carries only swift-log
+and swift-snapshot-testing). `import SQLite3` is a system module always present
+on the macOS SDK toolchain, so `swift build` needs no extra setup. WAL mode
+(R32a), `PRAGMA integrity_check` for corruption detection, and `BEGIN IMMEDIATE`
+transactions are all reached directly through the C API.
+
+## D18 — `unmerge` reconstructs primary's pre-merge centroid arithmetically
+**Decision:** `SpeakerLibrary.unmerge` restores the primary speaker's centroid
+to its exact pre-merge value by *inverting* the merge's count-weighted mean,
+rather than leaving the merged centroid in place (the prior best-effort
+behaviour). A merge computes `merged = (primaryOld·np + other·no)/(np+no)`;
+`other`'s own centroid is never recomputed by a merge (only soft-deleted) and
+the appearances the merge moved are stamped `origin_speaker_id = other`, so at
+unmerge time `no` is recoverable as the count of those stamped rows and
+`np = primary.appearanceCount − no`. `primaryOld` is then
+`(merged·(np+no) − other·no)/np` (`Centroid.unmergePrimaryCentroid`). When the
+inversion cannot be exact — `np ≤ 0`, or a centroid dimension mismatch — the
+merged centroid is left in place as a documented fallback.
+**Why:** the review (S4) required `unmerge` to be a true undo, not a partial
+one. The brief offered two options: reconstruct arithmetically, or snapshot the
+pre-merge centroid into the merge event / a new column. Arithmetic
+reconstruction was chosen because all the inputs are already durably present
+(`merged` and `other` are stored centroids; `np`/`no` are derivable from the
+preserved `origin_speaker_id` stamps and the appearance count), so it needs **no
+schema change and no events-log schema bump** — consistent with D16's stance of
+keeping Epic 5 additive. The one inexactness is the `UPDATE OR IGNORE` collision
+case in `merge` (a recording both speakers already appeared in): there the moved
+row count can undercount `other`'s true pre-merge appearances, so the
+reconstruction is approximate. That collision is already documented as rare and
+best-effort in `merge`'s own comment, and the fallback path covers the
+non-invertible case, so no separate snapshot column was added.

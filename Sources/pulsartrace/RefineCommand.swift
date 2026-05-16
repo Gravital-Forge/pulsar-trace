@@ -65,6 +65,16 @@ enum RefineCommand {
 
             let diarizer = try makeDiarizer()
 
+            // Epic 5: the persistent speaker library at the standard location.
+            // A failure to open it is non-fatal — refine continues with the
+            // raw `Speaker_N` labels rather than aborting.
+            let library = try? await SpeakerLibrary(
+                databaseURL: AppPaths.standard.speakersDatabaseURL,
+                events: events)
+            if library == nil {
+                err("refine: speaker library unavailable — using Speaker_N labels")
+            }
+
             let pipeline = RefinementPipeline(events: events)
             let progress: RefinementPipeline.ProgressReporter = { stage in
                 err("refine: \(stage.rawValue)…")
@@ -77,6 +87,7 @@ enum RefineCommand {
                 whisperModelName: model.name,
                 whisperModelSHA256: model.sha256,
                 recordingStart: Date(),
+                library: library,
                 progress: progress)
 
             out("refine: wrote \(output.finalURL.path)")

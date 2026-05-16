@@ -35,4 +35,92 @@ struct EventSnapshotTests {
         let line = try EventWriter.encodeLine(envelope: envelope, payload: payload)
         assertSnapshot(of: line, as: .lines)
     }
+
+    // MARK: - Speaker library events (Epic 5)
+
+    /// Encode `payload` with a fixed envelope so the JSONL line is snapshot-stable.
+    private func line<P: EventPayload>(
+        _ payload: P, id: String = "evt_01HW00000000000000000000SP"
+    ) throws -> String {
+        let envelope = EventWriter.Envelope(
+            ts: "2026-04-30T14:30:05Z",
+            type: P.eventType, id: id, version: P.schemaVersion)
+        return try EventWriter.encodeLine(envelope: envelope, payload: payload)
+    }
+
+    @Test("speaker_created JSONL line matches the recorded snapshot")
+    func speakerCreatedSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerCreatedEvent(
+            speakerId: "spk_a1b2", initialName: "Unknown #3",
+            sourceRecordingId: "rec_4f2a")), as: .lines)
+    }
+
+    @Test("speaker_renamed JSONL line matches the recorded snapshot")
+    func speakerRenamedSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerRenamedEvent(
+            speakerId: "spk_a1b2", oldName: "Unknown #3", newName: "Steve",
+            appliedToRecordings: [])), as: .lines)
+    }
+
+    @Test("speaker_merged JSONL line matches the recorded snapshot")
+    func speakerMergedSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerMergedEvent(
+            primarySpeakerId: "spk_a1b2", mergedSpeakerId: "spk_c3d4",
+            appliedToRecordings: [])), as: .lines)
+    }
+
+    @Test("speaker_split JSONL line matches the recorded snapshot")
+    func speakerSplitSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerSplitEvent(
+            originalSpeakerId: "spk_a1b2", newSpeakerId: "spk_e5f6",
+            appliedToRecordings: [])), as: .lines)
+    }
+
+    @Test("speaker_deleted JSONL line matches the recorded snapshot")
+    func speakerDeletedSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerDeletedEvent(
+            speakerId: "spk_a1b2",
+            recoverableUntil: "2026-05-30T14:30:05Z")), as: .lines)
+    }
+
+    @Test("speaker_undeleted JSONL line matches the recorded snapshot")
+    func speakerUndeletedSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerUndeletedEvent(
+            speakerId: "spk_a1b2")), as: .lines)
+    }
+
+    @Test("speaker_unmerged JSONL line matches the recorded snapshot")
+    func speakerUnmergedSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerUnmergedEvent(
+            primarySpeakerId: "spk_a1b2", mergedSpeakerId: "spk_c3d4")),
+            as: .lines)
+    }
+
+    @Test("speaker_unsplit JSONL line matches the recorded snapshot")
+    func speakerUnsplitSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerUnsplitEvent(
+            originalSpeakerId: "spk_a1b2", newSpeakerId: "spk_e5f6")),
+            as: .lines)
+    }
+
+    @Test("speaker_centroid_updated JSONL line matches the recorded snapshot")
+    func speakerCentroidUpdatedSnapshot() throws {
+        assertSnapshot(of: try line(SpeakerCentroidUpdatedEvent(
+            speakerId: "spk_a1b2", recordingId: "rec_4f2a",
+            appearanceCount: 3)), as: .lines)
+    }
+
+    @Test("library_backup_created JSONL line matches the recorded snapshot")
+    func libraryBackupCreatedSnapshot() throws {
+        assertSnapshot(of: try line(LibraryBackupCreatedEvent(
+            pathBasename: "speakers.sqlite.bak",
+            sha256: "a3b1c2d4e5f6")), as: .lines)
+    }
+
+    @Test("library_corruption_detected JSONL line matches the recorded snapshot")
+    func libraryCorruptionDetectedSnapshot() throws {
+        assertSnapshot(of: try line(LibraryCorruptionDetectedEvent(
+            pathBasename: "speakers.sqlite",
+            recoveredFromBackup: true)), as: .lines)
+    }
 }

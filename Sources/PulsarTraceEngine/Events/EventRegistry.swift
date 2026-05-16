@@ -84,6 +84,63 @@ public enum EventRegistry {
             version: LiveMDReplacedByFinalEvent.schemaVersion,
             category: .fileOperations
         ),
+        // Epic 5: speaker library operations.
+        Entry(
+            type: SpeakerCreatedEvent.eventType,
+            version: SpeakerCreatedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerRenamedEvent.eventType,
+            version: SpeakerRenamedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerMergedEvent.eventType,
+            version: SpeakerMergedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerSplitEvent.eventType,
+            version: SpeakerSplitEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerDeletedEvent.eventType,
+            version: SpeakerDeletedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerUndeletedEvent.eventType,
+            version: SpeakerUndeletedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerUnmergedEvent.eventType,
+            version: SpeakerUnmergedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerUnsplitEvent.eventType,
+            version: SpeakerUnsplitEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerCentroidUpdatedEvent.eventType,
+            version: SpeakerCentroidUpdatedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        // Epic 5: speaker-library database health (system category).
+        Entry(
+            type: LibraryBackupCreatedEvent.eventType,
+            version: LibraryBackupCreatedEvent.schemaVersion,
+            category: .system
+        ),
+        Entry(
+            type: LibraryCorruptionDetectedEvent.eventType,
+            version: LibraryCorruptionDetectedEvent.schemaVersion,
+            category: .system
+        ),
     ]
 
     /// Look up a registered entry by its `type` string.

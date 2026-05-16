@@ -1,0 +1,1 @@
+{"id":"evt_01HW00000000000000000000SP","speaker_id":"spk_a1b2","ts":"2026-04-30T14:30:05Z","type":"speaker_undeleted","version":1}

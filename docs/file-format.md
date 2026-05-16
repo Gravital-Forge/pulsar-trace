@@ -6,7 +6,9 @@ integrations — depend on this format. It is a **public API surface**: breaking
 changes require a major version bump and a migration note (PRD §17).
 
 > Status: Epic 1 establishes this spec. Epics 2 and 4 implement the offline
-> generators (`final.md` + `metadata.json`); Epic 6 adds the `live.md`
+> generators (`final.md` + `metadata.json`); Epic 5 replaces positional
+> `Speaker_N` labels with persistent speaker-library names and adds
+> `metadata.json`'s `speaker_id` field; Epic 6 adds the `live.md`
 > generator. The format below is the target shape; any field not yet emitted
 > is marked accordingly.
 
@@ -35,7 +37,7 @@ Each recording lives in its own folder under the output directory:
   recording, creates a sibling output folder named for the WAV's stem
   (`meeting/`), and writes `final.md` + `metadata.json` there. The original
   WAV is left untouched. A bare WAV has no separate mic stream, so all its
-  speakers are `Speaker_N` — there is no `You` label.
+  speakers are diarized and library-reconciled — there is no `You` label.
 
 There are two transcript files, reflecting the product's two-pass model:
 
@@ -71,18 +73,23 @@ A file begins with a marker comment and a heading:
     hours field simply grows for long recordings (e.g. `04:12:33`); there is no
     wraparound. An elapsed offset rather than wall-clock sidesteps DST and
     timezone-shift edge cases mid-recording.
-  - `<speaker>` — `You` for the mic stream; a diarized label for system-audio
-    speakers. As of **Epic 3 (offline diarization)** system-stream utterances
-    carry real labels `Speaker_0`, `Speaker_1`, … assigned by merging the
-    whisper transcript with pyannote speaker spans by timestamp overlap. When
-    an utterance is talked over by two speakers, both attributions are
-    surfaced joined with `+` (e.g. `Speaker_0+Speaker_1`); an utterance that
-    overlaps no diarized span keeps the fallback label `Speaker_?`. Epic 5
-    (speaker library) will replace `Speaker_N` with persistent speaker names
-    where a returning speaker is recognised.
-    - *Historical note:* Epic 2 (offline transcription, before diarization)
-      emitted a single placeholder label `Speaker` on every line. Epic 3
-      replaced it; `final.md` files now always carry diarized labels.
+  - `<speaker>` — `You` for the mic stream; a persistent speaker name for
+    system-audio speakers. As of **Epic 5 (speaker library)** every
+    system-stream speaker in `final.md` carries its **library name**: a
+    user-assigned name (`Steve`) for a recognised returning speaker, or an
+    `Unknown #N` placeholder for a speaker the library has not been given a
+    name for yet. The refine pass diarizes the system stream with pyannote,
+    then reconciles each cluster against the persistent speaker library by
+    centroid cosine similarity — a returning voice is auto-labelled with the
+    name it was given before, and its stable `spk_<ulid>` id is recorded in
+    `metadata.json`. When an utterance is talked over by two speakers, both
+    names are surfaced joined with `+` (e.g. `Steve+Unknown #1`); an utterance
+    that overlaps no diarized span keeps the fallback label `Speaker_?`.
+    - *Historical note:* Epic 2 emitted a single placeholder label `Speaker`;
+      Epic 3 replaced it with diarized `Speaker_0`, `Speaker_1`, … labels;
+      Epic 5 replaced those positional labels with persistent library names.
+      A `final.md` written before Epic 5 (or one refined with the speaker
+      library unavailable) still carries `Speaker_N` labels.
   - `(provisional)` — present in `live.md` only, on speakers whose identity is
     not yet confirmed. Removed in `final.md`.
 
@@ -118,8 +125,8 @@ parsing `final.md` prose. It is a public API surface; it is written atomically
   "language": "en",
   "source_basename": "two-speakers-alternating.wav",
   "speakers": [
-    { "label": "Speaker_0", "is_microphone": false },
-    { "label": "Speaker_1", "is_microphone": false }
+    { "label": "Steve", "is_microphone": false, "speaker_id": "spk_01HW2K…" },
+    { "label": "Unknown #1", "is_microphone": false, "speaker_id": "spk_01HW2L…" }
   ],
   "whisper_model": {
     "name": "base",
@@ -143,8 +150,9 @@ parsing `final.md` prose. It is a public API surface; it is written atomically
 | `language` | string | Transcription language whisper detected/used (ISO-639-1). |
 | `source_basename` | string | Basename of the user-supplied `refine` input — never a full path. |
 | `speakers` | array | One entry per distinct speaker in `final.md`. |
-| `speakers[].label` | string | Transcript-facing label (`You`, `Speaker_0`, …). |
+| `speakers[].label` | string | Transcript-facing label — the persistent library name (`Steve`, `Unknown #1`) for a system speaker; `You` for the mic stream. (Pre-Epic-5 files carry `Speaker_N`.) |
 | `speakers[].is_microphone` | boolean | `true` for the `You` (mic) speaker — never diarized (R17). |
+| `speakers[].speaker_id` | string\|null | Stable speaker-library id (`spk_<ulid>`, R83) for a reconciled system speaker. `null` for `You`, and for a speaker not reconciled (diarization skipped, or the library was unavailable). An agent keys off this id for stable identity across renames. |
 | `whisper_model.name` | string | Whisper model name (`base`, `large-v3`). |
 | `whisper_model.sha256` | string | Pinned SHA-256 of the ggml model file (its version identity). |
 | `pyannote_model` | object\|null | pyannote model identity. `null` when diarization was skipped (e.g. no speech detected). |

@@ -1,0 +1,1 @@
+{"applied_to_recordings":[],"id":"evt_01HW00000000000000000000SP","merged_speaker_id":"spk_c3d4","primary_speaker_id":"spk_a1b2","ts":"2026-04-30T14:30:05Z","type":"speaker_merged","version":1}

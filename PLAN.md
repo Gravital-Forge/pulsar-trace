@@ -47,7 +47,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
       committed diarization JSON fixtures; merged `**[HH:MM:SS] Speaker_0:**`
       markdown snapshot stable across runs. R15a, R17, R29 covered.
 
-## Epic 4 — Refinement Pipeline (`pulsartrace refine`)  ✅ done & verified (not committed)
+## Epic 4 — Refinement Pipeline (`pulsartrace refine`)  ✅ committed f56c956
 - [x] `RefinementPipeline`: WAV/folder → whisper transcribe → pyannote diarize →
       timestamp merge → reconciled `Speaker_N`/`You` markdown (R20, R21)
 - [x] `RecordingFolder` input dispatch: bare-WAV → sibling output folder (D13);
@@ -64,12 +64,19 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
 - [x] DONE: `pulsartrace refine meeting.wav` → working `final.md` (v0.1 ship-able);
       Unit 90/90 green; Pipeline green incl. real whisper+pyannote e2e + re-refine
 
-## Epic 5 — Speaker Library
-- [ ] SQLite store (WAL), centroid running-mean, soft-delete 30-day undo
-- [ ] Reconcile post-pass clusters vs library; `spk_<ulid>` stable IDs
-- [ ] `pulsartrace speakers list/rename/merge/delete`
-- [ ] Events: speaker_* family, library_backup_created, library_corruption_detected
-- [ ] DONE: 2nd recording with returning speaker auto-applies name
+## Epic 5 — Speaker Library  ✅ done & verified (not committed)
+- [x] SQLite store (built-in `SQLite3`, WAL, D17); centroid running-mean (R30);
+      soft-delete 30-day undo (R32b); last-good backup + auto-restore on corruption
+- [x] Reconcile post-pass clusters vs library (R22/R23); `spk_<ulid>` stable IDs
+      (R83); cross-model-revision matches refused (Open Q #3); real
+      `speakers_new`/`speakers_matched` counts in `refinement_completed`
+- [x] `pulsartrace speakers list/rename/merge/delete` (R49); split lib op exists
+      (CLI surface deferred to Epic 8). Rename/merge do not retroactively rewrite
+      past `final.md` — Epic 8 scope (D16)
+- [x] Events: speaker_* family + library_backup_created/library_corruption_detected
+- [x] DONE: 2nd recording with returning speaker auto-applies name — verified via
+      pipeline test + real-pyannote CLI smoke (`Unknown #1` carried A→B)
+- New DECISIONS: D16 (Epic 5 rename/merge ≠ retroactive rewrite), D17 (built-in SQLite3)
 
 ## Epic 6 — Streaming Transcription & Diarization
 - [ ] Whisper streaming + diart live speaker IDs from any `AudioFrameSource`
