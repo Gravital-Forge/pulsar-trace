@@ -31,6 +31,9 @@ echo "[build-venv] interpreter: ${PYTHON_BIN} ($(${PYTHON_BIN} --version 2>&1))"
 rm -rf "${VENV_DIR}"
 "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 
+# --quiet only on the pip self-upgrade — its output is noise. The dependency
+# and editable installs run without --quiet so a failure's error output (a bad
+# pin, an unbuildable wheel) actually reaches the log instead of being swallowed.
 # shellcheck disable=SC1091
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
 
@@ -38,13 +41,13 @@ rm -rf "${VENV_DIR}"
 # (pytest); Epic 3 adds the real pyannote/diart/torch pins.
 if [ -s "${LOCK_FILE}" ]; then
     echo "[build-venv] installing pinned deps from $(basename "${LOCK_FILE}")"
-    "${VENV_DIR}/bin/pip" install --quiet -r "${LOCK_FILE}"
+    "${VENV_DIR}/bin/pip" install -r "${LOCK_FILE}"
 fi
 
 # Install the pulsartrace_ai package itself (editable) so `import
 # pulsartrace_ai` and the pytest suite resolve.
 echo "[build-venv] installing pulsartrace-ai package (editable)"
-"${VENV_DIR}/bin/pip" install --quiet -e "${AI_DIR}"
+"${VENV_DIR}/bin/pip" install -e "${AI_DIR}"
 
 echo "[build-venv] done — venv at ${VENV_DIR}"
 echo "[build-venv] run tests with: ${VENV_DIR}/bin/pytest"

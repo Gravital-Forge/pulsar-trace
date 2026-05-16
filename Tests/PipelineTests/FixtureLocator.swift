@@ -29,4 +29,15 @@ enum FixtureLocator {
     static func audio(_ name: String) -> URL {
         audioDirectory.appendingPathComponent(name)
     }
+
+    /// The committed diarization JSON fixtures directory. These are generated
+    /// once from real pyannote (Epic 3) and committed so the Swift merge /
+    /// Pipeline tests stay fast — see `DiarizationMergePipelineTests`.
+    static let diarizationDirectory: URL =
+        testsRoot.appendingPathComponent("Fixtures/diarization", isDirectory: true)
+
+    /// Raw bytes of a named diarization JSON fixture.
+    static func diarizationData(_ name: String) throws -> Data {
+        try Data(contentsOf: diarizationDirectory.appendingPathComponent(name))
+    }
 }

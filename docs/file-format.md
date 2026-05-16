@@ -56,10 +56,18 @@ A file begins with a marker comment and a heading:
     hours field simply grows for long recordings (e.g. `04:12:33`); there is no
     wraparound. An elapsed offset rather than wall-clock sidesteps DST and
     timezone-shift edge cases mid-recording.
-  - `<speaker>` — `You` for the mic stream; a speaker name or `Unknown #N` for
-    system-audio speakers. **Epic 2 (offline transcription) has no diarization
-    yet**: it emits a single placeholder label `Speaker` on every line. Epic 3
-    replaces it with diarized labels.
+  - `<speaker>` — `You` for the mic stream; a diarized label for system-audio
+    speakers. As of **Epic 3 (offline diarization)** system-stream utterances
+    carry real labels `Speaker_0`, `Speaker_1`, … assigned by merging the
+    whisper transcript with pyannote speaker spans by timestamp overlap. When
+    an utterance is talked over by two speakers, both attributions are
+    surfaced joined with `+` (e.g. `Speaker_0+Speaker_1`); an utterance that
+    overlaps no diarized span keeps the fallback label `Speaker_?`. Epic 5
+    (speaker library) will replace `Speaker_N` with persistent speaker names
+    where a returning speaker is recognised.
+    - *Historical note:* Epic 2 (offline transcription, before diarization)
+      emitted a single placeholder label `Speaker` on every line. Epic 3
+      replaced it; `final.md` files now always carry diarized labels.
   - `(provisional)` — present in `live.md` only, on speakers whose identity is
     not yet confirmed. Removed in `final.md`.
 

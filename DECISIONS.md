@@ -94,3 +94,93 @@ costs nothing on the offline path; it makes the single-context invariant
 enforced rather than incidental. If Epic 4/6 ever need true parallel
 transcription, that needs a separate design (e.g. multiple processes), not
 shared Metal contexts.
+
+## D9 — Diarization runs pyannote 4.x as a one-shot Python subprocess; HF token via env/.env in dev
+**Decision:** Offline diarization (Epic 3) loads
+`pyannote/speaker-diarization-community-1` via `pyannote.audio==4.0.4` in the
+captive Python layer (`python/pulsartrace-ai/pulsartrace_ai/diarize.py`). The
+Swift `Diarizer` invokes it as a **one-shot subprocess** per refine — WAV path
+in, one JSON object on stdout (speaker spans + per-speaker embeddings + the
+pyannote version string), stderr piped into the operational log tagged
+`[python]` (R60). `requirements.lock` pins the full transitive closure as
+resolved on the build host (torch 2.12.0, torchaudio 2.11.0, numpy 2.4.5,
+scipy 1.17.1, pyannote.audio 4.0.4, …). The community-1 model is **gated**;
+the Hugging Face token is read from the `HF_TOKEN` environment variable, and
+in development a `.env` at the repo root supplies it (the Python test
+`conftest.py` and the Swift `DiarizationE2ETests` load `.env` themselves).
+**Why:** community-1 is the current best open-source diarization model and the
+PRD standardises on it. A one-shot subprocess is the right shape for the
+offline epic — no long-lived process, a clean failure boundary, stderr that
+maps straight onto R60. The long-lived live `diart` runtime is deliberately
+**not** built here; it is an Epic 6 concern with a different (streaming) IPC
+shape, and `diart` drags in a divergent torch/onnx pin set, so it is kept out
+of `requirements.lock` until then. `return_embeddings` is **not** passed to the
+pipeline: the community-1 `DiarizeOutput` already exposes `speaker_embeddings`
+(pyannote's own 256-d embedding model, R29) by default, and passing the kwarg
+only triggers a "ignoring unexpected keyword" warning. The token-in-env/.env
+arrangement is a development convenience; production (Epic 10) moves the token
+to the macOS Keychain and exports it into the subprocess environment the same
+way — the `diarize.py` module only ever sees an env var, so that swap needs no
+code change here.
+
+## D10 — pyannote model cached under PulsarTrace's own cache dir via HF_HOME
+**Decision:** The pyannote model and its Hugging Face hub metadata are cached
+under `~/Library/Caches/PulsarTrace/huggingface/` (the diarization layer sets
+`HF_HOME` to that path before any `huggingface_hub` import resolves it) rather
+than the shared `~/.cache/huggingface/`.
+**Why:** Consistency with the whisper model cache
+(`~/Library/Caches/PulsarTrace/models/`, ModelStore) — all PulsarTrace model
+data lives under one `~/Library/Caches/PulsarTrace/` root, so uninstalling the
+app reclaims it and a system-wide HF cache wipe cannot silently evict the
+gated community-1 download (which would otherwise force the user back through
+the token/terms flow). The first-launch download of this gated model from
+Hugging Face is the permitted model-download network call (PRD §17 hard
+invariant 1), not telemetry.
+
+## D11 — Diarization JSON contract carries a `schema` integer; transcript⨉spans merge by dominant overlap
+**Decision:** The Swift↔Python diarization JSON has a top-level integer
+`schema` field (currently `1`); the Swift `DiarizationDecoder` rejects an
+unrecognised schema rather than mis-decoding. The transcript ⨉ diarization
+merge (`DiarizationMerge`) attributes each whisper utterance to the speaker
+whose spans overlap it **most** ("dominant overlap"); when a *second* speaker
+covers ≥ 30% of the utterance's duration, both are co-attributed as
+`Speaker_0+Speaker_1`. An utterance overlapping no span keeps `Speaker_?`.
+**Why:** A `schema` field lets the JSON contract evolve without a silent
+mis-parse — same discipline as the events-log per-type `version`. Dominant
+overlap is robust to the inevitable slack between whisper segment boundaries
+and pyannote turn boundaries; the 30% co-attribution threshold surfaces
+genuine talked-over speech (Epic 3's overlap edge case — "both attributions
+appear") while keeping a brief cross-talk syllable from cluttering every line.
+The pyannote model-version string is carried through `DiarizationResult` so
+Epic 5's speaker library can refuse to match centroids across a pyannote model
+upgrade (Open Question #3).
+
+## D12 — pyannote 4.0.4's default-on OpenTelemetry is force-disabled
+**Decision:** `pulsartrace_ai/diarize.py` sets `PYANNOTE_METRICS_ENABLED=false`
+at module scope **before any pyannote import**, and after import also calls
+`pyannote.audio.telemetry.metrics.set_telemetry_metrics(False)`. The Swift
+`Diarizer` additionally injects `PYANNOTE_METRICS_ENABLED=false` into the
+subprocess environment it spawns (defence in depth). The `model_revision`
+field (D11 / P5) — the model checkpoint's Hugging Face commit SHA — is added
+to the diarization JSON contract as a new field alongside the existing
+`model_version` (the pyannote.audio *library* version, now a secondary
+identity field); this is an additive non-breaking change so `schema` stays 1.
+The Swift decoder reads `model_revision` as an optional field. The committed
+`Tests/Fixtures/diarization/*.json` were regenerated to include it.
+**Why:** pyannote.audio 4.0.4's `pyannote/audio/telemetry/metrics.py` builds an
+OpenTelemetry `OTLPMetricExporter` + `PeriodicExportingMetricReader` (a
+background daemon thread) at import time and `track_pipeline_apply()` would
+POST pipeline name / version / a per-process session UUID / speaker counts to
+`https://otel.pyannote.ai/v1/metrics` on every pipeline call. Hard Invariant #1
+("No telemetry, ever") forbids this. The recording side is gated on
+`is_metrics_enabled()`, which reads `PYANNOTE_METRICS_ENABLED`; setting that to
+`false` before import means no metric is ever recorded, so the periodic
+exporter has nothing to send and never opens a connection. The explicit
+`set_telemetry_metrics(False)` call and the Swift-side env var are belt-and-
+braces so no pyannote refactor or stray import order can re-enable it.
+Verified: with the fix in place a real diarization runs with
+`is_metrics_enabled()` returning `False` and no `Otel*`/exporter network
+activity. `model_revision` is recorded because the pyannote.audio *library*
+version is not a reliable proxy for *checkpoint* identity — the same library
+can load different checkpoints — and Epic 5 must key centroid compatibility on
+the actual checkpoint.

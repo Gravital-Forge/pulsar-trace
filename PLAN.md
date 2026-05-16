@@ -34,10 +34,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
 - [x] DONE: `pulsartrace-engine --source fixture --transcribe` → snapshot-matched markdown;
       Unit+Pipeline green; determinism confirmed (6× stable). D8: Metal single-context lock.
 
-## Epic 3 — Offline Diarization
-- [ ] pyannote community-1 via embedded Python; speaker spans + embeddings
-- [ ] Merge transcript + speaker spans by timestamp; mic never diarized (R17)
-- [ ] DONE: fixture WAV → `**[HH:MM:SS] Speaker_0:**` lines stable across runs
+## Epic 3 — Offline Diarization  ✅ done & verified (not committed)
+- [x] pyannote community-1 via embedded Python (`pulsartrace_ai/diarize.py`);
+      speaker spans + per-speaker 256-d embeddings + pyannote version string;
+      seeded RNGs → deterministic; overlap preserved (D9/D10)
+- [x] Swift `Diarizer`: one-shot subprocess, timeout + stderr→log `[python]`
+      (R60); `DiarizationDecoder` JSON contract with `schema` field (D11)
+- [x] `DiarizationMerge`: transcript ⨉ spans by dominant overlap → real
+      `Speaker_N` labels; mic never diarized — only `diarizeSystemStream` (R17)
+- [x] requirements.lock pinned (torch 2.12 / pyannote.audio 4.0.4); build-venv.sh
+- [x] DONE: pytest green (real pyannote, 11 tests); Unit+Pipeline green <30s;
+      committed diarization JSON fixtures; merged `**[HH:MM:SS] Speaker_0:**`
+      markdown snapshot stable across runs. R15a, R17, R29 covered.
 
 ## Epic 4 — Refinement Pipeline (`pulsartrace refine`)
 - [ ] Full offline command: WAV → text → spans → reconciled markdown

@@ -5,10 +5,18 @@ description = "PulsarTrace diarization layer — pyannote / diart wrapper run as
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 
-# Real dependencies (pyannote.audio, diart, torch, numpy, scipy) are pinned in
-# requirements.lock and installed in Epic 3. Epic 1 ships only the package
-# skeleton, the venv build script, and the pytest harness.
-dependencies = []
+# Runtime dependencies. Exact versions (the full transitive closure) are
+# pinned in requirements.lock — the source of truth installed by
+# python/build-venv.sh. These ranges document the direct deps only; the lock
+# governs what is actually installed. diart (live diarization) is added in
+# Epic 6; Epic 3 is offline-only.
+dependencies = [
+    "pyannote.audio>=4.0,<5.0",
+    "torch>=2.8",
+    "torchaudio>=2.8",
+    "numpy>=2.0",
+    "scipy>=1.13",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
