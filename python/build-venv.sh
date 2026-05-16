@@ -2,7 +2,7 @@
 #
 # Build the PulsarTrace development Python venv.
 #
-# Per DECISIONS.md D3, the diarization layer runs in a venv created from
+# Per project-docs/DECISIONS.md D3, the diarization layer runs in a venv created from
 # Homebrew's python3.12 (3.12.13), pinned via requirements.lock. The
 # python-build-standalone bundling used to ship a self-contained .app is
 # deferred to Epic 10.

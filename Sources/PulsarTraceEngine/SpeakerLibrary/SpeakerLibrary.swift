@@ -597,7 +597,7 @@ public actor SpeakerLibrary {
     /// pre-merge count `no` are preserved on the soft-deleted loser, and `np`
     /// is `primary.appearanceCount - no`. When the inversion cannot be exact
     /// (`np <= 0` or a dimension mismatch) `primary`'s centroid is left at the
-    /// merged value — the documented best-effort fallback (DECISIONS.md D18).
+    /// merged value — the documented best-effort fallback (project-docs/DECISIONS.md D18).
     public func unmerge(primaryId: String, otherId: String) async throws {
         guard let primary = try speaker(id: primaryId), !primary.isDeleted else {
             throw LibraryError.speakerNotFound(primaryId)

@@ -7,7 +7,7 @@ import PulsarTraceEngine
 /// Operates directly on `~/Library/Application Support/PulsarTrace/speakers.sqlite`
 /// and emits the corresponding `speaker_*` events.
 ///
-/// Scope note (DECISIONS.md D16): `rename`/`merge` here update the library and
+/// Scope note (project-docs/DECISIONS.md D16): `rename`/`merge` here update the library and
 /// emit the speaker event, but do NOT retroactively rewrite past `final.md`
 /// files — that retroactive rewrite (and the paired `final_md_rewritten`
 /// event) is Epic 8 scope per PRD §15. The new name takes effect on the next

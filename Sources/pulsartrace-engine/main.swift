@@ -192,7 +192,7 @@ struct EngineMain {
     }
 
     /// Build the `LiveDiarizer.Configuration` against the dev venv + repo
-    /// `.env` — mirrors `RefineCommand.makeDiarizer`'s wiring (DECISIONS.md
+    /// `.env` — mirrors `RefineCommand.makeDiarizer`'s wiring (project-docs/DECISIONS.md
     /// D3/D9). Epic 10 swaps this for the bundled python runtime.
     static func liveDiarizerConfig() -> LiveDiarizer.Configuration {
         let env = ProcessInfo.processInfo.environment

@@ -7,7 +7,7 @@
 # binary (-DGGML_METAL_EMBED_LIBRARY=ON) so no separate .metallib file ships.
 #
 # Output layout (consumed by Package.swift via the `CWhisper` system library
-# target — see DECISIONS.md D7):
+# target — see project-docs/DECISIONS.md D7):
 #
 #   vendor/whisper.cpp/            checkout (gitignored)
 #   vendor/whisper-install/lib     libwhisper.dylib, libggml*.dylib
@@ -16,13 +16,13 @@
 # Re-running is cheap: an existing checkout at the pinned commit is reused.
 #
 # Reproducibility: the pinned commit below is the single source of truth and is
-# also recorded in DECISIONS.md (D7).
+# also recorded in project-docs/DECISIONS.md (D7).
 
 set -euo pipefail
 
 # --- Configuration ----------------------------------------------------------
 
-# whisper.cpp v1.8.4 — pinned. See DECISIONS.md D7.
+# whisper.cpp v1.8.4 — pinned. See project-docs/DECISIONS.md D7.
 WHISPER_REPO="https://github.com/ggml-org/whisper.cpp.git"
 WHISPER_COMMIT="9386f239401074690479731c1e41683fbbeac557"
 

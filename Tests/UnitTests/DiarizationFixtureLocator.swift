@@ -10,7 +10,7 @@ import Foundation
 ///
 /// Resolves by walking up from this source file's `#filePath`
 /// (`Tests/UnitTests/`) to `Tests/` — same approach as `PipelineTests`'
-/// `FixtureLocator` (DECISIONS.md D6).
+/// `FixtureLocator` (project-docs/DECISIONS.md D6).
 enum DiarizationFixtureLocator {
 
     /// The `Tests/` directory (one level above `Tests/UnitTests/`).

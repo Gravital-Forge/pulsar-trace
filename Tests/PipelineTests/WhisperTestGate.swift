@@ -7,7 +7,7 @@ import Foundation
 /// `@Suite(.serialized)` only serializes tests *within* one suite — Swift
 /// Testing still runs separate suites in parallel. whisper.cpp's Metal backend
 /// keeps a per-device residency set that corrupts if two `whisper_context`s are
-/// alive at once in one process (see `WhisperTranscriber` / DECISIONS.md D8):
+/// alive at once in one process (see `WhisperTranscriber` / project-docs/DECISIONS.md D8):
 /// it manifests as a low-confidence language detection and garbled segments.
 ///
 /// `TranscriptionPipelineTests` and `RefinementPipelineTests` both load whisper,
@@ -75,7 +75,7 @@ actor WhisperTestGate {
 /// suite that crashes on exit is unacceptable (PRD §12). The CPU backend never
 /// touches the ggml-metal device, so it cannot trip that assertion; `base`
 /// over the short fixtures is plenty fast on CPU. Production keeps Metal
-/// (`useGPU` defaults to `true`). See DECISIONS.md D15.
+/// (`useGPU` defaults to `true`). See project-docs/DECISIONS.md D15.
 enum WhisperTestTranscriber {
     /// Build a CPU-backend `WhisperTranscriber` for the test/CI path.
     static func make(modelURL: URL) throws -> WhisperTranscriber {

@@ -58,14 +58,14 @@ public struct TranscriptionResult: Sendable, Equatable {
 /// nothing stops a future caller (Epic 4 re-refine, tests) from holding two at
 /// once. A process-wide lock makes context create/free and each `whisper_full`
 /// call mutually exclusive — correctness over a theoretical parallel speedup
-/// that the offline path doesn't need anyway. See DECISIONS.md D8.
+/// that the offline path doesn't need anyway. See project-docs/DECISIONS.md D8.
 ///
 /// GPU backend: `useGPU` defaults to `true` (production — Metal). The test/CI
 /// path passes `useGPU: false` to use whisper's CPU backend, which avoids the
 /// ggml-metal device entirely and so cannot trip the upstream
 /// `ggml_metal_device_free` residency-set assertion that fires at process exit
 /// when many `whisper_context`s are created/freed in one process. See
-/// DECISIONS.md D15.
+/// project-docs/DECISIONS.md D15.
 public final class WhisperTranscriber {
 
     /// Guards `whisper_context` lifecycle and `whisper_full` across the
@@ -120,18 +120,35 @@ public final class WhisperTranscriber {
     /// True when the model file name marks an English-only model (`*.en`).
     private let isEnglishOnlyModel: Bool
 
+    /// Default GPU setting, resolved from the environment.
+    ///
+    /// `PULSARTRACE_WHISPER_CPU` set to `1`/`true`/`yes` forces whisper's CPU
+    /// backend process-wide. This is the escape hatch for hosts where the Metal
+    /// GPU is unreachable — notably a command sandbox that denies IOKit GPU
+    /// access, where the Metal backend crashes during buffer allocation. The
+    /// production default is GPU (Metal).
+    public static var gpuEnabledByDefault: Bool {
+        switch ProcessInfo.processInfo.environment["PULSARTRACE_WHISPER_CPU"]?
+            .lowercased()
+        {
+        case "1", "true", "yes": return false
+        default: return true
+        }
+    }
+
     /// Load a ggml whisper model file and keep it resident.
     ///
     /// - Parameters:
     ///   - modelURL: a `ggml-*.bin` file (`base`, `large-v3`, …).
-    ///   - useGPU: `true` (default) loads the model on the Metal backend — the
-    ///     production path. `false` uses whisper's CPU backend; the test/CI
-    ///     suite passes `false` so it never touches the ggml-metal device and
-    ///     so cannot trip the upstream exit-time residency-set assertion
-    ///     (DECISIONS.md D15).
+    ///   - useGPU: loads the model on the Metal backend (production) when
+    ///     `true`, or whisper's CPU backend when `false`. Defaults to
+    ///     `gpuEnabledByDefault` — GPU unless `PULSARTRACE_WHISPER_CPU` is set.
+    ///     The test/CI suite passes `false` explicitly so it never touches the
+    ///     ggml-metal device and so cannot trip the upstream exit-time
+    ///     residency-set assertion (project-docs/DECISIONS.md D15).
     public init(
         modelURL: URL,
-        useGPU: Bool = true,
+        useGPU: Bool = WhisperTranscriber.gpuEnabledByDefault,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) throws {
         self.modelURL = modelURL
@@ -145,7 +162,7 @@ public final class WhisperTranscriber {
 
         var cparams = whisper_context_default_params()
         // Metal (production) — the library is built -DGGML_METAL=ON — or the
-        // CPU backend for tests/CI (DECISIONS.md D15).
+        // CPU backend for tests/CI (project-docs/DECISIONS.md D15).
         cparams.use_gpu = useGPU
 
         Self.metalLock.lock()
@@ -212,7 +229,7 @@ public final class WhisperTranscriber {
             ?? (isEnglishOnlyModel ? "en" : "auto")
 
         // Serialize the whole ctx-touching region: `whisper_full` plus the
-        // segment/language reads run under the Metal lock (DECISIONS.md D8).
+        // segment/language reads run under the Metal lock (project-docs/DECISIONS.md D8).
         // `defer` guarantees the lock is released even on an unexpected throw.
         Self.metalLock.lock()
         defer { Self.metalLock.unlock() }

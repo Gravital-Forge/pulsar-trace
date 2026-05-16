@@ -26,7 +26,7 @@ Each recording lives in its own folder under the output directory:
 
 ### Input shapes for `pulsartrace refine` (Epic 4)
 
-`pulsartrace refine PATH` accepts two input shapes (see DECISIONS.md D13):
+`pulsartrace refine PATH` accepts two input shapes (see project-docs/DECISIONS.md D13):
 
 - **A recording folder** already in the layout above. `refine` transcribes
   `audio-system.wav` (diarized) and, if present, `audio-mic.wav` (the `You`

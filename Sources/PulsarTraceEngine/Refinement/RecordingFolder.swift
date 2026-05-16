@@ -15,7 +15,7 @@ import Foundation
 ///   metadata.json         ← machine-readable sidecar (this epic)
 /// ```
 ///
-/// `refine` accepts two input shapes (DECISIONS.md D13):
+/// `refine` accepts two input shapes (project-docs/DECISIONS.md D13):
 ///
 /// 1. **A recording folder** — already in the layout above. Outputs are
 ///    written back into it.

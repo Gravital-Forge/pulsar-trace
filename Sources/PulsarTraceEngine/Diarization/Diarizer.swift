@@ -26,7 +26,7 @@ public actor Diarizer {
 
     /// How to reach the captive Python diarization layer.
     ///
-    /// In development (DECISIONS.md D3) this points at the venv built by
+    /// In development (project-docs/DECISIONS.md D3) this points at the venv built by
     /// `python/build-venv.sh`. Epic 10 swaps these for the bundled
     /// `python-build-standalone` runtime inside the `.app`; the IPC boundary
     /// is identical, so only this configuration changes.
@@ -193,7 +193,7 @@ public actor Diarizer {
         for (key, value) in configuration.environment {
             env[key] = value
         }
-        // Defence in depth (Hard Invariant #1 / DECISIONS.md D12): pyannote
+        // Defence in depth (Hard Invariant #1 / project-docs/DECISIONS.md D12): pyannote
         // 4.0.4 ships default-on OpenTelemetry that phones home. diarize.py
         // already disables it before importing pyannote; we also force the
         // disable env var here so the captive subprocess can never phone home

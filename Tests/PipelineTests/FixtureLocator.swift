@@ -11,7 +11,7 @@ import Foundation
 /// case-insensitive macOS filesystem that collides with SwiftPM's required
 /// `Tests/` directory; on a case-sensitive filesystem they would be two
 /// directories. The canonical capitalized `Tests/Fixtures/` avoids the
-/// collision — see DECISIONS.md (D6).
+/// collision — see project-docs/DECISIONS.md (D6).
 enum FixtureLocator {
 
     /// The `Tests/` directory (one level above `Tests/PipelineTests/`).

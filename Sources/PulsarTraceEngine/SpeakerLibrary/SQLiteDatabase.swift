@@ -8,7 +8,7 @@ import SQLite3
 /// SwiftPM dependency: it has no supply-chain surface, no version drift, and
 /// the speaker-library schema is small enough that a hand-rolled wrapper is
 /// less code than integrating and pinning a third-party package
-/// (DECISIONS.md D17).
+/// (project-docs/DECISIONS.md D17).
 ///
 /// Not an `actor`: serialization is the caller's job — `SpeakerLibrary` is the
 /// actor that owns exactly one `SQLiteDatabase` and never shares it.

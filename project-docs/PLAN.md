@@ -5,6 +5,10 @@ Epics 7–10 are explicitly out of scope (no audio devices / UI session / signin
 
 Source of truth: `PRD.md`. Architectural deviations logged in `DECISIONS.md`.
 
+Dev environment, the audio/capture stack, and the Claude Code sandbox model
+(what runs sandboxed vs not, and why) are documented in `PREWORK.md` — read it
+before running builds, tests, or capture on a new machine.
+
 Workflow per epic: plan → implement (subagents) → review (subagents) → test green → commit on `main`.
 
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed

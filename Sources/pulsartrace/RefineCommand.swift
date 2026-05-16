@@ -145,12 +145,12 @@ enum RefineCommand {
 
     // MARK: - Diarizer wiring (dev environment)
 
-    /// Build a `Diarizer` against the dev venv + repo `.env` (DECISIONS.md D3/D9).
+    /// Build a `Diarizer` against the dev venv + repo `.env` (project-docs/DECISIONS.md D3/D9).
     ///
     /// Epic 10 swaps this for the bundled `python-build-standalone` runtime; the
     /// IPC boundary is identical, only this wiring changes.
     ///
-    /// Robustness overrides (DECISIONS.md D3): the repo root is otherwise the
+    /// Robustness overrides (project-docs/DECISIONS.md D3): the repo root is otherwise the
     /// `#filePath`-derived dev-tree path baked into the binary at build time.
     /// `PULSARTRACE_REPO_ROOT`, `PULSARTRACE_VENV_PYTHON` and `HF_TOKEN`
     /// environment variables take precedence so the binary can run off a
@@ -196,7 +196,7 @@ enum RefineCommand {
     ///
     /// `PULSARTRACE_REPO_ROOT` (if set) takes precedence — a cheap robustness
     /// override so the binary can be run off the build host ahead of full
-    /// Epic 10 packaging (DECISIONS.md D3). The `#filePath`-derived path is the
+    /// Epic 10 packaging (project-docs/DECISIONS.md D3). The `#filePath`-derived path is the
     /// dev-tree fallback: a build-machine path baked into the binary.
     private static func repoRootURL() -> URL {
         if let root = ProcessInfo.processInfo.environment["PULSARTRACE_REPO_ROOT"],

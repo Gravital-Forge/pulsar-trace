@@ -25,7 +25,7 @@ extension EventPayload {
 /// The PRD lists this payload as `{version, macos_version}`. The envelope
 /// already owns a `version` field (the per-type schema version, R80), so the
 /// app-version field is serialized as `app_version` to avoid a key collision
-/// in the merged JSON object. See DECISIONS.md (D5).
+/// in the merged JSON object. See project-docs/DECISIONS.md (D5).
 public struct AppStartedEvent: EventPayload {
     public static let eventType = "app_started"
 
@@ -338,7 +338,7 @@ public struct SpeakerCreatedEvent: EventPayload {
 ///
 /// R83: `speaker_id` is unchanged across a rename — only `name` moves. Epic 5
 /// CLI `rename` does NOT retroactively rewrite past `final.md` files (that is
-/// Epic 8 scope, DECISIONS.md D16), so `appliedToRecordings` is empty for an
+/// Epic 8 scope, project-docs/DECISIONS.md D16), so `appliedToRecordings` is empty for an
 /// Epic 5-originated rename — no `final_md_rewritten` is paired with it.
 public struct SpeakerRenamedEvent: EventPayload {
     public static let eventType = "speaker_renamed"

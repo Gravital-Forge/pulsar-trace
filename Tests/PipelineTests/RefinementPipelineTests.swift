@@ -17,7 +17,7 @@ import SnapshotTesting
 /// pinned model hash, and pyannote runs with fixed seeds (PRD §12) — so the
 /// `final.md` body and `metadata.json` (volatile fields normalized) are
 /// stable across runs. `.serialized` because whisper.cpp's Metal backend is
-/// single-context per process (DECISIONS.md D8).
+/// single-context per process (project-docs/DECISIONS.md D8).
 @Suite("Refinement pipeline (Epic 4)", .serialized)
 struct RefinementPipelineTests {
 

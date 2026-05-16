@@ -122,7 +122,7 @@ struct StreamingPipelineTests {
     ///
     /// Note on R10: the PRD's "≤ 5 s median" target is specified *on M-series*
     /// — i.e. the Metal/GPU whisper backend. This test suite must use the CPU
-    /// backend (DECISIONS.md D15: the Metal backend asserts at process exit
+    /// backend (project-docs/DECISIONS.md D15: the Metal backend asserts at process exit
     /// after many contexts), and CPU whisper does not keep up with real time
     /// on the longer fixtures, so its lag legitimately exceeds 5 s. The R10 ≤ 5 s
     /// figure is verified by the manual GPU smoke test (`docs/...`), which

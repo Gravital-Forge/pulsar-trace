@@ -7,7 +7,7 @@ import SnapshotTesting
 /// fixture WAV through `FixturePlaybackSource` → `WhisperTranscriber` → R13
 /// markdown, and snapshot the result.
 ///
-/// Uses the `base` model (DECISIONS.md D4) — small enough for the LLM dev loop.
+/// Uses the `base` model (project-docs/DECISIONS.md D4) — small enough for the LLM dev loop.
 /// The model is fetched/verified via `ModelStore` into the shared cache on
 /// first run (R54c/R54d); subsequent runs reuse the cached, verified file.
 ///
@@ -16,7 +16,7 @@ import SnapshotTesting
 /// is stable. The document header (`## Transcript — …`) is wall-clock, so the
 /// snapshot is taken of the *body only* (the header is covered by unit tests).
 /// `.serialized`: whisper.cpp's Metal backend is single-context per process
-/// (see `WhisperTranscriber` / DECISIONS.md D8) — two `whisper_context`s alive
+/// (see `WhisperTranscriber` / project-docs/DECISIONS.md D8) — two `whisper_context`s alive
 /// at once corrupt each other's GPU compute (manifests as a garbage language
 /// like "af" and empty segments). Running these cases one at a time guarantees
 /// at most one transcriber is alive, which is also the real engine's usage

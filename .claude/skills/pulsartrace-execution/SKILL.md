@@ -11,7 +11,9 @@ This skill orients the implementing agent to PulsarTrace's specific architecture
 
 The canonical documents:
 
-- `pulsartrace-prd.md` — the full PRD; sections 8 (Requirements), 14 (GTM), and 15 (Epic Breakdown) are most referenced during implementation
+- `project-docs/PRD.md` — the full PRD; sections 8 (Requirements), 14 (GTM), and 15 (Epic Breakdown) are most referenced during implementation
+- `project-docs/PLAN.md` — checkpointed implementation plan (epic-by-epic status)
+- `project-docs/DECISIONS.md` — architectural decisions / deviations from the PRD (D1, D2, …)
 - `docs/file-format.md` — `live.md` / `final.md` format spec (referenced by R13, R35–R39)
 - `docs/events-schema.md` — JSONL events log schema (referenced by §8.13, R78–R86)
 - `docs/release-smoke-test.md` — manual smoke-test checklist (R69)

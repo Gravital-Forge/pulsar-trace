@@ -92,7 +92,7 @@ Emitted once when a PulsarTrace process (engine or CLI) starts.
 > Note: the PRD lists this payload as `{version, macos_version}`. Because the
 > envelope already owns a `version` field (the schema version), the
 > application-version field is serialized as `app_version` to avoid a JSON key
-> collision. See `DECISIONS.md` (D5).
+> collision. See `project-docs/DECISIONS.md` (D5).
 
 ```jsonl
 {"app_version":"0.1.0-dev","id":"evt_01HW...","macos_version":"26.3.1","ts":"2026-04-30T14:30:05Z","type":"app_started","version":1}
@@ -290,7 +290,7 @@ A speaker's display name changed. The `speaker_id` is unchanged (R83).
 | `speaker_id` | string | Stable id — unchanged by the rename. |
 | `old_name` | string | The previous name. |
 | `new_name` | string | The new name. |
-| `applied_to_recordings` | array | Recordings whose `final.md` was rewritten as a result. **Empty** for an Epic 5 CLI rename — Epic 5 does not retroactively rewrite past `final.md` files (that is Epic 8 scope, DECISIONS.md D16). |
+| `applied_to_recordings` | array | Recordings whose `final.md` was rewritten as a result. **Empty** for an Epic 5 CLI rename — Epic 5 does not retroactively rewrite past `final.md` files (that is Epic 8 scope, project-docs/DECISIONS.md D16). |
 
 ```jsonl
 {"applied_to_recordings":[],"id":"evt_01HX...","new_name":"Steve","old_name":"Unknown #3","speaker_id":"spk_a1b2","ts":"2026-04-30T09:14:33Z","type":"speaker_renamed","version":1}
@@ -407,7 +407,7 @@ it, and the cause always precedes the effect in the log:
 - In **Epic 5**, a `speaker_renamed` / `speaker_merged` from the
   `pulsartrace speakers` CLI updates the library only — it does **not**
   retroactively rewrite past `final.md` files, so `applied_to_recordings` is
-  empty and no `final_md_rewritten` is paired with it (DECISIONS.md D16). The
+  empty and no `final_md_rewritten` is paired with it (project-docs/DECISIONS.md D16). The
   new name takes effect on the next `pulsartrace refine` of a recording, when
   reconciliation applies it. A refine pass that reconciles speakers emits its
   `speaker_created` / `speaker_centroid_updated` events between

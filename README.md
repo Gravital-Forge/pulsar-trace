@@ -57,7 +57,7 @@ Every dominant meeting-transcription tool (Otter, Fireflies, Granola, Fathom, Zo
 git clone <repo-url> gravital-pulsar-trace
 cd gravital-pulsar-trace
 
-# 1. Build whisper.cpp with Metal (vendored, commit-pinned — see DECISIONS.md D7)
+# 1. Build whisper.cpp with Metal (vendored, commit-pinned — see project-docs/DECISIONS.md D7)
 ./scripts/build-whisper.sh
 
 # 2. Build the embedded Python diarization environment (pyannote, torch)
@@ -228,7 +228,7 @@ The engine consumes an abstract `AudioFrameSource` — it cannot tell whether fr
 - **Diarization** — `pyannote.audio` 4.x (`speaker-diarization-community-1`) in an embedded Python subprocess.
 - **Speaker library** — SQLite with WAL journaling; voices matched by cosine similarity of pyannote embeddings, centroids refined by a running mean across appearances.
 
-Architectural decisions and deviations from the original PRD are recorded in [`DECISIONS.md`](DECISIONS.md).
+Architectural decisions and deviations from the original PRD are recorded in [`DECISIONS.md`](project-docs/DECISIONS.md).
 
 ---
 
@@ -244,8 +244,8 @@ python/pulsartrace-ai/       Embedded Python — pyannote diarization
 Tests/                       Unit / Pipeline / Capture test targets + fixtures
 scripts/build-whisper.sh     Vendors + builds whisper.cpp
 docs/                        file-format.md, events-schema.md, release-smoke-test.md
-PRD.md                       Product requirements
-PLAN.md / DECISIONS.md       Implementation plan + architectural decisions
+project-docs/                PRD.md, PLAN.md, DECISIONS.md — requirements,
+                             implementation plan, architectural decisions
 ```
 
 ---

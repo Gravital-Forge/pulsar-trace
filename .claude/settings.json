@@ -1,0 +1,43 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "github-cloud.s3.amazonaws.com",
+        "raw.githubusercontent.com",
+        "pkg-containers.githubusercontent.com",
+        "ghcr.io",
+        "formulae.brew.sh",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "*.huggingface.co",
+        "*.hf.co",
+        "*.xethub.hf.co"
+      ],
+      "allowMachLookup": [
+        "com.apple.audio.*",
+        "com.apple.coreaudio.*",
+        "com.apple.cmio.*",
+        "com.apple.coremedia.*",
+        "com.apple.tccd",
+        "com.apple.tccd.system"
+      ]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(swift build)",
+      "Bash(swift build *)",
+      "Bash(swift test)",
+      "Bash(swift test *)",
+      "Bash(PULSARTRACE_DEVICE_TESTS=1 swift test *)",
+      "Bash(.build/debug/pulsartrace refine *)",
+      "Bash(.build/release/pulsartrace refine *)",
+      "Bash(python/pulsartrace-ai/.venv/bin/pytest *)"
+    ]
+  }
+}

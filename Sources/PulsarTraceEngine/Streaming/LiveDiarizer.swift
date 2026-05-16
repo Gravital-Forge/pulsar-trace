@@ -33,7 +33,7 @@ public struct LiveSpeakerSpan: Sendable, Equatable {
 /// Live (streaming) speaker diarization for the system stream (Epic 6 — R15,
 /// R16).
 ///
-/// ## diart vs windowed-pyannote — Open Question #1 (DECISIONS.md D19)
+/// ## diart vs windowed-pyannote — Open Question #1 (project-docs/DECISIONS.md D19)
 ///
 /// The PRD recommended `diart`. `diart` cannot be installed in this project's
 /// venv without downgrading `pyannote.audio` from the pinned 4.0.4 to 3.4.0

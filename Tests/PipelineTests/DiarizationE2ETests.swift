@@ -42,7 +42,7 @@ struct DiarizationE2ETests {
 
     /// Load `HF_TOKEN` (and any other vars) from the repo `.env` for the
     /// subprocess. Production (Epic 10) sources the token from the Keychain;
-    /// this dev-only `.env` read is documented in DECISIONS.md D9.
+    /// this dev-only `.env` read is documented in project-docs/DECISIONS.md D9.
     private static func dotEnv() -> [String: String] {
         let envFile = repoRoot.appendingPathComponent(".env")
         guard let text = try? String(contentsOf: envFile, encoding: .utf8) else {
@@ -74,7 +74,7 @@ struct DiarizationE2ETests {
         }
         var env = dotEnv()
         guard env["HF_TOKEN"]?.isEmpty == false else { return nil }
-        // Cache the model under PulsarTrace's own cache dir (DECISIONS.md D10).
+        // Cache the model under PulsarTrace's own cache dir (project-docs/DECISIONS.md D10).
         guard let cachesDir = FileManager.default
             .urls(for: .cachesDirectory, in: .userDomainMask).first else {
             Issue.record("no caches directory available for the test environment")

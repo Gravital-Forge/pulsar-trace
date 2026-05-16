@@ -4,7 +4,7 @@ import Foundation
 
 // whisper.cpp is vendored + built by `scripts/build-whisper.sh` into
 // `vendor/whisper-install/` (gitignored, reproducible from the pinned commit in
-// DECISIONS.md D7). SwiftPM can't run that script, so PulsarTraceEngine reaches
+// project-docs/DECISIONS.md D7). SwiftPM can't run that script, so PulsarTraceEngine reaches
 // the built library through absolute -I/-L/-rpath flags computed here from the
 // package directory. `swift build` works once the script has run.
 let whisperInstall = URL(fileURLWithPath: #filePath)
@@ -30,7 +30,7 @@ let package = Package(
     targets: [
         // System-library wrapper around the vendored whisper.cpp (Epic 2).
         // The dylib + headers are produced by scripts/build-whisper.sh; see
-        // DECISIONS.md D7 for the integration approach and pinned commit.
+        // project-docs/DECISIONS.md D7 for the integration approach and pinned commit.
         .systemLibrary(name: "CWhisper"),
         // Core library: the engine, all AudioFrameSources, logging, events log, IPC.
         .target(
@@ -74,7 +74,7 @@ let package = Package(
             exclude: ["__Snapshots__"]
         ),
         // Layer 2 + 4: pipeline + IPC integration tests, fixture-fed, no devices.
-        // Audio fixtures live at the repo's `Tests/Fixtures/audio/` (PRD §12, DECISIONS.md D6)
+        // Audio fixtures live at the repo's `Tests/Fixtures/audio/` (PRD §12, project-docs/DECISIONS.md D6)
         // and are resolved by path relative to the test source file (#filePath)
         // rather than copied as bundle resources, so they are not duplicated.
         .testTarget(
