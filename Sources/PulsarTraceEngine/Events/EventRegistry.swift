@@ -1,0 +1,55 @@
+import Foundation
+
+/// The catalogue of event types known to this build.
+///
+/// `docs/events-schema.md` is the human-facing contract; this registry is the
+/// machine-facing one. Later epics extend it by appending entries — the
+/// `EventWriter` does not need to change. Keeping every type registered in one
+/// place makes it cheap to verify "every significant operation emits exactly
+/// one event" (R82) by diffing this list against the product's operations.
+public enum EventRegistry {
+
+    /// A registered event type: its `type` string and current schema version.
+    public struct Entry: Sendable, Equatable {
+        public let type: String
+        public let version: Int
+        public let category: Category
+
+        public init(type: String, version: Int, category: Category) {
+            self.type = type
+            self.version = version
+            self.category = category
+        }
+    }
+
+    /// The five event categories from §8.13.
+    public enum Category: String, Sendable {
+        case recordingLifecycle = "recording_lifecycle"
+        case refinementLifecycle = "refinement_lifecycle"
+        case speakerLibrary = "speaker_library"
+        case fileOperations = "file_operations"
+        case system
+    }
+
+    /// All event types this build knows how to emit.
+    ///
+    /// Epic 1 registers only the `system` `app_started` / `app_stopped` pair.
+    /// Later epics append their types here as they implement emission.
+    public static let all: [Entry] = [
+        Entry(
+            type: AppStartedEvent.eventType,
+            version: AppStartedEvent.schemaVersion,
+            category: .system
+        ),
+        Entry(
+            type: AppStoppedEvent.eventType,
+            version: AppStoppedEvent.schemaVersion,
+            category: .system
+        ),
+    ]
+
+    /// Look up a registered entry by its `type` string.
+    public static func entry(for type: String) -> Entry? {
+        all.first { $0.type == type }
+    }
+}

@@ -1,0 +1,1 @@
+{"app_version":"0.1.0-dev","id":"evt_01HW000000000000000000000A","macos_version":"26.3.1","ts":"2026-04-30T14:30:05Z","type":"app_started","version":1}

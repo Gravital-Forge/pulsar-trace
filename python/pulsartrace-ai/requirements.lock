@@ -1,0 +1,10 @@
+# PulsarTrace AI layer — pinned dependency lock.
+#
+# PLACEHOLDER (Epic 1). Real pins land in Epic 3 (Offline Diarization), when
+# pyannote.audio, diart, torch (MPS), numpy and scipy are added and exact
+# versions + hashes are recorded here. Per the determinism rule (PRD §12),
+# every dependency is pinned by exact version; this file is the source of
+# truth installed by `python/build-venv.sh`.
+#
+# Epic 1 installs only the dev tooling needed for the pytest harness:
+pytest==8.3.4

@@ -1,1 +1,16 @@
 .env
+
+# Swift / SwiftPM build artifacts
+.build/
+*.xcodeproj
+.swiftpm/
+
+# Python venv and caches
+python/pulsartrace-ai/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# macOS
+.DS_Store
