@@ -138,6 +138,56 @@ struct TranscriptionPipelineTests {
         #expect(!coffeeAfterSilence.isEmpty)
     }
 
+    @Test("VAD-segmented transcription splits a turn at a mid-recording pause")
+    func vadRegionsSplitTurnAtPause() async throws {
+        let modelURL = try await baseModelURL()
+        let vadModelURL = try await WhisperTestGate.model(ModelCatalog.sileroVAD)
+
+        // Two copies of the 30 s coffee-shop fixture with 5 s of silence
+        // between them — a speaker who talked, paused to listen, then resumed.
+        // Fed whole to one `whisper_full`, both blocks fuse into segments that
+        // straddle the pause; that long fused segment is what the time-order
+        // merge floats ahead of an interleaved speaker. `detectSpeechRegions`
+        // must instead split at the pause so every region — and so every
+        // segment — lands wholly on one side of it.
+        let speech = try await OfflineTranscriptionPipeline().accumulate(
+            FixturePlaybackSource(
+                file: FixtureLocator.audio("single-speaker-30s.wav"),
+                realtime: false))
+        let pauseSeconds = 5
+        let silence = [Float](
+            repeating: 0, count: AudioFormat.sampleRate * pauseSeconds)
+        let buffer = speech + silence + speech
+        let speechSeconds = Double(speech.count) / Double(AudioFormat.sampleRate)
+        let pauseStart = Duration.seconds(speechSeconds)
+        let pauseEnd = Duration.seconds(speechSeconds + Double(pauseSeconds))
+
+        let (regions, result) = try await WhisperTestGate.run {
+            let regions = try WhisperTranscriber.detectSpeechRegions(
+                in: buffer, vadModelURL: vadModelURL)
+            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+            let result = try transcriber.transcribe(
+                buffer, regions: regions, options: .init())
+            return (regions, result)
+        }
+
+        // The 5 s pause is the only gap wide enough to be a turn boundary, so
+        // VAD yields at least two regions and none of them covers the pause.
+        #expect(regions.count >= 2)
+        #expect(!regions.contains { $0.start < pauseStart && $0.end > pauseEnd })
+        #expect(regions.contains { $0.start >= pauseStart })   // the resumed turn
+
+        // The regression this guards: no transcript segment spans the pause —
+        // the resumed turn is its own segment past the gap, not fused into the
+        // pre-pause turn (which is what mis-orders the merged final.md).
+        #expect(!result.segments.contains {
+            $0.start < pauseStart && $0.end > pauseEnd
+        })
+        #expect(result.segments.contains {
+            $0.start >= pauseStart && $0.text.lowercased().contains("coffee")
+        })
+    }
+
     @Test("transcription is deterministic across repeated runs")
     func deterministicAcrossRuns() async throws {
         let modelURL = try await baseModelURL()

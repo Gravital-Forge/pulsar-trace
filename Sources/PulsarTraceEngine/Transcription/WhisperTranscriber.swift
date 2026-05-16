@@ -31,6 +31,26 @@ public struct TranscriptionResult: Sendable, Equatable {
     }
 }
 
+/// A contiguous span of detected voice activity in a recording, in
+/// recording-relative time.
+///
+/// Produced by `WhisperTranscriber.detectSpeechRegions(in:vadModelURL:…)` and
+/// consumed by `transcribe(_:regions:options:)`, which decodes each region
+/// independently so the offline transcript breaks at conversational turn
+/// pauses instead of emitting one long segment that the time-order merge would
+/// float ahead of an interleaved speaker.
+public struct SpeechRegion: Sendable, Equatable {
+    /// Offset from recording start to the region's first sample.
+    public let start: Duration
+    /// Offset from recording start to the region's last sample.
+    public let end: Duration
+
+    public init(start: Duration, end: Duration) {
+        self.start = start
+        self.end = end
+    }
+}
+
 /// Offline transcription via whisper.cpp's C API (R9).
 ///
 /// One `WhisperTranscriber` owns exactly one `whisper_context`, loaded once at
@@ -221,7 +241,9 @@ public final class WhisperTranscriber {
     /// Transcribe a whole recording given as one contiguous Float32 PCM buffer.
     ///
     /// `samples` must be 16 kHz mono in [-1, 1] — the engine's canonical format
-    /// (`AudioFormat`). This is a single `whisper_full` call (offline path).
+    /// (`AudioFormat`). This is a single `whisper_full` call (offline path);
+    /// `transcribe(_:regions:options:)` is the VAD-segmented variant the refine
+    /// pass prefers.
     ///
     /// - Important: this is a blocking, CPU/GPU-bound call that runs for seconds
     ///   (longer for `large-v3` or long recordings) and holds a process-wide
@@ -229,41 +251,7 @@ public final class WhisperTranscriber {
     ///   background task/queue.
     public func transcribe(_ samples: [Float], options: Options = Options()) throws -> TranscriptionResult {
         guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
-
-        // Epic 2 edge case: an `*.en` model on (possibly) non-English audio.
-        // We default to multilingual so this is just a logged warning path.
-        if isEnglishOnlyModel {
-            logger.warning(
-                "english-only whisper model in use; non-English speech will be mis-transcribed")
-        }
-
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
-        params.n_threads = Int32(options.threadCount)
-        params.print_progress = false
-        params.print_realtime = false
-        params.print_timestamps = false
-        params.print_special = false
-        params.translate = false
-        params.single_segment = false
-        params.no_context = true            // offline: each run is independent
-        // Temperature + fallback. whisper.cpp seeds its sampler RNG with a
-        // fixed per-call constant, so a non-zero temperature is still
-        // reproducible; `temperature_inc` lets a window that fails whisper's
-        // quality checks re-decode hotter instead of its garbage tokens
-        // poisoning every later window in this same `whisper_full` call.
-        params.temperature = options.temperature
-        params.temperature_inc = options.temperatureFallbackStep
-        params.greedy.best_of = 1
-        // Hallucination suppression (Epic 2 edge case): drop blank/non-speech
-        // tokens at the decoder, and gate on the no-speech probability.
-        params.suppress_blank = true
-        params.suppress_nst = true
-        params.no_speech_thold = options.noSpeechThreshold
-
-        // The chosen language string: a forced code, "en" for an *.en model,
-        // or "auto" for multilingual auto-detect.
-        let langString = options.language.flatMap { isEnglishOnlyModel ? nil : $0 }
-            ?? (isEnglishOnlyModel ? "en" : "auto")
+        warnIfEnglishOnlyModel()
 
         // Serialize the whole ctx-touching region: `whisper_full` plus the
         // segment/language reads run under the Metal lock (project-docs/DECISIONS.md D8).
@@ -271,59 +259,150 @@ public final class WhisperTranscriber {
         Self.metalLock.lock()
         defer { Self.metalLock.unlock() }
 
-        // Decode under the (forced/auto) language. A nested func so it can be
-        // invoked either directly or nested inside the VAD-path `withCString`
-        // below; it captures the local `var params` by reference, so the
-        // `vad_*` / `language` fields set just before the call are seen by
-        // `runFull`. `decode()` must not escape this stack frame — it borrows
-        // `params` and `samples` by reference.
-        //
-        // C-string lifetime: `params.language` and (caller-set)
-        // `params.vad_model_path` are borrowed `withCString` pointers, valid
-        // only inside their closures. That is sufficient: `whisper_full` takes
-        // `whisper_full_params` *by value*, so it copies the struct — and
-        // dereferences those pointers — entirely within the `runFull` call,
-        // before any `withCString` closure unwinds. Keep each `runFull` call
-        // nested inside the closures that own the pointers it reads.
-        func decode() -> Int32 {
-            langString.withCString { langPtr -> Int32 in
-                params.language = langPtr
-                params.detect_language = false  // whisper_full auto-detects on "auto"
-                return runFull(&params, samples)
-            }
-        }
-
-        // whisper.cpp's built-in Silero VAD, when a model is supplied: it
-        // drops non-speech regions before decoding, so a long digital-silence
-        // stretch can't push the greedy decoder into a degenerate loop.
-        // whisper maps the segment timestamps back to original-audio time
-        // internally, so `collectSegments()` needs no adjustment.
-        let code: Int32
-        if let vadModelURL = options.vadModelURL {
-            params.vad = true
-            params.vad_params = whisper_vad_default_params()
-            code = vadModelURL.path.withCString { vadPtr -> Int32 in
-                params.vad_model_path = vadPtr
-                return decode()
-            }
-        } else {
-            code = decode()
-        }
-        guard code == 0 else {
-            throw TranscribeError.transcriptionFailed(Int(code))
-        }
-
-        let detectedLangId = whisper_full_lang_id(ctx)
-        let language = detectedLangId >= 0
-            ? String(cString: whisper_lang_str(detectedLangId))
-            : (isEnglishOnlyModel ? "en" : "unknown")
-
-        let segments = collectSegments()
-
-        let segmentCount = segments.count
+        let result = try decodeLocked(
+            samples, options: options, whisperVADModel: options.vadModelURL)
         logger.notice(
-            "transcription complete; language=\(language), segments=\(segmentCount)")
-        return TranscriptionResult(segments: segments, language: language)
+            "transcription complete; language=\(result.language), segments=\(result.segments.count)")
+        return result
+    }
+
+    /// Transcribe a recording **split at its VAD speech regions** — the offline
+    /// path the refine pass uses.
+    ///
+    /// Each `SpeechRegion` is decoded as its own `whisper_full` call and its
+    /// segment timestamps are shifted back to recording-absolute time. This is
+    /// what stops a speaker's turn from being glued into one long segment
+    /// across a pause: when the talker goes quiet to listen, the region ends,
+    /// so the time-order merge in `RefinementPipeline` can interleave the other
+    /// stream's utterances in causal order instead of floating this whole turn
+    /// ahead of them.
+    ///
+    /// Regions come from `detectSpeechRegions(in:vadModelURL:…)`. An empty
+    /// `regions` (VAD found no speech) falls back to a plain whole-buffer
+    /// decode. whisper's *own* built-in VAD is off for each region decode — the
+    /// region already excludes the surrounding silence, and re-running VAD
+    /// inside it would only re-concatenate and re-hide any internal gap.
+    ///
+    /// Same blocking / process-lock contract as `transcribe(_:options:)`.
+    public func transcribe(
+        _ samples: [Float],
+        regions: [SpeechRegion],
+        options: Options = Options()
+    ) throws -> TranscriptionResult {
+        guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
+        guard !regions.isEmpty else {
+            var wholeBuffer = options
+            wholeBuffer.vadModelURL = nil   // VAD found no speech to gate on
+            return try transcribe(samples, options: wholeBuffer)
+        }
+        warnIfEnglishOnlyModel()
+
+        Self.metalLock.lock()
+        defer { Self.metalLock.unlock() }
+
+        let sampleCount = samples.count
+        var merged: [TranscriptSegment] = []
+        var language: String?
+        for region in regions {
+            let lo = Self.sampleIndex(of: region.start, sampleCount: sampleCount)
+            let hi = Self.sampleIndex(of: region.end, sampleCount: sampleCount)
+            guard lo < hi else { continue }
+
+            // whisper VAD off (`whisperVADModel: nil`): the region is already
+            // speech-only. Shift the region-relative segment times back onto
+            // the recording timeline.
+            let decoded = try decodeLocked(
+                Array(samples[lo..<hi]), options: options, whisperVADModel: nil)
+            let offset = Duration.milliseconds(lo * 1000 / AudioFormat.sampleRate)
+            for seg in decoded.segments {
+                merged.append(TranscriptSegment(
+                    start: seg.start + offset,
+                    end: seg.end + offset,
+                    text: seg.text))
+            }
+            if language == nil { language = decoded.language }
+        }
+
+        logger.notice(
+            "transcription complete; \(regions.count) region(s), segments=\(merged.count)")
+        return TranscriptionResult(
+            segments: merged,
+            language: language ?? (isEnglishOnlyModel ? "en" : "unknown"))
+    }
+
+    /// Detect the speech regions of a recording with whisper.cpp's bundled
+    /// Silero VAD, coalescing regions closer than `minTurnGap` so the transcript
+    /// splits at genuine conversational turn pauses rather than at every breath.
+    ///
+    /// The returned regions feed `transcribe(_:regions:options:)`. They are in
+    /// recording-relative time and already carry whisper's `speech_pad_ms`
+    /// padding around each detected utterance.
+    ///
+    /// Runs under the same process-wide Metal lock as `transcribe` — a VAD
+    /// context is a ggml context and must not be constructed concurrently with
+    /// a `whisper_context` (project-docs/DECISIONS.md D8).
+    ///
+    /// - Parameters:
+    ///   - samples: the whole recording, 16 kHz mono Float32.
+    ///   - vadModelURL: a ggml Silero VAD model file.
+    ///   - useGPU: VAD backend. Defaults to `false`: the Silero model is tiny,
+    ///     a GPU offers no useful speedup, and CPU avoids constructing an extra
+    ///     Metal context (project-docs/DECISIONS.md D15).
+    ///   - minTurnGap: silence shorter than this between two regions is treated
+    ///     as within-turn and the regions are merged. 800 ms matches the
+    ///     streaming pipeline's `utteranceGap`.
+    public static func detectSpeechRegions(
+        in samples: [Float],
+        vadModelURL: URL,
+        useGPU: Bool = false,
+        minTurnGap: Duration = .milliseconds(800),
+        logger: Logger = Logger(label: LogSubsystem.engine)
+    ) throws -> [SpeechRegion] {
+        guard !samples.isEmpty else { return [] }
+        guard FileManager.default.fileExists(atPath: vadModelURL.path) else {
+            throw TranscribeError.modelNotFound(vadModelURL.path)
+        }
+
+        Self.metalLock.lock()
+        defer { Self.metalLock.unlock() }
+
+        var cparams = whisper_vad_default_context_params()
+        cparams.use_gpu = useGPU
+        guard let vctx = vadModelURL.path.withCString({
+            whisper_vad_init_from_file_with_params($0, cparams)
+        }) else {
+            throw TranscribeError.modelLoadFailed(vadModelURL.path)
+        }
+        defer { whisper_vad_free(vctx) }
+
+        let vparams = whisper_vad_default_params()
+        guard let segments = samples.withUnsafeBufferPointer({ buf in
+            whisper_vad_segments_from_samples(
+                vctx, vparams, buf.baseAddress, Int32(buf.count))
+        }) else {
+            throw TranscribeError.transcriptionFailed(-1)
+        }
+        defer { whisper_vad_free_segments(segments) }
+
+        let n = whisper_vad_segments_n_segments(segments)
+        var raw: [SpeechRegion] = []
+        raw.reserveCapacity(Int(n))
+        for i in 0..<n {
+            // The VAD segment getters return `float`, but the value is
+            // centiseconds (10 ms units): `whisper_vad_segments_from_samples`
+            // stores `samples_to_cs(...)`. This differs from
+            // `whisper_full_get_segment_t0`, which is `int64_t` centiseconds.
+            let t0 = whisper_vad_segments_get_segment_t0(segments, i)
+            let t1 = whisper_vad_segments_get_segment_t1(segments, i)
+            raw.append(SpeechRegion(
+                start: .milliseconds(Int((Double(t0) * 10).rounded())),
+                end: .milliseconds(Int((Double(t1) * 10).rounded()))))
+        }
+
+        let coalesced = coalesceRegions(raw, minGap: minTurnGap)
+        logger.notice(
+            "VAD: \(raw.count) speech region(s) → \(coalesced.count) turn(s)")
+        return coalesced
     }
 
     /// Transcribe one *streaming window* — a short, recent slice of audio —
@@ -404,6 +483,134 @@ public final class WhisperTranscriber {
     }
 
     // MARK: - Private
+
+    /// Decode one contiguous buffer with the offline param profile (greedy +
+    /// temperature fallback) and return its **buffer-relative** segments. The
+    /// caller must already hold `metalLock`.
+    ///
+    /// `whisperVADModel`, when non-nil, enables whisper.cpp's built-in Silero
+    /// VAD for this decode (the whole-buffer path). The region-split path
+    /// passes `nil`: each region is already speech-only, and re-running VAD
+    /// inside it would only re-concatenate and re-hide any internal gap.
+    private func decodeLocked(
+        _ samples: [Float],
+        options: Options,
+        whisperVADModel: URL?
+    ) throws -> TranscriptionResult {
+        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        params.n_threads = Int32(options.threadCount)
+        params.print_progress = false
+        params.print_realtime = false
+        params.print_timestamps = false
+        params.print_special = false
+        params.translate = false
+        params.single_segment = false
+        params.no_context = true            // offline: each run is independent
+        // Temperature + fallback. whisper.cpp seeds its sampler RNG with a
+        // fixed per-call constant, so a non-zero temperature is still
+        // reproducible; `temperature_inc` lets a window that fails whisper's
+        // quality checks re-decode hotter instead of its garbage tokens
+        // poisoning every later window in this same `whisper_full` call.
+        params.temperature = options.temperature
+        params.temperature_inc = options.temperatureFallbackStep
+        params.greedy.best_of = 1
+        // Hallucination suppression (Epic 2 edge case): drop blank/non-speech
+        // tokens at the decoder, and gate on the no-speech probability.
+        params.suppress_blank = true
+        params.suppress_nst = true
+        params.no_speech_thold = options.noSpeechThreshold
+
+        // The chosen language string: a forced code, "en" for an *.en model,
+        // or "auto" for multilingual auto-detect.
+        let langString = options.language.flatMap { isEnglishOnlyModel ? nil : $0 }
+            ?? (isEnglishOnlyModel ? "en" : "auto")
+
+        // Decode under the (forced/auto) language. A nested func so it can be
+        // invoked either directly or nested inside the VAD-path `withCString`
+        // below; it captures the local `var params` by reference, so the
+        // `vad_*` / `language` fields set just before the call are seen by
+        // `runFull`. `decode()` must not escape this stack frame — it borrows
+        // `params` and `samples` by reference.
+        //
+        // C-string lifetime: `params.language` and (caller-set)
+        // `params.vad_model_path` are borrowed `withCString` pointers, valid
+        // only inside their closures. That is sufficient: `whisper_full` takes
+        // `whisper_full_params` *by value*, so it copies the struct — and
+        // dereferences those pointers — entirely within the `runFull` call,
+        // before any `withCString` closure unwinds. Keep each `runFull` call
+        // nested inside the closures that own the pointers it reads.
+        func decode() -> Int32 {
+            langString.withCString { langPtr -> Int32 in
+                params.language = langPtr
+                params.detect_language = false  // whisper_full auto-detects on "auto"
+                return runFull(&params, samples)
+            }
+        }
+
+        // whisper.cpp's built-in Silero VAD, when a model is supplied: it
+        // drops non-speech regions before decoding, so a long digital-silence
+        // stretch can't push the greedy decoder into a degenerate loop.
+        // whisper maps the segment timestamps back to original-audio time
+        // internally, so `collectSegments()` needs no adjustment.
+        let code: Int32
+        if let whisperVADModel {
+            params.vad = true
+            params.vad_params = whisper_vad_default_params()
+            code = whisperVADModel.path.withCString { vadPtr -> Int32 in
+                params.vad_model_path = vadPtr
+                return decode()
+            }
+        } else {
+            code = decode()
+        }
+        guard code == 0 else {
+            throw TranscribeError.transcriptionFailed(Int(code))
+        }
+
+        let detectedLangId = whisper_full_lang_id(ctx)
+        let language = detectedLangId >= 0
+            ? String(cString: whisper_lang_str(detectedLangId))
+            : (isEnglishOnlyModel ? "en" : "unknown")
+        return TranscriptionResult(segments: collectSegments(), language: language)
+    }
+
+    /// Log the `*.en`-model-on-arbitrary-audio warning (Epic 2 edge case). We
+    /// default to a multilingual model, so this is only ever a warning path.
+    private func warnIfEnglishOnlyModel() {
+        if isEnglishOnlyModel {
+            logger.warning(
+                "english-only whisper model in use; non-English speech will be mis-transcribed")
+        }
+    }
+
+    /// Merge speech regions separated by less than `minGap` so the transcript
+    /// breaks at genuine turn pauses, not at every short breath. `regions` must
+    /// be in ascending start order; the result is too.
+    static func coalesceRegions(
+        _ regions: [SpeechRegion],
+        minGap: Duration
+    ) -> [SpeechRegion] {
+        guard var current = regions.first else { return [] }
+        var out: [SpeechRegion] = []
+        for region in regions.dropFirst() {
+            if region.start - current.end < minGap {
+                current = SpeechRegion(
+                    start: current.start,
+                    end: max(current.end, region.end))
+            } else {
+                out.append(current)
+                current = region
+            }
+        }
+        out.append(current)
+        return out
+    }
+
+    /// Clamp a recording-relative time to a valid sample index in `[0, count]`.
+    private static func sampleIndex(of time: Duration, sampleCount: Int) -> Int {
+        let idx = Int((time.seconds * Double(AudioFormat.sampleRate)).rounded())
+        return min(max(idx, 0), sampleCount)
+    }
 
     private func runFull(_ params: inout whisper_full_params, _ samples: [Float]) -> Int32 {
         samples.withUnsafeBufferPointer { buf in

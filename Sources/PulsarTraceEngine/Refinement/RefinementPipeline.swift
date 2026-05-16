@@ -443,7 +443,29 @@ public struct RefinementPipeline: Sendable {
             }
             let duration = Duration.milliseconds(
                 samples.count * 1000 / AudioFormat.sampleRate)
-            let result = try transcriber.transcribe(samples, options: options)
+
+            // VAD-segmented transcription: when a Silero VAD model is
+            // available, detect this stream's speech regions and decode each
+            // independently, so a speaker's turn ends at the pause where they
+            // stopped to listen. The time-order merge can then interleave the
+            // other stream's utterances in causal order, instead of floating
+            // one long glued-together turn ahead of them. A VAD failure is
+            // non-fatal — fall back to a whole-buffer decode.
+            let result: TranscriptionResult
+            if let vadModelURL = options.vadModelURL {
+                var regions: [SpeechRegion] = []
+                do {
+                    regions = try WhisperTranscriber.detectSpeechRegions(
+                        in: samples, vadModelURL: vadModelURL, logger: logger)
+                } catch {
+                    logger.warning(
+                        "VAD region detection failed — whole-buffer decode")
+                }
+                result = try transcriber.transcribe(
+                    samples, regions: regions, options: options)
+            } else {
+                result = try transcriber.transcribe(samples, options: options)
+            }
             return StreamTranscription(
                 segments: result.segments,
                 language: result.language,

@@ -530,3 +530,35 @@ RNG with a fixed per-call constant (`std::mt19937(0)`), so a non-zero
 temperature is still byte-reproducible run-to-run on a given build — the
 mechanism shifts from "temperature 0" to "fixed-seed sampler", the guarantee
 does not. Confirmed with the user.
+
+## D26 — Offline refine transcribes each VAD speech region separately, not the whole buffer
+
+**Decision:** The `refine` pass no longer feeds the whole stream to one
+`whisper_full` call with whisper's built-in VAD enabled (D25's mechanism).
+Instead, `WhisperTranscriber.detectSpeechRegions(in:vadModelURL:)` runs the
+Silero VAD on its own to get the stream's speech regions, coalesces regions
+closer than 800 ms (the streaming pipeline's `utteranceGap`) into turn-sized
+spans, and `transcribe(_:regions:options:)` decodes each region as an
+independent `whisper_full` call, shifting its segment timestamps back onto the
+recording timeline. whisper's built-in VAD is **off** for each region decode.
+The whole-buffer `transcribe(_:options:)` path (and its built-in-VAD support)
+is kept as the fallback when no VAD model is available or region detection
+fails. The streaming `transcribeWindow` path is unchanged.
+
+**Why:** D25's built-in VAD fixed the silence-degeneration failure but
+introduced an ordering bug in the merged `final.md`. whisper's built-in VAD
+strips the silence and then *concatenates* the speech into one buffer before
+decoding, so whisper's own segmenter no longer sees the pauses and glues a
+speaker's clauses across a multi-turn stretch into one long segment stamped at
+its start. The two streams are merged into `final.md` by segment start time
+(`RefinementPipeline.mergeStreams`), so a long mic-stream segment that
+temporally *contains* the other speaker's turns sorts ahead of all of them —
+the transcript then reads as if one speaker said a whole monologue before the
+other replied, even referencing things the other had not yet said. Decoding
+each VAD region separately keeps a turn bounded by the pause where the speaker
+stopped to listen, so the time-order merge interleaves the two streams in
+causal order. Granularity sits between the over-fragmented append-only
+`live.md` (per streaming window) and the old one-segment-per-monologue final:
+regions within 800 ms are merged so the transcript breaks at genuine turn
+pauses, not every breath. Reported by the user from a real two-party
+recording; confirmed with the user.
