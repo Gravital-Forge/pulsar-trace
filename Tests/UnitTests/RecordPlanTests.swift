@@ -1,0 +1,83 @@
+import Testing
+import Foundation
+@testable import PulsarTraceEngine
+
+/// Layer 1 — `RecordPlan`, the pure capture↔engine argv builder behind
+/// `pulsartrace record` (R47).
+@Suite("RecordPlan (record, R47)")
+struct RecordPlanTests {
+
+    private let paths = AppPaths(home: URL(fileURLWithPath: "/tmp/pt-home"))
+    private let folder = URL(fileURLWithPath: "/tmp/meetings/standup", isDirectory: true)
+
+    /// Value following `flag` in an argv, or `nil`.
+    private func value(after flag: String, in argv: [String]) -> String? {
+        guard let i = argv.firstIndex(of: flag), i + 1 < argv.count else { return nil }
+        return argv[i + 1]
+    }
+
+    @Test("system + mic mode wires both sockets into capture and engine")
+    func systemAndMic() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: nil, systemAudioEnabled: true, modelName: "base")
+
+        // The recording id threads through both argv.
+        #expect(value(after: "--recording-id", in: plan.captureArguments)
+            == plan.recordingId)
+        #expect(value(after: "--recording-id", in: plan.engineArguments)
+            == plan.recordingId)
+
+        // Capture binds both sockets; no mic-only flag.
+        #expect(value(after: "--system-socket", in: plan.captureArguments)
+            == plan.systemSocket.path)
+        #expect(value(after: "--mic-socket", in: plan.captureArguments)
+            == plan.micSocket.path)
+        #expect(!plan.captureArguments.contains("--no-system-audio"))
+        #expect(!plan.captureArguments.contains("--mic-device"))
+
+        // The engine runs the live pass off both sockets.
+        #expect(plan.engineArguments.contains("--live"))
+        #expect(value(after: "--system-socket", in: plan.engineArguments)
+            == plan.systemSocket.path)
+        #expect(value(after: "--mic-socket", in: plan.engineArguments)
+            == plan.micSocket.path)
+        #expect(value(after: "--out", in: plan.engineArguments) == folder.path)
+        #expect(value(after: "--model", in: plan.engineArguments) == "base")
+    }
+
+    @Test("mic-only mode passes --no-system-audio and no engine system socket")
+    func micOnly() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: nil, systemAudioEnabled: false, modelName: "base")
+
+        #expect(plan.captureArguments.contains("--no-system-audio"))
+        // The engine reads a single stream from the mic socket — no system one.
+        #expect(!plan.engineArguments.contains("--system-socket"))
+        #expect(value(after: "--mic-socket", in: plan.engineArguments)
+            == plan.micSocket.path)
+    }
+
+    @Test("an explicit microphone id is forwarded to capture as --mic-device")
+    func explicitMicDevice() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: "BuiltInMic-7F3A", systemAudioEnabled: true,
+            modelName: "large-v3")
+        #expect(value(after: "--mic-device", in: plan.captureArguments)
+            == "BuiltInMic-7F3A")
+        #expect(value(after: "--model", in: plan.captureArguments) == "large-v3")
+    }
+
+    @Test("socket paths live under the configured socket directory")
+    func socketPathsUnderSocketDir() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: nil, systemAudioEnabled: true, modelName: "base")
+        #expect(plan.systemSocket == paths.systemSocketURL(recordingId: plan.recordingId))
+        #expect(plan.micSocket == paths.micSocketURL(recordingId: plan.recordingId))
+        #expect(plan.systemSocket.path.hasSuffix("-system.sock"))
+        #expect(plan.micSocket.path.hasSuffix("-mic.sock"))
+    }
+}

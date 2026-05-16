@@ -452,3 +452,47 @@ that needs TCC permissions" (R4) is about *runtime* TCC grants, not the
 compile-time module graph: linking the engine library into the capture binary
 does not give it TCC requirements — only *calling* AVFoundation/SCK does, and
 only `PulsarTraceCapture` does that.
+
+## D23 — Epic 9 (CLI Surface) implemented before Epic 8 (Menubar UI); `record` orchestration is a reusable engine-library type
+
+**Decision:** Epic 9 was implemented **before** Epic 8, reversing the PRD §15
+ordering. `pulsartrace record` orchestration lives in a `PulsarTraceEngine`
+library type, `RecordOrchestrator`, which spawns both `pulsartrace-capture`
+and `pulsartrace-engine` as subprocesses; the `pulsartrace` CLI also gained a
+`PulsarTraceCapture` dependency so `doctor` can read TCC state and
+`doctor --capture-test` can drive the real capture path.
+
+**Why:** the PRD lists Epic 8 as an Epic 9 dependency, but only for
+"settings/library code paths to reuse" — a reuse convenience, not a hard
+blocker. `refine`/`speakers` already shipped (Epics 4–5); the missing surface
+(`record`, `doctor`, `events tail`, `install-cli`) needs no settings store. A
+flag-driven `record` is exactly the PRD's own "done" criterion
+(`pulsartrace record --duration 60m --output meeting.md`). Confirmed with the
+user. The dependency simply inverts: Epic 9 builds the orchestration
+standalone, and Epic 8's menubar later reuses `RecordOrchestrator` (settings
+become a default-provider feeding the same plan). The orchestrator spawns the
+engine as a *separate process* — rather than running `StreamingPipeline`
+in-process — because that reuses the fully-verified Epic 7
+`pulsartrace-engine --live --system-socket … --mic-socket …` entry point
+unchanged, and gives Epic 8's menubar the engine-crash isolation its edge
+cases require ("engine crash mid-recording, menubar detects, offers
+recovery"). The CLI stays settings-agnostic permanently: the menubar will not
+shell out to `pulsartrace`; both are sibling front-ends over `PulsarTraceEngine`.
+
+## D24 — `record --output` is the recording-folder directory; `--model` applies to both passes
+
+**Decision:** `pulsartrace record --output PATH` interprets `PATH` as the
+recording-folder *directory* (a trailing `.md` is stripped as a courtesy, so
+`--output meeting.md` produces the folder `meeting/`). `record --model`
+applies to **both** the live pass and the subsequent post-pass refine; the
+default is `base`.
+
+**Why:** PulsarTrace's unit of work is the recording folder (`live.md` →
+`final.md`, `audio-*.wav`, `metadata.json`), not a single file — R47's
+`--output meeting.md` is illustrative shorthand. Resolving it to a directory
+keeps `record` consistent with `refine`, which also operates on folders.
+Using one `--model` for both passes avoids a surprise: a headless `record`
+defaulting the refine pass to the PRD's `large-v3` would trigger an unasked-for
+~3 GB download. `base` is fast enough for the live pass and adequate for the
+post-pass; a user wanting `large-v3` quality passes `--model large-v3` or runs
+`pulsartrace refine` separately afterward.

@@ -18,10 +18,11 @@ Part of the Gravital Forge product family (sibling to OrbitNote).
 | Streaming transcription + live diarization → append-only `live.md` | ✅ Working |
 | Persistent speaker library — recognizes recurring voices across recordings | ✅ Working |
 | Events log (`events/*.jsonl`) — machine-readable activity stream | ✅ Working |
-| Real microphone / system-audio capture | ⏳ Planned (Epic 7) |
-| Menubar app, signed/notarized DMG, first-run wizard | ⏳ Planned (Epics 8–10) |
+| Real microphone / system-audio capture (`pulsartrace-capture`) | ✅ Working |
+| Headless CLI — `pulsartrace record`, `doctor`, `events tail`, `install-cli` | ✅ Working |
+| Menubar app, signed/notarized DMG, first-run wizard | ⏳ Planned (Epics 8, 10) |
 
-Today PulsarTrace is a **file-in / file-out CLI**: you feed it a WAV (or pipe PCM into it), it produces transcripts. Live device capture and the menubar UI are the next milestone — see [Roadmap](#roadmap). This split is deliberate: the entire AI pipeline is built and tested against an audio-source abstraction, so it works fully without touching audio hardware.
+PulsarTrace is a complete **command-line tool** today: record a meeting with `pulsartrace record`, or feed it an existing WAV with `pulsartrace refine`. The menubar UI and signed DMG are the remaining milestone — see [Roadmap](#roadmap). The entire AI pipeline is built and tested against an audio-source abstraction, so every part except real device capture works without touching audio hardware.
 
 ---
 
@@ -70,10 +71,11 @@ echo 'HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx' > .env
 swift build            # add -c release for production speed
 ```
 
-This produces two binaries under `.build/debug/` (or `.build/release/`):
+This produces three binaries under `.build/debug/` (or `.build/release/`):
 
-- **`pulsartrace`** — the user-facing CLI (`refine`, `speakers`, …)
+- **`pulsartrace`** — the user-facing CLI (`record`, `refine`, `speakers`, `doctor`, `events tail`, `install-cli`)
 - **`pulsartrace-engine`** — the streaming engine (consumes any audio source)
+- **`pulsartrace-capture`** — the device-capture daemon (microphone + system audio)
 
 Whisper models download automatically on first use into `~/Library/Caches/PulsarTrace/models/`.
 
@@ -83,7 +85,28 @@ Whisper models download automatically on first use into `~/Library/Caches/Pulsar
 
 A 60-second tour. From the repo root:
 
-### 1. Refine a recording → `final.md`
+### 1. Record a meeting → `final.md`
+
+`pulsartrace record` captures your microphone and system audio, writes a live
+transcript, and refines it when you stop — no UI, no other tools:
+
+```bash
+.build/debug/pulsartrace record --duration 30 --output meeting
+# or run untimed and press Ctrl-C to stop:
+.build/debug/pulsartrace record --output meeting
+```
+
+It records for `--duration` minutes (or until Ctrl-C), then transcribes and
+diarizes into `meeting/final.md`. `--list-mics` prints the input devices for
+`--mic INDEX`; `--no-system-audio` records the microphone only. First, check
+the environment is ready:
+
+```bash
+.build/debug/pulsartrace doctor              # macOS, models, permissions, …
+.build/debug/pulsartrace doctor --capture-test  # play a tone, verify capture
+```
+
+### 2. Refine an existing recording → `final.md`
 
 ```bash
 # Convert any audio to the canonical format first if it isn't already a WAV:
@@ -102,7 +125,7 @@ meeting/
 
 Use `--model large-v3` for production-quality transcription (slower, larger download).
 
-### 2. Watch a live transcript being written
+### 3. Watch a live transcript being written
 
 Live mode consumes audio at real-time pace and grows `live.md` line by line. It needs two terminals.
 
@@ -121,7 +144,7 @@ ffmpeg -re -i meeting.wav -f f32le -ac 1 -ar 16000 - 2>/dev/null \
 
 Afterward, refine that recording to upgrade it: `pulsartrace refine run` replaces `live.md` with the offline-quality `final.md`.
 
-### 3. Manage the speaker library
+### 4. Manage the speaker library
 
 ```bash
 .build/debug/pulsartrace speakers list
@@ -265,11 +288,11 @@ Pipeline tests run the real models against committed audio fixtures and snapshot
 
 ## Roadmap
 
-v0.1 (offline pipeline + streaming) is complete. Remaining milestones toward v1.0:
+v0.1 (offline pipeline + streaming), real device capture, and the full CLI are complete. Remaining milestones toward v1.0:
 
-- **Epic 7 — Real device capture.** `pulsartrace-capture` daemon: microphone via AVFoundation, system audio via ScreenCaptureKit (no virtual audio device needed).
+- ✅ **Epic 7 — Real device capture.** `pulsartrace-capture` daemon: microphone via AVFoundation, system audio via ScreenCaptureKit (no virtual audio device needed).
+- ✅ **Epic 9 — CLI surface.** `pulsartrace record`, `doctor` (+ `--capture-test`), `events tail`, `install-cli`.
 - **Epic 8 — Menubar app.** SwiftUI status item, start/stop, settings, speaker-library editor, live transcript preview.
-- **Epic 9 — CLI surface.** `pulsartrace record`, `events tail`, `doctor`.
 - **Epic 10 — Distribution.** Signed/notarized DMG, first-run permissions + Hugging Face token wizard.
 
 ---

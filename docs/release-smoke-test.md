@@ -19,6 +19,15 @@ flows, Gatekeeper, real device switching.
 - [ ] `~/Library/Logs/PulsarTrace/*.log` exists; a manual read shows no transcript text, speaker names, or full user paths.
 - [ ] `pulsartrace refine <recording.wav>` produces a `final.md` with speaker labels (from Epic 4).
 
+## CLI surface (Epic 9)
+
+- [ ] `pulsartrace doctor` prints the environment report; exit code is `0` when nothing failed.
+- [ ] `pulsartrace doctor --capture-test` plays a 440 Hz tone and reports a dominant frequency within tolerance (needs a working mic + output; on a BlackHole host, route output→input for a loopback).
+- [ ] `pulsartrace record --duration 1 --output /tmp/pt-smoke` records a real meeting and produces `/tmp/pt-smoke/live.md` and a refined `/tmp/pt-smoke/final.md`.
+- [ ] `pulsartrace record --list-mics` lists the host's audio input devices with indices.
+- [ ] `pulsartrace events tail --no-follow` prints today's events; `--type recording_started` filters to that type only.
+- [ ] `pulsartrace install-cli` symlinks into `/usr/local/bin` (or prints the `sudo` command); `pulsartrace install-cli --uninstall` removes it.
+
 ## v1.0 — live + UI (added in Epics 6–10)
 
 - [ ] TCC Microphone + Screen Recording grant flow on a fresh user account.

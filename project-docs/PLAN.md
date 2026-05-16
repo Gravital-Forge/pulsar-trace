@@ -1,10 +1,11 @@
 # PulsarTrace — Implementation Plan (checkpointed)
 
-Scope: **v0.1 (Epics 1–5), Epic 6 (streaming), and Epic 6's successor Epic 7
-(real device capture) are delivered + verified.** Epics 8–10 (menubar UI, full
-CLI, distribution) remain for later runs.
+Scope: **v0.1 (Epics 1–5), Epic 6 (streaming), Epic 7 (real device capture),
+and Epic 9 (CLI surface) are delivered + verified.** Epic 9 was implemented
+before Epic 8 — see `DECISIONS.md` D23. Epic 8 (menubar UI) and Epic 10
+(distribution) remain for later runs.
 
-Epics 1–6 were built on an audio-deviceless host; Epic 7 was built on a
+Epics 1–6 were built on an audio-deviceless host; Epics 7 and 9 were built on a
 real-audio-capable Mac (BlackHole + TCC grants — see `PREWORK.md`).
 
 Source of truth: `PRD.md`. Architectural deviations logged in `DECISIONS.md`.
@@ -140,6 +141,41 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
       pause/resume control frames annotate the gap
 - New DECISIONS: D21 (in-band pause/resume control frames), D22 (`PulsarTraceCapture`
   module layout)
+
+## Epic 9 — CLI Surface  ✅ done & verified
+
+Implemented **before** Epic 8 — see `DECISIONS.md` D23. `refine`/`speakers`
+already shipped (Epics 4–5); Epic 9 completes the `pulsartrace` surface.
+
+- [x] `pulsartrace record` (R47) — `RecordOrchestrator` (`PulsarTraceEngine`)
+      spawns `pulsartrace-capture` + `pulsartrace-engine --live`, runs for
+      `--duration` min (or until Ctrl-C), then refines → `final.md`. `RecordPlan`
+      builds the capture/engine argv. Flags: `--output`, `--duration`, `--mic`,
+      `--no-system-audio`, `--model`, plus additive `--list-mics`. macOS-14 /
+      Intel host guards. D23, D24.
+- [x] `pulsartrace doctor` (R50) — `EnvironmentDoctor` pure checks: macOS
+      version, CPU arch, whisper model cache, Python runtime, speaker library,
+      TCC permissions, writable directories → actionable report, exit 1 on any
+      hard failure.
+- [x] `pulsartrace doctor --capture-test` (R68) — `CaptureSelfTest` plays a
+      440 Hz tone, captures it back through the real mic path, verifies the
+      dominant frequency via `ToneDetector` (Goertzel).
+- [x] `pulsartrace events tail` (R86) — `EventLogTail` streams today's events
+      JSONL; `--type` filter (repeatable, validated against `EventRegistry`),
+      `--no-follow`, SIGINT-clean follow loop.
+- [x] `pulsartrace install-cli` (R51) — `CLIInstaller` symlinks into
+      `/usr/local/bin` (explicit-invocation consent); prints the `sudo` command
+      when the dir is not writable; `--uninstall`.
+- [x] Tests: Unit (`EventLogTail`, `EnvironmentDoctor`, `CLIInstaller`,
+      `RecordPlan`, `ToneDetector` — 35 tests); Pipeline (`RecordOrchestrator`
+      against stand-in `/bin/sh` daemons — ready handshake, timeout, teardown);
+      Capture device-gated (`CaptureSelfTest`).
+- [x] DONE: Unit 210/210 green; `RecordOrchestrator` pipeline tests green;
+      CLI dispatch wired for `record`/`doctor`/`events`/`install-cli`.
+      Real-audio `record` end-to-end + `doctor --capture-test` frequency match
+      are release-smoke items (`docs/release-smoke-test.md`).
+- New DECISIONS: D23 (Epic 9 before Epic 8; `RecordOrchestrator` placement),
+  D24 (`record --output`/`--model` semantics).
 
 ---
 

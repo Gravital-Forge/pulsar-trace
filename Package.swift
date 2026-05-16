@@ -58,10 +58,13 @@ let package = Package(
             name: "pulsartrace-engine",
             dependencies: ["PulsarTraceEngine"]
         ),
-        // The user-facing CLI skeleton. Real subcommands land in later epics.
+        // The user-facing CLI. `refine`/`speakers` (Epics 4–5) and the Epic 9
+        // surface (`record`, `doctor`, `events tail`). Depends on
+        // PulsarTraceCapture so `doctor` can read TCC permission state and
+        // `doctor --capture-test` can drive the real capture path (R68).
         .executableTarget(
             name: "pulsartrace",
-            dependencies: ["PulsarTraceEngine"]
+            dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
         ),
         // Epic 7: real device capture. Owns AVFoundation (mic) and
         // ScreenCaptureKit (system audio) — the only code that needs TCC

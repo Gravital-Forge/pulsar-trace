@@ -35,16 +35,15 @@ struct CLIMain {
         case "refine":
             return await RefineCommand.run(Array(args.dropFirst()), events: events)
         case "record":
-            err("`pulsartrace record` is delivered in Epic 9 (CLI Surface).")
-            return 1
+            return await RecordCommand.run(Array(args.dropFirst()), events: events)
         case "speakers":
             return await SpeakersCommand.run(Array(args.dropFirst()), events: events)
+        case "install-cli":
+            return InstallCommand.run(Array(args.dropFirst()))
         case "events":
-            err("`pulsartrace events tail` is delivered in Epic 9 (CLI Surface).")
-            return 1
+            return await EventsCommand.run(Array(args.dropFirst()))
         case "doctor":
-            err("`pulsartrace doctor` is delivered in Epic 9 (CLI Surface).")
-            return 1
+            return await DoctorCommand.run(Array(args.dropFirst()), events: events)
         default:
             err("unknown subcommand: \(subcommand)")
             printUsage()
@@ -59,12 +58,18 @@ struct CLIMain {
             usage: pulsartrace <subcommand> [options]
 
             subcommands:
+              record             Record a meeting headlessly
+                                 [--output PATH] [--duration MIN] [--mic INDEX]
+                                 [--no-system-audio] [--model base|large-v3]
+                                 [--list-mics]
               refine <audio>     Transcribe + diarize a recording
                                  [--model base|large-v3]
-              record             Record a meeting headlessly        (Epic 9)
-              speakers           Manage the speaker library         (Epic 5)
-              events tail        Tail the events log                (Epic 9)
-              doctor             Run environment self-checks        (Epic 9)
+              speakers           Manage the speaker library
+                                 list | rename | merge | delete
+              events tail        Tail the events log [--type TYPE] [--no-follow]
+              doctor             Run environment self-checks [--capture-test]
+              install-cli        Symlink pulsartrace into /usr/local/bin
+                                 [--uninstall]
               version            Print version
               help               Show this message
             """)
