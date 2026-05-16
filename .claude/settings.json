@@ -31,6 +31,11 @@
   "permissions": {
     "allow": [
       "Bash(swift build)",
+      "Write",
+      "Read",
+      "Edit",
+      "MultiEdit",
+      "Skill",
       "Bash(swift build *)",
       "Bash(swift test)",
       "Bash(swift test *)",
@@ -38,6 +43,20 @@
       "Bash(.build/debug/pulsartrace refine *)",
       "Bash(.build/release/pulsartrace refine *)",
       "Bash(python/pulsartrace-ai/.venv/bin/pytest *)"
+    ]
+  },
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"permissionDecisionReason\":\"Auto-denied by the deny-all PermissionRequest hook in .claude/settings.json.\",\"decision\":{\"behavior\":\"deny\"}}}'",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
