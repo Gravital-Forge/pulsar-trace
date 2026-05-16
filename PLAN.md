@@ -78,7 +78,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
       pipeline test + real-pyannote CLI smoke (`Unknown #1` carried A→B)
 - New DECISIONS: D16 (Epic 5 rename/merge ≠ retroactive rewrite), D17 (built-in SQLite3)
 
-## Epic 6 — Streaming Transcription & Diarization  ✅ done & verified (not committed)
+## Epic 6 — Streaming Transcription & Diarization  ✅ committed 345d24d
 - [x] `StreamingTranscriber`: anchored-window whisper + LocalAgreement-2
       committer — emits only *committed* utterances; resident whisper context
       reused; VAD-gate + `BlankTokenFilter`; backpressure handling (D20, R10)
