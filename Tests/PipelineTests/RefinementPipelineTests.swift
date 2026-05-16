@@ -324,4 +324,131 @@ struct RefinementPipelineTests {
         #expect(metadata.pyannoteModel == nil)
         #expect(metadata.speakers.isEmpty)
     }
+
+    // MARK: - Causal ordering across a mid-recording pause (D26)
+
+    @Test("a mid-recording mic pause keeps the resumed turn after the other speaker")
+    func interleavedTurnsStayInCausalOrder() async throws {
+        let modelURL = try await baseModelURL()
+        let vadModelURL = try await WhisperTestGate.model(ModelCatalog.sileroVAD)
+
+        // Assemble a paired recording from the committed ElevenLabs fixtures
+        // that reproduces the two-party shape behind D26: the mic speaker
+        // talks, pauses to listen, then resumes — while the system speaker
+        // talks during that pause. The mic monologue is split 14s in (a long
+        // turn + a short ~2s resumed turn) with a 10s silence between; the
+        // system speaker is placed inside that silence. Both streams are
+        // genuine speech — only the silence is synthetic, which is exactly
+        // what a real mic stream holds while the far end is talking.
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try await Self.buildInterleavedRecording(in: dir)
+
+        // Diarization is irrelevant to the ordering bug, so it is supplied
+        // precomputed — one speaker spanning the gap the system turn sits in.
+        // The diarizer is required by the signature but never invoked.
+        let diarizer = Diarizer(configuration: .init(
+            pythonExecutable: URL(fileURLWithPath: "/nonexistent"),
+            workingDirectory: URL(fileURLWithPath: "/nonexistent")))
+        let systemSpan = SpeakerSpan(
+            speaker: "SPEAKER_00", start: .seconds(14), end: .seconds(24))
+        let diarization = DiarizationResult(
+            model: "test-precomputed",
+            modelVersion: "test",
+            audioDuration: .seconds(26),
+            speakers: ["SPEAKER_00"],
+            spans: [systemSpan],
+            exclusiveSpans: [systemSpan],
+            embeddings: [])
+
+        let pipeline = RefinementPipeline()
+        let output = try await WhisperTestGate.run {
+            try await pipeline.run(
+                inputPath: dir,
+                transcriberFactory: {
+                    try WhisperTestTranscriber.make(modelURL: modelURL)
+                },
+                diarizer: diarizer,
+                whisperModelName: ModelCatalog.base.name,
+                whisperModelSHA256: ModelCatalog.base.sha256,
+                recordingStart: Self.recordingStart,
+                whisperOptions: .init(vadModelURL: vadModelURL),
+                precomputedDiarization: diarization)
+        }
+
+        let markdown = try String(contentsOf: output.finalURL, encoding: .utf8)
+        let labels = Self.utteranceLabels(in: markdown)
+        #expect(labels.contains("You"),
+                "expected the mic stream to produce utterances")
+        #expect(labels.contains("Speaker_0"),
+                "expected the system stream to produce utterances")
+
+        // The D26 bug: the offline mic decode glued the speaker's two turns
+        // into one segment stamped at the first turn's start, so the resumed
+        // turn sorted *ahead* of the system speaker — no `You` line followed
+        // the system speaker's last line. With per-region decoding the resumed
+        // turn keeps its true post-pause timestamp and stays after.
+        let lastYou = labels.lastIndex(of: "You") ?? -1
+        let lastSystem = labels.lastIndex(of: "Speaker_0") ?? Int.max
+        #expect(lastYou > lastSystem,
+                "the resumed mic turn must appear after the system speaker's turn")
+    }
+
+    // MARK: - Interleaved-recording fixture helpers
+
+    /// Read a committed fixture WAV into mono 16 kHz Float samples.
+    private static func fixtureSamples(_ name: String) async throws -> [Float] {
+        try await OfflineTranscriptionPipeline().accumulate(
+            FixturePlaybackSource(
+                file: FixtureLocator.audio(name), realtime: false))
+    }
+
+    /// Assemble `audio-mic.wav` + `audio-system.wav` in `dir` from the paired
+    /// ElevenLabs fixtures, interleaved with a mid-recording pause (D26):
+    ///
+    ///   mic:    [turn 1  0–14s][silence 14–24s][turn 2  24–26s]
+    ///   system: [silence 0–15s][turn   15–23s ][silence 23–26s]
+    private static func buildInterleavedRecording(in dir: URL) async throws {
+        let sr = AudioFormat.sampleRate
+        let mic = try await fixtureSamples("mic-and-system-paired/mic.wav")
+        let system = try await fixtureSamples("mic-and-system-paired/system.wav")
+
+        func silence(_ samples: Int) -> [Float] {
+            [Float](repeating: 0, count: max(0, samples))
+        }
+
+        // Split the mic monologue 14s in: a long first turn, a short resumed
+        // turn. The short tail is what the buggy whole-buffer decode fused
+        // into the preceding segment.
+        let splitAt = min(14 * sr, mic.count)
+        let micTrack = Array(mic[..<splitAt])
+            + silence(10 * sr)
+            + Array(mic[splitAt...])
+
+        // The system speaker: the first 8s of the paired system fixture,
+        // placed 1s into the mic's 10s silence. The two tracks are kept the
+        // same length so they model one recording.
+        let systemTurn = Array(system[..<min(8 * sr, system.count)])
+        let preSilence = 15 * sr
+        let postSilence = micTrack.count - preSilence - systemTurn.count
+        let systemTrack = silence(preSilence) + systemTurn + silence(postSilence)
+
+        try WAVWriter.write(
+            samples: micTrack,
+            to: dir.appendingPathComponent(RecordingFolder.FileName.audioMic))
+        try WAVWriter.write(
+            samples: systemTrack,
+            to: dir.appendingPathComponent(RecordingFolder.FileName.audioSystem))
+    }
+
+    /// The speaker label of every utterance line in a rendered transcript, in
+    /// file order — e.g. `["You", "Speaker_0", "You"]`.
+    private static func utteranceLabels(in markdown: String) -> [String] {
+        markdown.split(separator: "\n").compactMap { line -> String? in
+            guard line.hasPrefix("**["),
+                  let labelStart = line.range(of: "] "),
+                  let labelEnd = line.range(of: ":**") else { return nil }
+            return String(line[labelStart.upperBound..<labelEnd.lowerBound])
+        }
+    }
 }
