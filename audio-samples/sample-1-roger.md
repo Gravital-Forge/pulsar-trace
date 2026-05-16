@@ -1,0 +1,2 @@
+So I was at the coffee shop this morning, the one on the corner near the bookstore, and the barista asked me how I wanted my coffee, and honestly I had no idea. I usually just say medium, but today I decided to be adventurous and ask for whatever she'd recommend. She thought about it for a second, looked at the espresso machine, and then made me something with cinnamon and a little orange zest. I have to admit, it was the best coffee I've had in weeks. Sometimes the best decisions are the ones you let someone else make for you.
+

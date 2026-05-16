@@ -1,0 +1,2 @@
+Okay, quick update on the project. We finished the data ingestion piece. It works. We tested it against three different file formats and it handled all of them. The next step is the transformation layer. That's where we need to make some decisions. Specifically, do we want to validate everything upfront, or do we want to validate lazily as the data flows through? I'm leaning toward upfront. Easier to debug, fewer surprises later. But I want your input before I commit to a direction. Let me know when you have ten minutes.
+
