@@ -194,7 +194,7 @@ recording (not new epic scope):
 
 ---
 
-## Epic 8 — Menubar UI  ✅ committed 1486b82
+## Epic 8 — Menubar UI  ✅ committed 4691621
 
 Implemented after Epic 9 (D23). A SwiftPM library + thin SwiftUI executable —
 no `.xcodeproj` / `.app` bundle (D27); that is Epic 10.
