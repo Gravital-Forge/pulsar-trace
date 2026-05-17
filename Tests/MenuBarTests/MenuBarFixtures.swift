@@ -86,4 +86,26 @@ enum MenuBarFixtures {
             to: folder.appendingPathComponent(RecordingFolder.FileName.metadata))
         return folder
     }
+
+    /// Build an *unrefined* recording folder — a `live.md` (and optionally an
+    /// `audio-system.wav`) but **no** `metadata.json`, as a just-recorded or
+    /// failed-to-refine folder looks on disk (FIX 3).
+    @discardableResult
+    static func makeUnrefinedRecordingFolder(
+        root: URL,
+        name: String,
+        withAudio: Bool = false
+    ) throws -> URL {
+        let folder = root.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+        try Data("<!-- pulsartrace:live -->\n## Transcript\n".utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.live))
+        if withAudio {
+            try Data([0x52, 0x49, 0x46, 0x46]).write(
+                to: folder.appendingPathComponent(
+                    RecordingFolder.FileName.audioSystem))
+        }
+        return folder
+    }
 }

@@ -4,6 +4,14 @@ import SwiftUI
 
 /// The menubar dropdown (R40) — start/stop, status, and entry points into the
 /// recordings list, the live transcript, and the speaker editor.
+///
+/// Navigation (FIX 2): the sub-views render **inline within this same
+/// `MenuBarExtra` panel** via a `@State` page enum and a "Back" button — no
+/// `.sheet`. A sheet on a `MenuBarExtra` panel positioned janky sub-windows
+/// (off-screen near the right edge) and left the panel in a "weird state"
+/// where re-opening the menubar icon re-showed the sub-view instead of the
+/// menu. Inline pages always render inside the panel macOS itself positions,
+/// and the panel resets to `.menu` every time it is dismissed and re-opened.
 struct MenuBarMenuView: View {
     /// The process-wide events writer — handed to the speaker editor so its
     /// `speaker_*` / `final_md_rewritten` events are emitted in the shipped
@@ -15,11 +23,43 @@ struct MenuBarMenuView: View {
     @Environment(RecordingsScanner.self) private var scanner
     @Environment(LiveTranscriptWatcher.self) private var liveWatcher
 
-    @State private var showRecordings = false
-    @State private var showLive = false
-    @State private var showSpeakers = false
+    /// The panel's environment — used to reset to `.menu` whenever the panel
+    /// is dismissed, so re-opening the menubar icon always shows the menu.
+    @Environment(\.controlActiveState) private var controlActiveState
+
+    /// Which page the panel currently shows. Inline navigation (FIX 2).
+    private enum Page {
+        case menu, recordings, live, speakers
+    }
+    @State private var page: Page = .menu
 
     var body: some View {
+        Group {
+            switch page {
+            case .menu:
+                menuPage
+            case .recordings:
+                RecordingsListView(onClose: { page = .menu })
+                    .environment(scanner)
+            case .live:
+                LiveTranscriptPopoverView(onClose: { page = .menu })
+                    .environment(liveWatcher)
+            case .speakers:
+                SpeakerEditorView(
+                    settings: settings, events: events,
+                    onClose: { page = .menu })
+            }
+        }
+        // When the panel loses key (the user clicked away / it closed), snap
+        // back to the menu so the next open always starts on the menu (FIX 2).
+        .onChange(of: controlActiveState) { _, newValue in
+            if newValue == .inactive { page = .menu }
+        }
+    }
+
+    // MARK: - Menu page
+
+    private var menuPage: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("PulsarTrace")
                 .font(.headline)
@@ -31,7 +71,7 @@ struct MenuBarMenuView: View {
             recordButton
 
             if case .recording = recording.status {
-                Button("Live Transcript…") { showLive = true }
+                Button("Live Transcript…") { page = .live }
             }
             if case .crashed = recording.status {
                 crashRecovery
@@ -39,8 +79,8 @@ struct MenuBarMenuView: View {
 
             Divider()
 
-            Button("Recordings…") { showRecordings = true }
-            Button("Speakers…") { showSpeakers = true }
+            Button("Recordings…") { page = .recordings }
+            Button("Speakers…") { page = .speakers }
 
             Divider()
 
@@ -49,15 +89,6 @@ struct MenuBarMenuView: View {
         }
         .padding(12)
         .frame(width: 260)
-        .sheet(isPresented: $showRecordings) {
-            RecordingsListView().environment(scanner)
-        }
-        .sheet(isPresented: $showLive) {
-            LiveTranscriptPopoverView().environment(liveWatcher)
-        }
-        .sheet(isPresented: $showSpeakers) {
-            SpeakerEditorView(settings: settings, events: events)
-        }
     }
 
     @ViewBuilder private var statusLine: some View {

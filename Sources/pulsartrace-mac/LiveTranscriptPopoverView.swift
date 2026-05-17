@@ -5,14 +5,18 @@ import SwiftUI
 /// `LiveTranscriptWatcher` has tailed from `live.md`.
 struct LiveTranscriptPopoverView: View {
     @Environment(LiveTranscriptWatcher.self) private var watcher
-    @Environment(\.dismiss) private var dismiss
+    /// Invoked by the "Back" button — inline navigation in `MenuBarMenuView`
+    /// (FIX 2). Replaces `@Environment(\.dismiss)`, unreliable on a panel sheet.
+    var onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
+                Button { onClose() } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
                 Text("Live Transcript").font(.headline)
                 Spacer()
-                Button("Done") { dismiss() }
             }
             .padding(12)
             Divider()

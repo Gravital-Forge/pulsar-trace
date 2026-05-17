@@ -71,6 +71,11 @@ final class AppEnvironment {
     /// running so a rapid double-press cannot stack `start`/`stop` calls.
     private var hotkeyToggleTask: Task<Void, Never>?
 
+    /// Observes `recording.liveMarkdownURL` and points the `LiveTranscriptWatcher`
+    /// at it — so the live popover shows the real, growing transcript whether
+    /// or not it is open (FIX 1). Lives for the process lifetime.
+    private var liveWatcherWiring: Task<Void, Never>?
+
     init() {
         let settings = MenuBarSettings()
         let paths = AppPaths.standard
@@ -88,6 +93,37 @@ final class AppEnvironment {
         // component emits — mirrors `AppLifecycle.start`.
         Task { await events.bootstrap() }
         installHotkeyMonitor()
+        startLiveWatcherWiring()
+    }
+
+    /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).
+    ///
+    /// The watcher was created but never `start()`-ed at a file, so the live
+    /// popover showed "Waiting for transcript" forever. This observes the VM's
+    /// `liveMarkdownURL`: when a recording begins the watcher tails that real
+    /// `live.md`; when it ends the watcher is stopped. The wiring lives at the
+    /// app level so the watcher keeps tailing whether or not the popover is
+    /// open — re-opening the popover just re-reads the already-tailed lines.
+    private func startLiveWatcherWiring() {
+        liveWatcherWiring = Task { @MainActor [weak self] in
+            var current: URL?
+            while !Task.isCancelled {
+                guard let self else { return }
+                let url = self.recording.liveMarkdownURL
+                if url != current {
+                    current = url
+                    if let url {
+                        self.liveWatcher.start(liveMarkdownURL: url)
+                    } else {
+                        self.liveWatcher.stop()
+                    }
+                }
+                // `liveMarkdownURL` flips at most twice per session (recording
+                // start / stop), so a light poll is ample — no `withObservation`
+                // plumbing needed. `@MainActor` so the VM read is in-isolation.
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
     }
 
     /// Install (or reinstall) the passive global hotkey monitor.

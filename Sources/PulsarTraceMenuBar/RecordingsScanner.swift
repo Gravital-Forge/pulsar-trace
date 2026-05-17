@@ -85,9 +85,11 @@ public final class RecordingsScanner {
 
     // MARK: - Scanning
 
-    /// Decode every recording subdirectory of one root. Folders without a
-    /// `metadata.json`, and folders whose `metadata.json` will not decode, are
-    /// silently skipped.
+    /// Decode every recording subdirectory of one root. A folder with a valid
+    /// `metadata.json` decodes as a refined entry; a folder without one but
+    /// with a `live.md` / `audio-system.wav` decodes as an *unrefined* entry
+    /// (`isRefined == false`, FIX 3). A folder that is neither — empty or
+    /// garbage — is silently skipped.
     nonisolated static func scanRoot(_ root: URL) -> [RecordingEntry] {
         let fm = FileManager.default
         guard let children = try? fm.contentsOfDirectory(
@@ -118,7 +120,7 @@ public final class RecordingsScanner {
         paths: AppPaths,
         events: EventWriter?
     ) -> @Sendable (URL) async throws -> Void {
-        let modelName = settings.modelName
+        let modelName = settings.refineModelName
         return { folderURL in
             guard let events else { throw ReRefineError.noEventWriter }
             let model = ModelCatalog.model(named: modelName) ?? ModelCatalog.base

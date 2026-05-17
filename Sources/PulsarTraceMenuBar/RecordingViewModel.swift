@@ -45,6 +45,14 @@ public final class RecordingViewModel {
     /// A short human-readable progress line for the menu (R26-style).
     public private(set) var progressMessage: String = ""
 
+    /// The in-flight recording's `live.md` URL while a recording is running,
+    /// `nil` otherwise. Set when a recording starts (capture has begun writing
+    /// `live.md`) and cleared when it ends. The `LiveTranscriptWatcher` is
+    /// pointed at this URL so the live popover shows the real, growing
+    /// transcript (FIX 1) — the watcher was previously never told which file
+    /// to tail.
+    public private(set) var liveMarkdownURL: URL?
+
     private let settings: MenuBarSettings
     private let paths: AppPaths
     private let clock: @Sendable () -> Date
@@ -141,11 +149,17 @@ public final class RecordingViewModel {
             paths: paths,
             micDeviceID: settings.selectedMicDeviceID,
             systemAudioEnabled: settings.systemAudioEnabled,
-            modelName: settings.modelName)
+            modelName: settings.liveModelName)
 
         let orchestrator = orchestratorFactory(plan, binaryURLResolver)
         self.orchestrator = orchestrator
 
+        // KNOWN ISSUE (deferred — see Epic 10 first-run permissions wizard):
+        // starting without TCC mic/system-audio grants races the OS permission
+        // prompt — `orchestrator.start` can fail and surface a "permissions
+        // not granted" error before the user has finished responding to the
+        // prompt. Deliberately left as-is; the Epic 10 first-run wizard will
+        // request and confirm grants up front, before the first start.
         do {
             try await orchestrator.start(readyTimeout: .seconds(20))
         } catch {
@@ -156,6 +170,11 @@ public final class RecordingViewModel {
         }
 
         let startedAt = clock()
+        // Point the live transcript at the engine's `live.md` in this folder
+        // (FIX 1). Published before `status` flips so an observer reacting to
+        // `.recording` already sees the URL.
+        liveMarkdownURL = outputFolder.appendingPathComponent(
+            RecordingFolder.FileName.live)
         status = .recording(id: plan.recordingId, startedAt: startedAt)
         progressMessage = "Recording…"
 
@@ -188,6 +207,8 @@ public final class RecordingViewModel {
         progressMessage = "Stopping…"
         await orchestrator.stop()
         self.orchestrator = nil
+        // The live pass has ended — stop advertising its `live.md` (FIX 1).
+        liveMarkdownURL = nil
 
         await runRefine(recordingId: id, folderOverride: currentRecordingFolder)
     }
@@ -203,6 +224,8 @@ public final class RecordingViewModel {
         }
         crashWatch = nil
         orchestrator = nil
+        // The live pass is dead — stop advertising its `live.md` (FIX 1).
+        liveMarkdownURL = nil
         status = .crashed(id: recordingId, partialFolderURL: partialFolder)
         progressMessage = "Recording stopped unexpectedly."
     }
@@ -300,13 +323,13 @@ public final class RecordingViewModel {
     /// Requires an `EventWriter` so the refine emits the same events the CLI
     /// path does; when `events` is `nil` (a test path that did not inject a
     /// `reRefiner`) the closure throws rather than silently no-op. Called from
-    /// the `@MainActor` init, so `settings.modelName` is read here.
+    /// the `@MainActor` init, so `settings.refineModelName` is read here.
     static func makeDefaultReRefiner(
         settings: MenuBarSettings,
         paths: AppPaths,
         events: EventWriter?
     ) -> @Sendable (URL) async throws -> Void {
-        let modelName = settings.modelName
+        let modelName = settings.refineModelName
         return { folderURL in
             guard let events else { throw RefineUnavailableError.noEventWriter }
             let model = ModelCatalog.model(named: modelName) ?? ModelCatalog.base

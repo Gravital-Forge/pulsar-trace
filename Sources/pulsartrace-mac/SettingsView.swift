@@ -1,5 +1,6 @@
 import AppKit
 import PulsarTraceCapture
+import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
 
@@ -22,10 +23,22 @@ struct SettingsView: View {
             }
 
             Section("Transcription") {
-                Picker("Model", selection: $settings.modelName) {
-                    Text("base").tag("base")
-                    Text("large-v3").tag("large-v3")
+                Picker("Live transcription model",
+                       selection: $settings.liveModelName) {
+                    ForEach(ModelCatalog.all, id: \.name) { model in
+                        Text(model.name).tag(model.name)
+                    }
                 }
+                Picker("Refinement model",
+                       selection: $settings.refineModelName) {
+                    ForEach(ModelCatalog.all, id: \.name) { model in
+                        Text(model.name).tag(model.name)
+                    }
+                }
+                Text("large-v3 is higher quality and ~3 GB — it downloads on "
+                    + "first use if not already cached.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Output") {

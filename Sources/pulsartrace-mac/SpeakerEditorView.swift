@@ -13,8 +13,11 @@ struct SpeakerEditorView: View {
     /// The process-wide events writer — wired into the ViewModel so speaker
     /// edits emit `speaker_*` / `final_md_rewritten` events in the shipped app.
     let events: EventWriter
+    /// Invoked by the "Back" button. Inline navigation in `MenuBarMenuView`
+    /// (FIX 2) — the view no longer relies on `@Environment(\.dismiss)`, which
+    /// did not work predictably for a sheet on a `MenuBarExtra` panel.
+    var onClose: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @State private var viewModel: SpeakerEditorViewModel?
     /// Set when opening the speaker library fails — shows an error state
     /// instead of an indefinite "Loading…".
@@ -36,9 +39,11 @@ struct SpeakerEditorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
+                Button { onClose() } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
                 Text("Speakers").font(.headline)
                 Spacer()
-                Button("Done") { dismiss() }
             }
             .padding(12)
             Divider()

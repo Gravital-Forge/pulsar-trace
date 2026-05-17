@@ -226,6 +226,96 @@ struct RecordingViewModelTests {
         #expect(await refined.count() == 1)
     }
 
+    // MARK: - FIX 1 / FIX 4
+
+    @Test("liveMarkdownURL is set during recording and cleared after (FIX 1)")
+    func liveMarkdownURLLifecycle() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            reRefiner: { _ in })
+
+        #expect(vm.liveMarkdownURL == nil)
+
+        await vm.startRecording()
+        let liveURL = try #require(vm.liveMarkdownURL)
+        // It points at `live.md` inside the recording folder under the root.
+        #expect(liveURL.lastPathComponent == "live.md")
+        #expect(liveURL.deletingLastPathComponent()
+            .deletingLastPathComponent().standardizedFileURL
+            == root.standardizedFileURL)
+
+        await vm.stopRecording()
+        #expect(vm.liveMarkdownURL == nil)
+    }
+
+    @Test("liveMarkdownURL is cleared when the engine crashes (FIX 1)")
+    func liveMarkdownURLClearedOnCrash() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+        let vm = makeVM(settings: try settings(outputRoot: root), orchestrator: stub)
+
+        await vm.startRecording()
+        #expect(vm.liveMarkdownURL != nil)
+
+        await stub.signalEngineExit()
+        for _ in 0..<50 {
+            if case .crashed = vm.status { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        guard case .crashed = vm.status else {
+            Issue.record("expected .crashed")
+            return
+        }
+        #expect(vm.liveMarkdownURL == nil)
+    }
+
+    @Test("the live pass receives liveModelName, the refine path receives refineModelName (FIX 4)")
+    func liveAndRefineModelsAreSeparate() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let settings = try settings(outputRoot: root)
+        settings.liveModelName = "base"
+        settings.refineModelName = "large-v3"
+
+        // Capture the RecordPlan the live pass is launched with.
+        let planBox = PlanMailbox()
+        let refined = RefineMailbox()
+        let stub = StubOrchestrator()
+        let vm = RecordingViewModel(
+            settings: settings,
+            orchestratorFactory: { plan, _ in
+                Task { await planBox.set(plan) }
+                return stub
+            },
+            // The production re-refiner reads `settings.refineModelName`; here
+            // we assert the VM hands the live pass `liveModelName` via the plan
+            // and that the refine path is taken at all.
+            reRefiner: { url in await refined.record(url) })
+
+        await vm.startRecording()
+        let plan = try #require(await planBox.value())
+        // The live pass's argv carries `--model base` (liveModelName), not
+        // `large-v3` (which is the refine model).
+        #expect(plan.captureArguments.contains("base"))
+        #expect(!plan.captureArguments.contains("large-v3"))
+        #expect(plan.engineArguments.contains("base"))
+
+        await vm.stopRecording()
+        #expect(await refined.count() == 1)
+    }
+
+    private actor PlanMailbox {
+        private var plan: RecordPlan?
+        func set(_ p: RecordPlan) { plan = p }
+        func value() -> RecordPlan? { plan }
+    }
+
     private actor RefineMailbox {
         private var urls: [URL] = []
         func record(_ u: URL) { urls.append(u) }

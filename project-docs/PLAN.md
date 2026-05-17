@@ -231,7 +231,13 @@ no `.xcodeproj` / `.app` bundle (D27); that is Epic 10.
       rename rewrites every past `final.md`. `.app` packaging + the manual UI
       smoke pass are Epic 10.
 - New DECISIONS: D27 (menubar module layout; passive hotkey), D28
-  (`OfflineRefiner` in-process refine).
+  (`OfflineRefiner` in-process refine), D29 (menubar splits the live and
+  refine transcription models).
+- KNOWN FOLLOW-UP (deferred to Epic 10): starting a recording without TCC
+  grants races the OS permission prompt — the app can surface a
+  "permissions not granted" error before the user finishes responding. The
+  Epic 10 first-run permissions wizard will request and confirm grants up
+  front, before the first start.
 
 ---
 

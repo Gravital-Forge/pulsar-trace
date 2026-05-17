@@ -6,15 +6,20 @@ import SwiftUI
 /// reveal-in-Finder. Pure bindings over `RecordingsScanner`.
 struct RecordingsListView: View {
     @Environment(RecordingsScanner.self) private var scanner
-    @Environment(\.dismiss) private var dismiss
+    /// Invoked by the "Back" button — inline navigation in `MenuBarMenuView`
+    /// (FIX 2). Replaces `@Environment(\.dismiss)`, which was unreliable for a
+    /// sheet on a `MenuBarExtra` panel.
+    var onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
+                Button { onClose() } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
                 Text("Recordings").font(.headline)
                 Spacer()
                 if scanner.isScanning { ProgressView().controlSize(.small) }
-                Button("Done") { dismiss() }
             }
             .padding(12)
 
@@ -48,16 +53,26 @@ struct RecordingsListView: View {
         HStack {
             VStack(alignment: .leading) {
                 Text(recording.displayName)
-                Text("\(recording.speakers.count) speaker(s) · "
-                    + "\(Int(recording.durationSeconds))s")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if recording.isRefined {
+                    Text("\(recording.speakers.count) speaker(s) · "
+                        + "\(Int(recording.durationSeconds))s")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    // FIX 3 — a just-recorded / failed-to-refine folder: no
+                    // metadata.json yet. Show the state explicitly.
+                    Label("Not yet refined", systemImage: "clock.badge")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
             Spacer()
             Button("Reveal") {
                 NSWorkspace.shared.activateFileViewerSelecting([recording.folderURL])
             }
-            Button("Re-refine") {
+            // An unrefined recording offers "Refine"; a refined one "Re-refine".
+            // Both reuse the same `RecordingsScanner.reRefine` path.
+            Button(recording.isRefined ? "Re-refine" : "Refine") {
                 Task { await scanner.reRefine(recording) }
             }
             .disabled(scanner.isScanning)

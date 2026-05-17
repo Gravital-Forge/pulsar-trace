@@ -618,3 +618,23 @@ propagates as a thrown error (the old `Process` path ignored
 `terminationStatus`, silently treating a crash as success). This also removes
 the `#filePath`→`.build/debug/pulsartrace` path baked into the menubar, which
 would not survive Epic 10 packaging anyway.
+
+## D29 — The menubar separates the live and refine transcription models
+
+**Decision:** The menubar exposes **two** transcription-model settings —
+`liveModelName` (live pass, default `base`) and `refineModelName` (refine
+pass, default `base`) — where the CLI's `record` keeps a single `--model`
+knob for both passes (D24). `MenuBarSettings` persists both keys and migrates
+a pre-D29 single `modelName` value into `liveModelName` on first load.
+`SettingsView` shows two pickers ("Live transcription model" / "Refinement
+model"), each offering `base` and `large-v3`, with a note that `large-v3` is
+higher quality and ~3 GB.
+
+**Why:** The PRD wants a fast model for the live pass and a higher-quality
+model for refinement (D4 documents `large-v3` as the production *refinement*
+default). D24 deliberately kept the headless CLI to one knob to avoid a
+surprise ~3 GB `large-v3` download on a non-interactive `record`. The menubar
+is interactive: the model choices are visible pickers a user explicitly sets,
+so the surprise-download risk D24 guarded against does not apply. Defaulting
+both to `base` still keeps a first run download-free; the user opts into
+`large-v3` for refinement when they want the quality.
