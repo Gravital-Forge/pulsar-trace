@@ -660,3 +660,40 @@ relaunch — the exact dogfooding bug this fixes. A plain path has no such
 fragility, and an unsandboxed process can open any path directly. If a
 sandboxed build is ever needed (Epic 10), bookmarks can be reintroduced then,
 behind the same `outputFolderURL` accessor.
+
+## D31 — Offline transcription drops whisper silence-hallucinations behind a phrase + confidence double-gate
+
+**Decision:** The offline / refine transcription path (`WhisperTranscriber`'s
+whole-stream and VAD-region decodes — `collectSegments(dropHallucinations:
+true)`) drops a segment when, and only when, **both** hold:
+1. its text, normalized (lowercased, surrounding punctuation/whitespace
+   stripped), matches a known whisper silence-hallucination phrase —
+   `"thank you"`, `"thanks"`, `"thank you for watching"`, `"please
+   subscribe"`, `"you"`, `"okay"`, `"bye"`, … (`HallucinationFilter.stockPhrases`);
+   **and**
+2. an objective per-segment signal says the underlying audio is
+   silence / a low-confidence guess — whisper's `no_speech_prob ≥ 0.30`
+   *or* the mean per-token log-probability `≤ -0.80`.
+
+A phrase match **alone never drops a segment**. The streaming
+`transcribeWindow` path is unchanged (`dropHallucinations` defaults to
+`false`).
+
+**Why:** Fed a near-silent stream (a paused far end, a loopback with nothing
+playing), whisper confidently decodes a stock phrase — most often
+`"Thank you."` — over the silence. Unlike the YouTube-only phrases
+`BlankTokenFilter` already removes on text alone, `"Thank you."` / `"Okay"` /
+`"you"` are also legitimate meeting utterances, so they cannot be filtered by
+text. A real two-party recording surfaced this: a mic-only session got two
+`Speaker_?: Thank you.` lines injected into `final.md` from the silent
+system-audio stream (a hallucinated segment overlaps no diarization span, so
+it takes the `Speaker_?` label). The double-gate closes the gap without ever
+dropping a real utterance: a genuine `"Thank you."` spoken into a live mic
+decodes with a low `no_speech_prob` (~0.05) and a healthy avg logprob (~-0.2),
+so it fails gate (2) and is always kept. The thresholds are deliberately
+loose-on-phrase / strict-on-confidence: whisper's own `no_speech_thold` of
+0.6 already rejected the clearly-silent segments upstream, so the `0.30…0.60`
+grey zone it let through, combined with a stock-phrase match, is almost
+certainly a hallucination. Scoped to the offline path because the streaming
+path VAD-gates short windows upstream (the silent-window failure cannot
+arise) and LocalAgreement-2 must see every committed token (D20).

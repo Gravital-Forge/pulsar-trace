@@ -571,7 +571,11 @@ public final class WhisperTranscriber {
         let language = detectedLangId >= 0
             ? String(cString: whisper_lang_str(detectedLangId))
             : (isEnglishOnlyModel ? "en" : "unknown")
-        return TranscriptionResult(segments: collectSegments(), language: language)
+        // Offline path: drop silence hallucinations whisper decoded
+        // confidently as a stock phrase (`HallucinationFilter`, D31). Scoped
+        // to this offline decode — `transcribeWindow` keeps the raw segments.
+        return TranscriptionResult(
+            segments: collectSegments(dropHallucinations: true), language: language)
     }
 
     /// Log the `*.en`-model-on-arbitrary-audio warning (Epic 2 edge case). We
@@ -619,7 +623,16 @@ public final class WhisperTranscriber {
     }
 
     /// Pull segments out of the resident context, filtering blank ones.
-    private func collectSegments() -> [TranscriptSegment] {
+    ///
+    /// - Parameter dropHallucinations: when `true` (the offline / refine
+    ///   path), a segment whose text is a known whisper silence-hallucination
+    ///   stock phrase *and* whose per-segment confidence signals say the audio
+    ///   is silence is dropped (`HallucinationFilter`, project-docs/DECISIONS.md
+    ///   D31). `false` (the streaming `transcribeWindow` path) keeps every
+    ///   non-blank segment — see D31 for why streaming is out of scope.
+    private func collectSegments(
+        dropHallucinations: Bool = false
+    ) -> [TranscriptSegment] {
         let n = whisper_full_n_segments(ctx)
         var out: [TranscriptSegment] = []
         out.reserveCapacity(Int(n))
@@ -627,6 +640,22 @@ public final class WhisperTranscriber {
             guard let raw = whisper_full_get_segment_text(ctx, i) else { continue }
             let text = String(cString: raw).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !BlankTokenFilter.isBlank(text) else { continue }
+
+            // Offline only: a confidently-decoded stock phrase on silence
+            // (e.g. a hallucinated "Thank you.") is dropped. Gated on an
+            // objective per-segment signal so a real short utterance — which
+            // has a low no_speech_prob and a healthy avg logprob — survives.
+            if dropHallucinations {
+                let confidence = HallucinationFilter.SegmentConfidence(
+                    noSpeechProb: whisper_full_get_segment_no_speech_prob(ctx, i),
+                    avgLogProb: Self.segmentAvgLogProb(ctx, segment: i))
+                if HallucinationFilter.shouldDrop(text: text, confidence: confidence) {
+                    logger.notice(
+                        "dropped silence hallucination: no_speech_prob=\(confidence.noSpeechProb), avg_logprob=\(confidence.avgLogProb)")
+                    continue
+                }
+            }
+
             // whisper timestamps are in centiseconds (10 ms units).
             let t0 = whisper_full_get_segment_t0(ctx, i)
             let t1 = whisper_full_get_segment_t1(ctx, i)
@@ -637,5 +666,24 @@ public final class WhisperTranscriber {
             ))
         }
         return out
+    }
+
+    /// Mean per-token log-probability across a segment's tokens.
+    ///
+    /// whisper.cpp exposes only per-token probability `p` (and `plog`); it has
+    /// no segment-level avg-logprob getter. We average the token `plog`s
+    /// (`whisper_token_data.plog`) ourselves. An empty segment returns `0`
+    /// (treated as fully confident — the silence gate falls back to
+    /// `no_speech_prob` alone).
+    private static func segmentAvgLogProb(
+        _ ctx: OpaquePointer, segment i: Int32
+    ) -> Float {
+        let tokenCount = whisper_full_n_tokens(ctx, i)
+        guard tokenCount > 0 else { return 0 }
+        var sum: Float = 0
+        for t in 0..<tokenCount {
+            sum += whisper_full_get_token_data(ctx, i, t).plog
+        }
+        return sum / Float(tokenCount)
     }
 }
