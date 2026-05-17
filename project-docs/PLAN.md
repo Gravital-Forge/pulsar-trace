@@ -1,9 +1,9 @@
 # PulsarTrace — Implementation Plan (checkpointed)
 
 Scope: **v0.1 (Epics 1–5), Epic 6 (streaming), Epic 7 (real device capture),
-and Epic 9 (CLI surface) are delivered, verified, and committed.** Epic 9 was implemented
-before Epic 8 — see `DECISIONS.md` D23. Epic 8 (menubar UI) and Epic 10
-(distribution) remain for later runs.
+Epic 8 (menubar UI), and Epic 9 (CLI surface) are delivered, verified, and
+committed.** Epic 9 was implemented before Epic 8 — see `DECISIONS.md` D23.
+Epic 10 (distribution) remains for a later run.
 
 Epics 1–6 were built on an audio-deviceless host; Epics 7 and 9 were built on a
 real-audio-capable Mac (BlackHole + TCC grants — see `PREWORK.md`).
@@ -191,6 +191,47 @@ recording (not new epic scope):
       coalesce <800 ms gaps, decode each region as its own call. **D26.**
 - [x] End-to-end D26 regression test (verified TDD-style against the pre-fix
       commit).
+
+---
+
+## Epic 8 — Menubar UI  ✅ committed 1486b82
+
+Implemented after Epic 9 (D23). A SwiftPM library + thin SwiftUI executable —
+no `.xcodeproj` / `.app` bundle (D27); that is Epic 10.
+
+- [x] `FinalMarkdownRewriter` (`PulsarTraceEngine`) — retroactive `final.md`
+      rewrite after a speaker rename/merge/split/unmerge/unsplit: resolves the
+      affected recordings via the appearances table, atomic write + `.bak`,
+      skips byte-identical recordings, updates `metadata.json` labels, never
+      touches `live.md` (R36, Hard Invariant #4). Pays the D16 debt.
+- [x] `SpeakerLibrary` `suppressEvent:` overloads (additive) on
+      rename/merge/split so the caller emits the `speaker_*` event after the
+      rewrite with a populated `applied_to_recordings` — causal order (#8).
+- [x] `OfflineRefiner` (`PulsarTraceEngine`) — in-process refine shared by the
+      `pulsartrace refine` CLI and the menubar; the menubar never shells out to
+      the `pulsartrace` CLI (D23 / D28).
+- [x] `PulsarTraceMenuBar` library — `@Observable` ViewModels/state: status
+      machine (R40), `RecordingViewModel` start/stop + crash-watch (R41),
+      `MenuBarSettings` persisted to `UserDefaults` (R42),
+      `SpeakerEditorViewModel` list/rename/merge/split/delete + undo, name
+      validation (R31/R43), `RecordingsScanner` `metadata.json` scan + re-refine
+      (R44), `LiveTranscriptWatcher` read-only poll-tail of `live.md` (R45).
+      Onboarding tour stubbed (R46 — P2, deferred).
+- [x] `pulsartrace-mac` executable — `MenuBarExtra` SwiftUI shell, `.accessory`
+      activation policy, passive `NSEvent` global hotkey (D27). Views are pure
+      bindings; empty states for the speaker editor + recordings list.
+- [x] Tests: `MenuBarTests` (25 — settings round-trip, scanner, status machine,
+      speaker-editor retroactive rewrite + populated events, live watcher);
+      `FinalMarkdownRewriterTests` (9, Pipeline). Unit 217 + MenuBar 25 green;
+      `swift build` clean for all targets. Pipeline green bar the pre-existing
+      whisper-snapshot flakes (`returningSpeakerAutoLabelled`, streaming
+      `live.md` body) — concurrent-whisper non-determinism, D8/D14; both pass
+      in isolation and Epic 8 touches no whisper/streaming code.
+- [x] DONE: the full core flow is reachable without a terminal; a retroactive
+      rename rewrites every past `final.md`. `.app` packaging + the manual UI
+      smoke pass are Epic 10.
+- New DECISIONS: D27 (menubar module layout; passive hotkey), D28
+  (`OfflineRefiner` in-process refine).
 
 ---
 

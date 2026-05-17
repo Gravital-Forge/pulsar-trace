@@ -447,7 +447,20 @@ public actor SpeakerLibrary {
     /// does NOT retroactively rewrite past `final.md` files (D16 — that is
     /// Epic 8), so `applied_to_recordings` is empty and no `final_md_rewritten`
     /// is paired with this event.
-    public func rename(speakerId: String, to newName: String) async throws {
+    ///
+    /// - Parameter suppressEvent: when `true`, the DB write + backup are done
+    ///   but `speaker_renamed` is NOT emitted. The Epic 8 caller uses this so
+    ///   it can emit the event AFTER the retroactive `final.md` rewrite, with a
+    ///   populated `applied_to_recordings`, in causal order. The returned old
+    ///   name is what the caller needs to drive the rewrite. Default `false`
+    ///   keeps the Epic 5 behaviour unchanged.
+    /// - Returns: the speaker's name *before* the rename.
+    @discardableResult
+    public func rename(
+        speakerId: String,
+        to newName: String,
+        suppressEvent: Bool = false
+    ) async throws -> String {
         guard let speaker = try speaker(id: speakerId) else {
             throw LibraryError.speakerNotFound(speakerId)
         }
@@ -460,9 +473,12 @@ public actor SpeakerLibrary {
             throw LibraryError.database(error)
         }
         await emitBackupEvent(backupEvent)
-        _ = try? await events?.append(SpeakerRenamedEvent(
-            speakerId: speakerId, oldName: speaker.name, newName: newName,
-            appliedToRecordings: []))
+        if !suppressEvent {
+            _ = try? await events?.append(SpeakerRenamedEvent(
+                speakerId: speakerId, oldName: speaker.name, newName: newName,
+                appliedToRecordings: []))
+        }
+        return speaker.name
     }
 
     // MARK: - Delete + undo (R32b)
@@ -519,7 +535,20 @@ public actor SpeakerLibrary {
     ///
     /// A false merge of two genuinely-distinct speakers is recoverable via
     /// `unmerge` (Epic 5 edge case "two distinct speakers within threshold").
-    public func merge(primaryId: String, otherId: String) async throws {
+    ///
+    /// - Parameter suppressEvent: when `true`, the DB mutation + backup are
+    ///   done but `speaker_merged` is NOT emitted — the Epic 8 caller emits it
+    ///   after the retroactive `final.md` rewrite with a populated
+    ///   `applied_to_recordings`. Default `false` keeps the Epic 5 behaviour.
+    /// - Returns: `(primaryName, otherName)` — the display names before the
+    ///   merge, so the Epic 8 caller can rewrite `otherName` to `primaryName`
+    ///   across the merged speaker's past `final.md` files.
+    @discardableResult
+    public func merge(
+        primaryId: String,
+        otherId: String,
+        suppressEvent: Bool = false
+    ) async throws -> (primaryName: String, otherName: String) {
         guard primaryId != otherId else {
             throw LibraryError.notMergeable("a speaker cannot be merged into itself")
         }
@@ -579,9 +608,12 @@ public actor SpeakerLibrary {
             throw LibraryError.database(error)
         }
         await emitBackupEvent(backupEvent)
-        _ = try? await events?.append(SpeakerMergedEvent(
-            primarySpeakerId: primaryId, mergedSpeakerId: otherId,
-            appliedToRecordings: []))
+        if !suppressEvent {
+            _ = try? await events?.append(SpeakerMergedEvent(
+                primarySpeakerId: primaryId, mergedSpeakerId: otherId,
+                appliedToRecordings: []))
+        }
+        return (primaryName: primary.name, otherName: other.name)
     }
 
     /// Undo a merge: restore `other` and move the appearances the merge
@@ -654,12 +686,20 @@ public actor SpeakerLibrary {
     /// CLI surface for split is Epic 8; this library operation exists and is
     /// tested in Epic 5 (per the brief).
     ///
+    /// - Parameter suppressEvent: when `true`, the `speaker_split` event is NOT
+    ///   emitted — the Epic 8 caller emits it after the retroactive `final.md`
+    ///   rewrite with a populated `applied_to_recordings`. The `speaker_created`
+    ///   for the new speaker is still emitted: it records a genuine new library
+    ///   row, not the retroactive rewrite. Default `false` keeps Epic 5
+    ///   behaviour. The original speaker's name (needed to drive the rewrite of
+    ///   the moved recordings to `newName`) is `speaker(id: originalId)?.name`.
     /// - Returns: the new `Speaker`.
     @discardableResult
     public func split(
         originalId: String,
         movingRecordingIds: [String],
-        newName: String
+        newName: String,
+        suppressEvent: Bool = false
     ) async throws -> Speaker {
         guard let original = try speaker(id: originalId), !original.isDeleted else {
             throw LibraryError.speakerNotFound(originalId)
@@ -702,9 +742,11 @@ public actor SpeakerLibrary {
         }
         await emitBackupEvent(backupEvent)
         // Causal order: the split happened, then a new speaker exists.
-        _ = try? await events?.append(SpeakerSplitEvent(
-            originalSpeakerId: originalId, newSpeakerId: newId,
-            appliedToRecordings: []))
+        if !suppressEvent {
+            _ = try? await events?.append(SpeakerSplitEvent(
+                originalSpeakerId: originalId, newSpeakerId: newId,
+                appliedToRecordings: []))
+        }
         _ = try? await events?.append(SpeakerCreatedEvent(
             speakerId: newId, initialName: newName,
             sourceRecordingId: movingRecordingIds.first ?? ""))

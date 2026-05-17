@@ -83,4 +83,5 @@ public enum LogSubsystem {
     public static let refine = "refine"
     public static let ipc = "ipc"
     public static let events = "events"
+    public static let menubar = "menubar"
 }

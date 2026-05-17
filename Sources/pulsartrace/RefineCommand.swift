@@ -57,58 +57,15 @@ enum RefineCommand {
         }
 
         do {
-            // The whisper model must be present and verified before transcription
-            // (R54c/R54d). Cached after the first run.
-            err("refine: ensuring whisper model '\(model.name)' is available…")
-            let modelStore = ModelStore(events: events)
-            let modelURL = try await modelStore.ensureAvailable(model)
-
-            // The Silero VAD model gates the offline transcription so long
-            // digital-silence stretches in a stream (a paused video, a quiet
-            // far end) can't push whisper's greedy decoder into a degenerate
-            // loop. A VAD-model fetch failure must not lose a refine: fall
-            // back to a no-VAD whole-buffer decode — whisper's temperature
-            // fallback still recovers most degeneration — and warn.
-            var vadModelURL: URL?
-            do {
-                err("refine: ensuring VAD model is available…")
-                vadModelURL = try await modelStore
-                    .ensureAvailable(ModelCatalog.sileroVAD)
-            } catch {
-                err("refine: VAD model unavailable (\(error)) — "
-                    + "transcribing without VAD")
-                vadModelURL = nil
-            }
-            let whisperOptions = WhisperTranscriber.Options(
-                vadModelURL: vadModelURL)
-
-            let diarizer = try makeDiarizer()
-
-            // Epic 5: the persistent speaker library at the standard location.
-            // A failure to open it is non-fatal — refine continues with the
-            // raw `Speaker_N` labels rather than aborting.
-            let library = try? await SpeakerLibrary(
-                databaseURL: AppPaths.standard.speakersDatabaseURL,
-                events: events)
-            if library == nil {
-                err("refine: speaker library unavailable — using Speaker_N labels")
-            }
-
-            let pipeline = RefinementPipeline(events: events)
-            let progress: RefinementPipeline.ProgressReporter = { stage in
-                err("refine: \(stage.rawValue)…")
-            }
-
-            let output = try await pipeline.run(
+            // The whole refine orchestration — model fetch, VAD, diarizer
+            // wiring, speaker library, pipeline — lives in `OfflineRefiner`
+            // so the Epic 8 menubar can run an identical refine in-process
+            // without shelling to this CLI (D23).
+            let refiner = OfflineRefiner(events: events, paths: .standard)
+            let output = try await refiner.refine(
                 inputPath: options.inputPath,
-                transcriberFactory: { try WhisperTranscriber(modelURL: modelURL) },
-                diarizer: diarizer,
-                whisperModelName: model.name,
-                whisperModelSHA256: model.sha256,
-                recordingStart: Date(),
-                whisperOptions: whisperOptions,
-                library: library,
-                progress: progress)
+                model: model,
+                progress: { err("refine: \($0)") })
 
             out("refine: wrote \(output.finalURL.path)")
             out("refine: wrote \(output.metadataURL.path)")
@@ -163,95 +120,7 @@ enum RefineCommand {
             modelName: model)
     }
 
-    // MARK: - Diarizer wiring (dev environment)
-
-    /// Build a `Diarizer` against the dev venv + repo `.env` (project-docs/DECISIONS.md D3/D9).
-    ///
-    /// Epic 10 swaps this for the bundled `python-build-standalone` runtime; the
-    /// IPC boundary is identical, only this wiring changes.
-    ///
-    /// Robustness overrides (project-docs/DECISIONS.md D3): the repo root is otherwise the
-    /// `#filePath`-derived dev-tree path baked into the binary at build time.
-    /// `PULSARTRACE_REPO_ROOT`, `PULSARTRACE_VENV_PYTHON` and `HF_TOKEN`
-    /// environment variables take precedence so the binary can run off a
-    /// machine that is not the build host, ahead of full Epic 10 packaging.
-    static func makeDiarizer() throws -> Diarizer {
-        let repoRoot = repoRootURL()
-        let pythonWorkingDir = repoRoot
-            .appendingPathComponent("python/pulsartrace-ai")
-
-        // `PULSARTRACE_VENV_PYTHON` overrides the venv interpreter outright;
-        // otherwise it is resolved under the (possibly overridden) repo root.
-        let venvPython: URL
-        if let p = ProcessInfo.processInfo.environment["PULSARTRACE_VENV_PYTHON"],
-           !p.isEmpty {
-            venvPython = URL(fileURLWithPath: p)
-        } else {
-            venvPython = repoRoot
-                .appendingPathComponent("python/pulsartrace-ai/.venv/bin/python")
-        }
-
-        var env = dotEnv(repoRoot: repoRoot)
-        // A `HF_TOKEN` from the real process environment wins over the `.env`
-        // file (dev convenience vs. an explicit caller-supplied token).
-        if let token = ProcessInfo.processInfo.environment["HF_TOKEN"],
-           !token.isEmpty {
-            env["HF_TOKEN"] = token
-        }
-        // Cache the pyannote model under PulsarTrace's own cache dir (D10).
-        if let caches = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask).first {
-            env["HF_HOME"] = caches
-                .appendingPathComponent("PulsarTrace/huggingface").path
-        }
-
-        let config = Diarizer.Configuration(
-            pythonExecutable: venvPython,
-            workingDirectory: pythonWorkingDir,
-            environment: env)
-        return Diarizer(configuration: config)
-    }
-
-    /// Repo root.
-    ///
-    /// `PULSARTRACE_REPO_ROOT` (if set) takes precedence — a cheap robustness
-    /// override so the binary can be run off the build host ahead of full
-    /// Epic 10 packaging (project-docs/DECISIONS.md D3). The `#filePath`-derived path is the
-    /// dev-tree fallback: a build-machine path baked into the binary.
-    private static func repoRootURL() -> URL {
-        if let root = ProcessInfo.processInfo.environment["PULSARTRACE_REPO_ROOT"],
-           !root.isEmpty {
-            return URL(fileURLWithPath: root)
-        }
-        return URL(fileURLWithPath: #filePath)  // …/Sources/pulsartrace/RefineCommand.swift
-            .deletingLastPathComponent()        // …/Sources/pulsartrace
-            .deletingLastPathComponent()        // …/Sources
-            .deletingLastPathComponent()        // repo root
-    }
-
-    /// Load `KEY=VALUE` pairs from the repo `.env` (dev-only, D9).
-    private static func dotEnv(repoRoot: URL) -> [String: String] {
-        let envFile = repoRoot.appendingPathComponent(".env")
-        guard let text = try? String(contentsOf: envFile, encoding: .utf8) else {
-            return [:]
-        }
-        var out: [String: String] = [:]
-        for raw in text.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#"),
-                  let eq = line.firstIndex(of: "=") else { continue }
-            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: eq)...])
-                .trimmingCharacters(in: .whitespaces)
-            if value.count >= 2,
-               (value.hasPrefix("\"") && value.hasSuffix("\""))
-                || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                value = String(value.dropFirst().dropLast())
-            }
-            out[key] = value
-        }
-        return out
-    }
+    // MARK: - Output helpers
 
     private static func out(_ s: String) {
         FileHandle.standardOutput.write(Data((s + "\n").utf8))

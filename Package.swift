@@ -20,9 +20,11 @@ let package = Package(
     ],
     products: [
         .library(name: "PulsarTraceEngine", targets: ["PulsarTraceEngine"]),
+        .library(name: "PulsarTraceMenuBar", targets: ["PulsarTraceMenuBar"]),
         .executable(name: "pulsartrace-engine", targets: ["pulsartrace-engine"]),
         .executable(name: "pulsartrace", targets: ["pulsartrace"]),
         .executable(name: "pulsartrace-capture", targets: ["pulsartrace-capture"]),
+        .executable(name: "pulsartrace-mac", targets: ["pulsartrace-mac"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
@@ -81,6 +83,22 @@ let package = Package(
             name: "pulsartrace-capture",
             dependencies: ["PulsarTraceCapture"]
         ),
+        // Epic 8: the menubar UI logic. All ViewModels, settings persistence,
+        // the recordings scanner, the live-transcript watcher, the speaker
+        // editor — everything testable. No SwiftUI. `PulsarTraceCapture`
+        // already depends on `PulsarTraceEngine`, so depending on both here
+        // introduces no diamond (D27).
+        .target(
+            name: "PulsarTraceMenuBar",
+            dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
+        ),
+        // Epic 8: the thin SwiftUI executable — `MenuBarExtra` + `Settings`
+        // scenes bound to `PulsarTraceMenuBar`'s ViewModels. No logic, no
+        // unit tests; exercised only by manual smoke test (D27).
+        .executableTarget(
+            name: "pulsartrace-mac",
+            dependencies: ["PulsarTraceMenuBar"]
+        ),
         // Layer 1: unit tests — pure logic, <5s, no devices.
         .testTarget(
             name: "UnitTests",
@@ -108,6 +126,13 @@ let package = Package(
         .testTarget(
             name: "CaptureTests",
             dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
+        ),
+        // Epic 8: menubar UI logic tests — pure logic + temp-folder fixtures,
+        // no devices, no real subprocesses (orchestration is behind an
+        // injected seam).
+        .testTarget(
+            name: "MenuBarTests",
+            dependencies: ["PulsarTraceMenuBar"]
         ),
     ]
 )

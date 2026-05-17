@@ -213,7 +213,7 @@ also trigger it. The prior file is preserved as `final.md.bak`.
 | `recording_id` | string | The refined recording. |
 | `path_basename` | string | Always `final.md`. |
 | `sha256` | string | Lowercase-hex SHA-256 of the new file's bytes. |
-| `reason` | string | Why it was rewritten — Epic 4 emits `re_refine`. |
+| `reason` | string | Why it was rewritten. Epic 4 emits `re_refine`; Epic 8's retroactive rewrites emit `speaker_renamed`, `speaker_merged`, `speaker_split`, `speaker_unmerged`, or `speaker_unsplit`. |
 
 ```jsonl
 {"id":"evt_01KRQD...","path_basename":"final.md","reason":"re_refine","recording_id":"rec_two-speakers-alternating","sha256":"c2c71868d9e21ffd3f3192d32a033050fb2993ffacf1d15d16d77f425ba3df16","ts":"2026-05-16T03:26:57Z","type":"final_md_rewritten","version":1}
@@ -475,9 +475,13 @@ it, and the cause always precedes the effect in the log:
   files are durably on disk; `refinement_completed` is last. So the order
   within one refine is always `refinement_started` → `live_md_replaced_by_final`
   (if any) → `final_md_written` | `final_md_rewritten` → `refinement_completed`.
-- A `speaker_renamed` / `speaker_merged` / `speaker_split` performed in **Epic 8**
-  (the menubar editor / full CLI) is followed by a `final_md_rewritten` for each
-  affected past recording — its `applied_to_recordings` lists them.
+- A `speaker_renamed` / `speaker_merged` / `speaker_split` — and the undo
+  operations `speaker_unmerged` / `speaker_unsplit` — performed in **Epic 8**
+  (the menubar editor) is followed, in causal order, by a `final_md_rewritten`
+  for each affected past recording whose `final.md` actually changed; its
+  `applied_to_recordings` lists exactly those recordings (a recording the edit
+  did not textually change is neither rewritten nor listed). `speaker_undeleted`
+  emits no `final_md_rewritten` — a soft-delete never rewrote any `final.md`.
 - In **Epic 5**, a `speaker_renamed` / `speaker_merged` from the
   `pulsartrace speakers` CLI updates the library only — it does **not**
   retroactively rewrite past `final.md` files, so `applied_to_recordings` is

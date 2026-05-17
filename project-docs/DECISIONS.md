@@ -562,3 +562,59 @@ causal order. Granularity sits between the over-fragmented append-only
 regions within 800 ms are merged so the transcript breaks at genuine turn
 pauses, not every breath. Reported by the user from a real two-party
 recording; confirmed with the user.
+
+## D27 — Epic 8 module layout: `PulsarTraceMenuBar` library + `pulsartrace-mac` executable; no `.xcodeproj`; passive global hotkey
+
+**Decision:** Epic 8's menubar logic lives in a new SwiftPM **library** target
+`PulsarTraceMenuBar` (ViewModels, state stores, the recording-status state
+machine, the recordings-folder scanner, the settings store, the `live.md`
+watcher). A new thin **executable** target `pulsartrace-mac` holds only the
+SwiftUI `App` struct, the `MenuBarExtra` scene, and `View` structs that are
+pure bindings over the library's `@Observable` types. `PulsarTraceMenuBar`
+depends on `PulsarTraceEngine` and `PulsarTraceCapture`; `pulsartrace-mac`
+depends on `PulsarTraceMenuBar`; a new `MenuBarTests` target `@testable
+import`s the library. No `.xcodeproj` or `.app` bundle is introduced — that is
+Epic 10 scope (continuing D2). `NSApp.setActivationPolicy(.accessory)` is set
+in code (`PulsarTraceMacApp.init()`), not via an `Info.plist` `LSUIElement`
+key, so the package stays bundle-structure-free. The configurable global
+start/stop hotkey (R41) uses a **passive** `NSEvent.addGlobalMonitorForEvents`
+monitor, not an active `CGEventTap`.
+
+**Why:** This mirrors D22's `PulsarTraceCapture`/`pulsartrace-capture` split. A
+library target is required because `MenuBarTests` must `@testable import` the
+ViewModels — an executable target's internals are not importable. Keeping
+`pulsartrace-mac` logic-free draws the boundary explicitly: anything
+unit-testable belongs in `PulsarTraceMenuBar`; anything that needs an
+interactive macOS session (`MenuBarExtra` rendering, the hotkey monitor, real
+window presentation) stays in the executable and is covered by the manual
+smoke test. The dependency edge is a simple chain (`pulsartrace-mac` →
+`PulsarTraceMenuBar` → `PulsarTraceCapture` → `PulsarTraceEngine`), no diamond.
+The passive hotkey monitor is chosen because an active `CGEventTap` would
+require the user to grant **Accessibility** TCC — the broadest, most alarming
+permission macOS offers — which is at odds with the project's
+minimal-permissions, no-telemetry ethos and would bloat Epic 10's onboarding.
+The accepted tradeoff: a passive monitor cannot suppress the keypress, so the
+hotkey also reaches the frontmost app; users pick an uncommon combo.
+
+## D28 — Epic 8's menubar re-refine runs `OfflineRefiner` in-process; never shells out to the `pulsartrace` CLI
+
+**Decision:** The menubar's post-recording refine and recordings-list
+re-refine (`RecordingViewModel`, `RecordingsScanner`) run the offline refine
+pass **in-process** through a new `PulsarTraceEngine` type, `OfflineRefiner`.
+They do **not** spawn `.build/debug/pulsartrace refine` as a subprocess. The
+re-refine closures stay injectable so tests inject a stub; the production
+default builds an `OfflineRefiner` from the shared `EventWriter` + `AppPaths`.
+
+**Why:** D23 already states the rule — "the CLI stays settings-agnostic
+permanently: the menubar will not shell out to `pulsartrace`; both are sibling
+front-ends over `PulsarTraceEngine`." The initial Epic 8 implementation
+violated it by running `Process` over the CLI binary. `OfflineRefiner`
+encapsulates the whole refine orchestration `RefineCommand` previously held
+inline — model fetch/verify, Silero VAD, the dev-environment `Diarizer`
+wiring (venv interpreter, repo root, `.env` — D3/D9), the speaker library,
+and `RefinementPipeline` — so the CLI and the menubar share one in-process
+entry point with identical behaviour and identical events. A refine failure
+propagates as a thrown error (the old `Process` path ignored
+`terminationStatus`, silently treating a crash as success). This also removes
+the `#filePath`→`.build/debug/pulsartrace` path baked into the menubar, which
+would not survive Epic 10 packaging anyway.

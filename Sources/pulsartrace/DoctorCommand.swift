@@ -134,7 +134,7 @@ enum DoctorCommand {
     }
 
     /// Resolve the Python diarization interpreter, mirroring
-    /// `RefineCommand.makeDiarizer` (`PULSARTRACE_VENV_PYTHON`, else the
+    /// `OfflineRefiner.makeDiarizer` (`PULSARTRACE_VENV_PYTHON`, else the
     /// repo-tree venv — project-docs/DECISIONS.md D3).
     static func venvPythonURL() -> URL {
         let env = ProcessInfo.processInfo.environment

@@ -39,3 +39,32 @@ flows, Gatekeeper, real device switching.
 - [ ] Mid-session mic switch (unplug headphones) — recording survives.
 - [ ] Mid-session sleep/wake — recording survives, gap logged.
 - [ ] Disk-full handling (mount a tiny disk image).
+
+## Menubar UI (Epic 8)
+
+The `pulsartrace-mac` app's surfaces are bindings over `PulsarTraceMenuBar`
+ViewModels (unit-tested); these items cover only what needs an interactive
+session — `MenuBarExtra` rendering, the global hotkey, audio playback.
+
+- [ ] `MenuBarExtra` icon appears; it changes between idle / recording /
+      refining / crashed.
+- [ ] The configurable global hotkey starts and stops a recording from another
+      app in the foreground.
+- [ ] Settings: change mic, model, output folder, system-audio toggle — all
+      persist across an app relaunch.
+- [ ] Start a recording → the live-transcript popover shows lines in real time.
+- [ ] Stop → the refine pass runs and the recordings list picks up the new
+      `final.md`.
+- [ ] Speaker rename in the editor rewrites every past `final.md`; a `.bak`
+      sits next to each rewritten file.
+- [ ] Speaker merge: the merged speaker is soft-deleted, past `final.md` files
+      update; the undo toast restores both the library and the transcripts.
+- [ ] Speaker split, then unsplit — `final.md` labels round-trip.
+- [ ] Play-sample on a speaker plays audio.
+- [ ] Engine crash mid-recording → the crash state shows; "recover from partial
+      WAV" runs a refine.
+- [ ] A second start-recording attempt while recording is rejected.
+- [ ] Move a recording folder out of the output dir → it disappears from the
+      recordings list on the next refresh.
+- [ ] Empty speaker library shows the "Record a meeting to get started" state;
+      empty recordings list shows its "No recordings yet" state.
