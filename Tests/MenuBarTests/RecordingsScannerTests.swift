@@ -10,13 +10,12 @@ import PulsarTraceEngine
 struct RecordingsScannerTests {
 
     /// A `MenuBarSettings` whose output folder is `root`, persisted to a
-    /// throwaway suite so the bookmark resolves.
+    /// throwaway suite.
     private func settings(outputRoot: URL) throws -> MenuBarSettings {
         let suite = "pt-scanner-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         let settings = MenuBarSettings(defaults: defaults)
-        settings.outputFolderBookmark = try MenuBarSettings.makeBookmark(
-            for: outputRoot)
+        settings.outputFolderPath = outputRoot.path
         return settings
     }
 

@@ -24,9 +24,12 @@ public struct KeyCombo: Codable, Equatable, Sendable {
 /// is to an injectable `UserDefaults` — production uses a named suite so the
 /// settings live in the app's own domain; tests inject a throwaway suite.
 ///
-/// The output folder is stored as a **security-scoped bookmark** (`Data`) from
-/// the start (D27) so a sandboxed Epic 10 build can re-resolve the user's
-/// chosen folder across launches without re-prompting.
+/// The output folder is stored as a **plain filesystem path** (`String`).
+/// PulsarTrace v1 is explicitly unsandboxed (PRD §17 non-goals), so a
+/// security-scoped bookmark — an App Sandbox mechanism — buys nothing and was
+/// fragile across unsigned dev rebuilds (it resolved stale and the folder
+/// selection was lost). See D30. A legacy `Data` bookmark from an earlier
+/// install is migrated to a path once on load.
 @MainActor
 @Observable
 public final class MenuBarSettings {
@@ -62,9 +65,9 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
-    /// Security-scoped bookmark of the output folder (D27). `nil` until the
-    /// user picks a folder.
-    public var outputFolderBookmark: Data? {
+    /// Filesystem path of the output folder (D30). `nil` until the user picks
+    /// a folder.
+    public var outputFolderPath: String? {
         didSet { save() }
     }
 
@@ -78,26 +81,22 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
-    /// Bookmarks of previously-used output folders, so the recordings list can
-    /// still surface recordings made before the folder was changed.
-    public var previousFolderBookmarks: [Data] {
+    /// Filesystem paths of previously-used output folders, so the recordings
+    /// list can still surface recordings made before the folder was changed.
+    public var previousFolderPaths: [String] {
         didSet { save() }
     }
 
     // MARK: - Derived
 
-    /// Resolve `outputFolderBookmark` into a usable folder URL, or `nil`.
-    ///
-    /// A stale bookmark is tolerated — it resolves best-effort; callers fall
-    /// back to prompting the user again.
+    /// `outputFolderPath` as a file URL, or `nil` when no folder is chosen.
     public var outputFolderURL: URL? {
-        Self.resolveBookmark(outputFolderBookmark)
+        outputFolderPath.map { URL(fileURLWithPath: $0) }
     }
 
-    /// Resolve every `previousFolderBookmarks` entry to a URL, dropping any
-    /// that no longer resolve.
+    /// Every `previousFolderPaths` entry as a file URL.
     public var previousFolderURLs: [URL] {
-        previousFolderBookmarks.compactMap { Self.resolveBookmark($0) }
+        previousFolderPaths.map { URL(fileURLWithPath: $0) }
     }
 
     // MARK: - Storage
@@ -110,10 +109,14 @@ public final class MenuBarSettings {
         static let legacyModelName = "modelName"
         static let liveModelName = "liveModelName"
         static let refineModelName = "refineModelName"
-        static let outputFolderBookmark = "outputFolderBookmark"
+        static let outputFolderPath = "outputFolderPath"
+        /// Legacy security-scoped bookmark key (pre-D30) — read once to migrate.
+        static let legacyOutputFolderBookmark = "outputFolderBookmark"
         static let globalHotkey = "globalHotkey"
         static let systemAudioEnabled = "systemAudioEnabled"
-        static let previousFolderBookmarks = "previousFolderBookmarks"
+        static let previousFolderPaths = "previousFolderPaths"
+        /// Legacy bookmark-array key (pre-D30) — read once to migrate.
+        static let legacyPreviousFolderBookmarks = "previousFolderBookmarks"
     }
 
     /// Load settings from `defaults` (default: the production suite).
@@ -141,11 +144,40 @@ public final class MenuBarSettings {
         if legacyModelName != nil {
             store.removeObject(forKey: Key.legacyModelName)
         }
-        self.outputFolderBookmark = store.data(forKey: Key.outputFolderBookmark)
+        // D30: the output folder is now a plain path. If the new key is absent
+        // but a legacy security-scoped bookmark exists, best-effort resolve it
+        // once to a path (no security scope — v1 is unsandboxed), then drop the
+        // legacy key. If it cannot resolve, leave the output folder unset.
+        if let path = store.string(forKey: Key.outputFolderPath) {
+            self.outputFolderPath = path
+        } else if let legacy = store.data(
+            forKey: Key.legacyOutputFolderBookmark) {
+            self.outputFolderPath = Self.resolveLegacyBookmark(legacy)?.path
+        } else {
+            self.outputFolderPath = nil
+        }
+        if store.object(forKey: Key.legacyOutputFolderBookmark) != nil {
+            store.removeObject(forKey: Key.legacyOutputFolderBookmark)
+        }
+
         self.systemAudioEnabled = store.object(forKey: Key.systemAudioEnabled)
             as? Bool ?? true
-        self.previousFolderBookmarks = (store.array(
-            forKey: Key.previousFolderBookmarks) as? [Data]) ?? []
+
+        // Same D30 migration for the previous-folders list.
+        if let paths = store.array(
+            forKey: Key.previousFolderPaths) as? [String] {
+            self.previousFolderPaths = paths
+        } else if let legacy = store.array(
+            forKey: Key.legacyPreviousFolderBookmarks) as? [Data] {
+            self.previousFolderPaths = legacy.compactMap {
+                Self.resolveLegacyBookmark($0)?.path
+            }
+        } else {
+            self.previousFolderPaths = []
+        }
+        if store.object(forKey: Key.legacyPreviousFolderBookmarks) != nil {
+            store.removeObject(forKey: Key.legacyPreviousFolderBookmarks)
+        }
 
         if let hotkeyData = store.data(forKey: Key.globalHotkey) {
             self.globalHotkey = try? JSONDecoder().decode(
@@ -161,9 +193,9 @@ public final class MenuBarSettings {
         defaults.set(selectedMicDeviceID, forKey: Key.micDeviceID)
         defaults.set(liveModelName, forKey: Key.liveModelName)
         defaults.set(refineModelName, forKey: Key.refineModelName)
-        defaults.set(outputFolderBookmark, forKey: Key.outputFolderBookmark)
+        defaults.set(outputFolderPath, forKey: Key.outputFolderPath)
         defaults.set(systemAudioEnabled, forKey: Key.systemAudioEnabled)
-        defaults.set(previousFolderBookmarks, forKey: Key.previousFolderBookmarks)
+        defaults.set(previousFolderPaths, forKey: Key.previousFolderPaths)
         if let hotkey = globalHotkey,
            let data = try? JSONEncoder().encode(hotkey) {
             defaults.set(data, forKey: Key.globalHotkey)
@@ -172,24 +204,17 @@ public final class MenuBarSettings {
         }
     }
 
-    // MARK: - Bookmark helpers
+    // MARK: - Legacy migration
 
-    /// Create a security-scoped bookmark `Data` for a chosen output folder.
-    public static func makeBookmark(for folderURL: URL) throws -> Data {
-        try folderURL.bookmarkData(
-            options: .withSecurityScope,
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil)
-    }
-
-    /// Resolve a bookmark `Data` back into a folder URL. Returns `nil` when the
-    /// bookmark cannot be resolved at all.
-    private static func resolveBookmark(_ data: Data?) -> URL? {
-        guard let data else { return nil }
+    /// Best-effort resolve a pre-D30 security-scoped bookmark `Data` into a
+    /// folder URL, used once at load to migrate an old install to a plain path.
+    /// Resolves *without* security scope (v1 is unsandboxed); returns `nil`
+    /// when the bookmark cannot be resolved at all.
+    private static func resolveLegacyBookmark(_ data: Data) -> URL? {
         var isStale = false
         return try? URL(
             resolvingBookmarkData: data,
-            options: .withSecurityScope,
+            options: [],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale)
     }

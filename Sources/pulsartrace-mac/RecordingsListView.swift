@@ -70,9 +70,10 @@ struct RecordingsListView: View {
             Button("Reveal") {
                 NSWorkspace.shared.activateFileViewerSelecting([recording.folderURL])
             }
-            // An unrefined recording offers "Refine"; a refined one "Re-refine".
-            // Both reuse the same `RecordingsScanner.reRefine` path.
-            Button(recording.isRefined ? "Re-refine" : "Refine") {
+            // "Refine" for both states — running it again on a refined
+            // recording simply re-refines it (the "not yet refined" label
+            // already conveys which is which).
+            Button("Refine") {
                 Task { await scanner.reRefine(recording) }
             }
             .disabled(scanner.isScanning)

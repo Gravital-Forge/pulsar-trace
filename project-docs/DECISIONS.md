@@ -638,3 +638,25 @@ is interactive: the model choices are visible pickers a user explicitly sets,
 so the surprise-download risk D24 guarded against does not apply. Defaulting
 both to `base` still keeps a first run download-free; the user opts into
 `large-v3` for refinement when they want the quality.
+
+## D30 — The menubar output folder is stored as a plain filesystem path, not a security-scoped bookmark
+
+**Decision:** `MenuBarSettings` persists the chosen output folder as a plain
+path `String` (`outputFolderPath`, with `previousFolderPaths: [String]` for
+prior folders), not as a security-scoped bookmark `Data`. `outputFolderURL`
+derives the URL directly with `URL(fileURLWithPath:)`. The `makeBookmark` /
+`resolveBookmark` / `.withSecurityScope` machinery is removed. On load, an old
+install's legacy `outputFolderBookmark` / `previousFolderBookmarks` keys are
+best-effort resolved once (without security scope) into paths and then deleted;
+if a legacy bookmark cannot resolve, the output folder is simply left unset.
+This supersedes D27's note that the folder was bookmarked "from the start" for
+a future sandboxed build.
+
+**Why:** Security-scoped bookmarks are an **App Sandbox** mechanism, but
+PulsarTrace v1 is explicitly unsandboxed (PRD §17 non-goals). For an
+unsandboxed, unsigned, frequently-rebuilt dev app the bookmark resolved stale
+across rebuilds and the user's folder selection was silently lost on every
+relaunch — the exact dogfooding bug this fixes. A plain path has no such
+fragility, and an unsandboxed process can open any path directly. If a
+sandboxed build is ever needed (Epic 10), bookmarks can be reintroduced then,
+behind the same `outputFolderURL` accessor.

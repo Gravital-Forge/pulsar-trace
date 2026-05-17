@@ -69,8 +69,7 @@ struct RecordingViewModelTests {
     private func settings(outputRoot: URL) throws -> MenuBarSettings {
         let defaults = UserDefaults(suiteName: "pt-rvm-\(UUID().uuidString)")!
         let settings = MenuBarSettings(defaults: defaults)
-        settings.outputFolderBookmark = try MenuBarSettings.makeBookmark(
-            for: outputRoot)
+        settings.outputFolderPath = outputRoot.path
         return settings
     }
 

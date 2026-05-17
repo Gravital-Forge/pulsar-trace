@@ -68,20 +68,17 @@ struct SettingsView: View {
             set: { settings.selectedMicDeviceID = $0 })
     }
 
-    /// Open an `NSOpenPanel`, store the chosen folder as a security-scoped
-    /// bookmark, and keep the prior folder in `previousFolderBookmarks`.
+    /// Open an `NSOpenPanel`, store the chosen folder as a plain filesystem
+    /// path (D30), and keep the prior folder in `previousFolderPaths`.
     private func chooseOutputFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard let bookmark = try? MenuBarSettings.makeBookmark(for: url) else {
-            return
+        if let previous = settings.outputFolderPath {
+            settings.previousFolderPaths.append(previous)
         }
-        if let previous = settings.outputFolderBookmark {
-            settings.previousFolderBookmarks.append(previous)
-        }
-        settings.outputFolderBookmark = bookmark
+        settings.outputFolderPath = url.path
     }
 }
