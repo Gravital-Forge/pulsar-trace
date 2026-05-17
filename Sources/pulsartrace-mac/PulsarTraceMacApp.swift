@@ -17,7 +17,12 @@ struct PulsarTraceMacApp: App {
     init() {
         // No Dock icon, no app-switcher entry — PulsarTrace lives in the
         // menubar (D27). Set in code; there is no `.app` bundle in Epic 8.
-        NSApp.setActivationPolicy(.accessory)
+        //
+        // `NSApplication.shared` — not the `NSApp` global — because `App.init()`
+        // runs before SwiftUI has created the application object: `NSApp` is
+        // still `nil` here and force-unwrapping it crashes. `.shared` creates
+        // the instance on first access (and is the same object SwiftUI adopts).
+        NSApplication.shared.setActivationPolicy(.accessory)
     }
 
     var body: some Scene {
