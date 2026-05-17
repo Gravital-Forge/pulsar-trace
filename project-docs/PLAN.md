@@ -241,6 +241,45 @@ no `.xcodeproj` / `.app` bundle (D27); that is Epic 10.
 
 ---
 
+## Post-Epic-8 menubar fixes  ✅ committed 5c29483 … 4b3d024
+
+Fixes from dogfooding the running `pulsartrace-mac` build — not new epic
+scope:
+
+- [x] Launch crash: `NSApp` is `nil` in `App.init()` (SwiftUI has not built
+      the application object yet) — use `NSApplication.shared`. Commit 5c29483.
+- [x] `scripts/make-dev-app.sh`: minimal unsigned `.app` wrapper so the
+      `MenuBarExtra` app is launchable before Epic 10 (a bare `swift run`
+      shows no menu-bar item — needs a bundle with `LSUIElement`). Commit
+      819095d.
+- [x] Post-recording refine skipped ("folder not found"): `stopRecording`
+      re-discovered the folder by scanning for `metadata.json`, which the
+      refine pass itself writes — a catch-22. Now carries the recording
+      folder through. Commit 737f747.
+- [x] Round 2 (commit 1ba879c): the live-transcript popover never updated
+      (`LiveTranscriptWatcher` was created but never `start()`-ed at a file);
+      menu navigation replaced `.sheet`-on-`MenuBarExtra` with inline pages,
+      fixing a confused Done/re-click state and an off-screen sub-window;
+      the recordings list now surfaces unrefined folders (`live.md`, no
+      `metadata.json`); the transcription model split into live + refine.
+- [x] Output folder persisted as a plain path, not a security-scoped
+      bookmark — v1 is unsandboxed (PRD §17) and the bookmark resolved stale
+      across unsigned dev rebuilds, losing the selection. Commit ae1ea8f.
+- [x] Whisper silence-hallucination filter: a confidently-decoded stock
+      phrase (`"Thank you."` …) leaked into `final.md` from a near-silent
+      stream. `HallucinationFilter` drops such a segment only when an
+      objective per-segment signal (`no_speech_prob` / avg logprob) also
+      says the audio was silence — a real utterance is never dropped on
+      phrase text alone. Offline path only. Commit 4b3d024.
+- New DECISIONS: D29 (live/refine model split), D30 (output folder = plain
+  path), D31 (offline silence-hallucination filter).
+- KNOWN (deferred to Epic 10): TCC grants do not survive unsigned dev
+  rebuilds — each build changes the binary's cdhash, so macOS stops
+  applying the grant while the System Settings toggle still shows it ON.
+  Stable code-signing (Epic 10) is the fix.
+
+---
+
 ## Cross-cutting (every epic)
 - Tests ship with code. Determinism: seeded RNG, whisper temp 0, pinned hashes.
 - `docs/file-format.md` and `docs/events-schema.md` kept current.
