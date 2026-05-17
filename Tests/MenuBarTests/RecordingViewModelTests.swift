@@ -87,12 +87,16 @@ struct RecordingViewModelTests {
 
     // MARK: - Tests
 
-    @Test("happy path: idle → recording → refining → idle")
+    @Test("happy path: idle → recording → refining → idle, refine targets the recorded folder")
     func happyPathTransitions() async throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let stub = StubOrchestrator()
-        let vm = makeVM(settings: try settings(outputRoot: root), orchestrator: stub)
+        let refined = RefineMailbox()
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            reRefiner: { url in await refined.record(url) })
 
         #expect(vm.status == .idle)
         await vm.startRecording()
@@ -105,6 +109,16 @@ struct RecordingViewModelTests {
         await vm.stopRecording()
         #expect(vm.status == .idle)
         #expect(stub.stopped)
+
+        // The post-recording refine must receive the actual recording folder.
+        // A freshly-recorded folder has no `metadata.json`, so it cannot be
+        // re-discovered by scanning the output root — the VM must carry the
+        // folder it created through to the refine pass (regression guard).
+        #expect(await refined.count() == 1)
+        let refinedURL = try #require(await refined.first())
+        #expect(refinedURL.deletingLastPathComponent().standardizedFileURL
+            == root.standardizedFileURL)
+        #expect(FileManager.default.fileExists(atPath: refinedURL.path))
     }
 
     @Test("an unexpected engine exit while recording moves to .crashed")
@@ -216,5 +230,6 @@ struct RecordingViewModelTests {
         private var urls: [URL] = []
         func record(_ u: URL) { urls.append(u) }
         func count() -> Int { urls.count }
+        func first() -> URL? { urls.first }
     }
 }

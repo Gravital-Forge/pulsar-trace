@@ -67,6 +67,11 @@ public final class RecordingViewModel {
     private var orchestrator: RecordingOrchestrating?
     /// The crash-watch task started after a successful `start()`.
     private var crashWatch: Task<Void, Never>?
+    /// Output folder of the in-flight recording. Carried so the post-recording
+    /// refine targets it directly: a just-recorded folder has no
+    /// `metadata.json` yet (that file is written *by* refinement), so it cannot
+    /// be re-discovered by scanning the output root.
+    private var currentRecordingFolder: URL?
 
     /// - Parameters:
     ///   - settings: source of the mic, model, output folder, system-audio flag.
@@ -129,6 +134,7 @@ public final class RecordingViewModel {
             progressMessage = ""
             return
         }
+        currentRecordingFolder = outputFolder
 
         let plan = RecordPlan.make(
             outputFolder: outputFolder,
@@ -183,7 +189,7 @@ public final class RecordingViewModel {
         await orchestrator.stop()
         self.orchestrator = nil
 
-        await runRefine(recordingId: id)
+        await runRefine(recordingId: id, folderOverride: currentRecordingFolder)
     }
 
     // MARK: - Crash handling
@@ -251,6 +257,7 @@ public final class RecordingViewModel {
         } else {
             progressMessage = "Recording saved (refine skipped — folder not found)."
         }
+        currentRecordingFolder = nil
         status = .idle
     }
 
