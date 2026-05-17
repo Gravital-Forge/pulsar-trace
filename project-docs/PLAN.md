@@ -1,7 +1,7 @@
 # PulsarTrace — Implementation Plan (checkpointed)
 
 Scope: **v0.1 (Epics 1–5), Epic 6 (streaming), Epic 7 (real device capture),
-and Epic 9 (CLI surface) are delivered + verified.** Epic 9 was implemented
+and Epic 9 (CLI surface) are delivered, verified, and committed.** Epic 9 was implemented
 before Epic 8 — see `DECISIONS.md` D23. Epic 8 (menubar UI) and Epic 10
 (distribution) remain for later runs.
 
@@ -31,7 +31,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
 - [x] Audio fixtures committed; `ffmpeg -re | pulsartrace-engine --stdin` frame-count smoke
 - [x] DONE: Unit+Pipeline green <30s; pytest green; pipe smoke works; event pair emitted
 
-## Epic 2 — Offline Transcription  ✅ done & verified (not committed)
+## Epic 2 — Offline Transcription  ✅ committed e769e12
 - [x] whisper.cpp v1.8.4 vendored + built with Metal (scripts/build-whisper.sh, D7);
       `CWhisper` systemLibrary target; resident model via `WhisperTranscriber` (R9)
 - [x] `ModelStore`: HF download, HTTP Range resume (R54c) + SHA-256 verify (R54d);
@@ -113,7 +113,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
 - New DECISIONS: D19 (windowed-pyannote over diart), D20 (anchored-window
   whisper + LocalAgreement-2)
 
-## Epic 7 — Real Device Capture  ✅ done & verified
+## Epic 7 — Real Device Capture  ✅ committed a673a7f
 - [x] `PulsarTraceCapture` library + thin `pulsartrace-capture` executable
       (D22); `CaptureTests` imports the library for device-gated tests
 - [x] `DeviceCaptureSource` orchestrator: two `CaptureSocketServer`s (system +
@@ -142,7 +142,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
 - New DECISIONS: D21 (in-band pause/resume control frames), D22 (`PulsarTraceCapture`
   module layout)
 
-## Epic 9 — CLI Surface  ✅ done & verified
+## Epic 9 — CLI Surface  ✅ committed 73a4eab
 
 Implemented **before** Epic 8 — see `DECISIONS.md` D23. `refine`/`speakers`
 already shipped (Epics 4–5); Epic 9 completes the `pulsartrace` surface.
@@ -176,6 +176,21 @@ already shipped (Epics 4–5); Epic 9 completes the `pulsartrace` surface.
       are release-smoke items (`docs/release-smoke-test.md`).
 - New DECISIONS: D23 (Epic 9 before Epic 8; `RecordOrchestrator` placement),
   D24 (`record --output`/`--model` semantics).
+
+## Post-Epic-9 refine fixes  ✅ committed 7df7624, e91e369, 7d2a4aa
+
+Bug fixes to the Epic 4 `refine` pass, surfaced from a real two-party
+recording (not new epic scope):
+
+- [x] Garbled `final.md`: a whole-recording `whisper_full` call degenerated
+      into a repetition loop on long digital silence. Fix: non-zero whisper
+      temperature + fallback ladder, plus Silero VAD. **D25.**
+- [x] Mis-ordered `final.md`: D25's built-in VAD concatenated speech across
+      pauses, gluing multi-turn monologues into one segment that sorted ahead
+      of the other speaker. Fix: detect VAD speech regions separately,
+      coalesce <800 ms gaps, decode each region as its own call. **D26.**
+- [x] End-to-end D26 regression test (verified TDD-style against the pre-fix
+      commit).
 
 ---
 
