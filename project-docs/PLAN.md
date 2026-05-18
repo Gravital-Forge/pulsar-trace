@@ -280,7 +280,7 @@ scope:
 
 ---
 
-## Live-recording resilience fixes  — pending commit
+## Live-recording resilience fixes  ✅ committed b386c37
 
 Fixes from a dogfooding incident: a real ~18-minute recording where the
 ScreenCaptureKit system-audio stream silently stalled, then ~2 min later the
