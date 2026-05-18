@@ -294,6 +294,11 @@ public actor LiveDiarizer: LiveDiarizing {
         guard let stdinHandle, let stdoutLines, process?.isRunning == true else {
             return []
         }
+        // Wall-clock start of the whole round trip (WAV write + IPC + pyannote
+        // inference + stitch) — logged below so live-diarization cost is
+        // observable per window. The dominant term is the pyannote inference,
+        // which the subprocess reports separately as `infer_ms`.
+        let started = ContinuousClock.now
         windowCounter += 1
         let wavURL = scratchDirectory.appendingPathComponent(
             String(format: "win-%06d.wav", windowCounter))
@@ -348,7 +353,31 @@ public actor LiveDiarizer: LiveDiarizing {
                 "live diarization: window error (\(Diarizer.redactingPaths(in: err)))")
             return []
         }
-        return stitch(windowJSON: json)
+        let spans = stitch(windowJSON: json)
+
+        // Per-window timing (numbers only — Hard Invariant #7). `infer_ms` is
+        // the pyannote inference reported by the subprocess; the round trip
+        // adds WAV write + IPC + stitch on top. A window that overruns
+        // `windowTimeout` never reaches here — it returned `[]` above.
+        let roundTripMS = Int(((ContinuousClock.now - started).seconds * 1000)
+            .rounded())
+        let speakerCount = (json["speakers"] as? [Any])?.count ?? 0
+        let inferDesc: String
+        if let inferMS = json["infer_ms"] as? Double {
+            inferDesc = "\(Int(inferMS.rounded())) ms"
+        } else {
+            inferDesc = "n/a"
+        }
+        // `.debug`: one line per window (~every 5 s) — a performance
+        // observable, not an operational event. The subprocess's own
+        // `[python] … diarized in …` stderr line carries the headline number
+        // into the log at `.notice`.
+        logger.debug("""
+            live diarization: window \(windowCounter) done — \
+            round-trip \(roundTripMS) ms (pyannote infer \(inferDesc)), \
+            \(speakerCount) speaker(s)
+            """)
+        return spans
     }
 
     /// Shut the subprocess down cleanly and remove the scratch directory.

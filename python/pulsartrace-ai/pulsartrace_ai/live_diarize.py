@@ -34,7 +34,12 @@ over a simple newline framed stdin/stdout protocol:
 
       {"window_start": 12.0, "speakers": ["SPEAKER_00", "SPEAKER_01"],
        "spans": [{"speaker": "SPEAKER_00", "start": 12.0, "end": 14.5}],
-       "embeddings": {"SPEAKER_00": [...]}, "embedding_dim": 256}
+       "embeddings": {"SPEAKER_00": [...]}, "embedding_dim": 256,
+       "infer_ms": 1820.4}
+
+  ``infer_ms`` is the wall time of the pyannote call for that window — the
+  dominant cost of the live pass. The Swift side logs it per window and the
+  timing test asserts it stays within the window timeout.
 
   Span/embedding shapes mirror ``diarize.py`` so the Swift side reuses the same
   decoder logic; ``start``/``end`` are recording-absolute (window-relative
@@ -70,6 +75,7 @@ import os
 os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
 
 import sys
+import time
 import wave
 from pathlib import Path
 from typing import Any
@@ -116,7 +122,15 @@ def diarize_window(
     if not window_wav.is_file():
         raise DiarizationError(f"window WAV not found: {window_wav.name}")
 
+    # Time the pyannote inference itself — neural VAD + embedding + clustering
+    # over the window. This is the dominant cost of the live pass; everything
+    # the Swift side does around it (WAV write, IPC, stitching) is negligible
+    # by comparison. Reported as `infer_ms` (numbers only — never content,
+    # Hard Invariant #7) so the Swift side can log per-window timing and the
+    # timing test can assert it stays within the window timeout.
+    started = time.monotonic()
     output = pipeline(str(window_wav))
+    infer_ms = round((time.monotonic() - started) * 1000.0, 1)
     diarization = output.speaker_diarization
     raw_embeddings = output.speaker_embeddings
 
@@ -136,12 +150,19 @@ def diarize_window(
             if index < len(raw_embeddings):
                 embeddings[label] = [float(x) for x in raw_embeddings[index]]
 
+    print(
+        f"[live_diarize] window @{window_start:.1f}s diarized in "
+        f"{infer_ms:.0f}ms ({len(speakers)} speaker(s))",
+        file=sys.stderr,
+    )
+
     return {
         "window_start": round(window_start, 3),
         "speakers": speakers,
         "spans": [s.as_dict() for s in spans],
         "embeddings": embeddings,
         "embedding_dim": embedding_dim,
+        "infer_ms": infer_ms,
     }
 
 

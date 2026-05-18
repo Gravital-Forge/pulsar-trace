@@ -34,6 +34,46 @@ def _window_wav(src_wav, dst_wav, start_s, end_s):
             w.writeframes(frames)
 
 
+# Mirrors `LiveDiarizer.Configuration.windowTimeout` (LiveDiarizer.swift): a
+# window whose pyannote inference overruns this is given up on by the Swift
+# side and the live pass degrades. Staying within it is the live pass's core
+# timing contract — so it is the non-flaky ceiling this test asserts.
+WINDOW_TIMEOUT_MS = 30_000
+
+
+def test_diarize_window_inference_stays_within_window_timeout(
+    audio_dir, diarization_pipeline, tmp_path
+):
+    """A 10s window's pyannote inference completes within the window timeout.
+
+    `diarize_window` reports `infer_ms` — the wall time of the pyannote call,
+    which dominates live-diarization cost (WAV write, IPC and Swift-side
+    stitching around it are negligible). The live pass steps windows every ~5s
+    and drops any window that overruns `windowTimeout` (30s); this test guards
+    that contract.
+
+    The asserted threshold is the timeout itself — a hard ceiling that does not
+    flake on slow CI (CPU-only Tart VMs / EC2 Macs without MPS). The actual
+    figure is printed unconditionally so the real per-window cost is visible:
+    on Apple-Silicon MPS a 10s window measures ~0.5-0.7s — two orders of
+    magnitude inside the ~5s window step, so the diarizer never falls behind.
+    """
+    window = tmp_path / "win.wav"
+    # A 10s window — the live pass's default `diarizationWindow`.
+    _window_wav(audio_dir / "two-speakers-alternating.wav", window, 4.0, 14.0)
+
+    result = diarize_window(window, window_start=4.0, pipeline=diarization_pipeline)
+
+    infer_ms = result["infer_ms"]
+    print(f"\n[timing] 10s live-diarization window: pyannote infer {infer_ms:.0f} ms")
+
+    assert infer_ms > 0
+    assert infer_ms < WINDOW_TIMEOUT_MS, (
+        f"window inference {infer_ms:.0f}ms exceeds the {WINDOW_TIMEOUT_MS}ms "
+        "live-pass window timeout — windows would be dropped"
+    )
+
+
 def test_diarize_window_returns_recording_absolute_spans(
     audio_dir, diarization_pipeline, tmp_path
 ):

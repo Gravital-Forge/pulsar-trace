@@ -40,6 +40,14 @@ it; some hits walls.
   device *capture* additionally needs `coremedia` + `tccd` (the TCC mic check).
 - whisper's **CPU** backend + pyannote diarization (so a CPU-mode `refine`
   could run sandboxed if its output path were inside the sandbox).
+- `pytest` (the `pulsartrace-ai` suite) — **once the pyannote model is
+  prefetched.** pyannote's `Pipeline.from_pretrained` normally makes a Hugging
+  Face Hub call, which the sandbox's SOCKS proxy cannot carry. The test
+  `conftest.py` instead forces `HF_HUB_OFFLINE=1` and points `HF_HOME` at
+  PulsarTrace's cache, so a cached model loads with zero network. The cache is
+  filled once (online) by `python/prefetch-model.sh`, which `build-venv.sh`
+  runs as its final step — so a plain `python/build-venv.sh` is the whole
+  post-clone init. Without the prefetch the diarization tests skip cleanly.
 
 **Must run outside the sandbox** (allowlisted in `.claude/settings.json` →
 `permissions.allow`, so they don't prompt):
@@ -50,12 +58,13 @@ it; some hits walls.
   Metal backend SIGSEGVs on buffer allocation inside the sandbox.
 - ScreenCaptureKit — `SCShareableContent` *hangs silently* inside the sandbox
   (a required Mach service is blocked; the call never returns).
-- `pytest` — pyannote's `Pipeline.from_pretrained` makes a Hugging Face Hub
-  call; inside the sandbox that is routed through a SOCKS proxy httpx can't use.
+- `python/prefetch-model.sh` / `build-venv.sh` — the one-time model download
+  needs real network; run them outside the sandbox once after cloning.
 
-Bottom line: audio-device capture is sandboxed; build, tests, GPU
-transcription, ScreenCaptureKit, and pytest run unsandboxed + allowlisted.
-Metal (IOKit) and ScreenCaptureKit could not be made sandbox-safe.
+Bottom line: audio-device capture and the `pytest` suite are sandboxed (the
+latter after a one-time model prefetch); `swift build` / `swift test`, GPU
+transcription, ScreenCaptureKit, and the model prefetch run unsandboxed +
+allowlisted. Metal (IOKit) and ScreenCaptureKit could not be made sandbox-safe.
 
 ## whisper CPU toggle
 
