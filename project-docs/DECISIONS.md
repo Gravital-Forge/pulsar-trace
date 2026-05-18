@@ -697,3 +697,55 @@ grey zone it let through, combined with a stock-phrase match, is almost
 certainly a hallucination. Scoped to the offline path because the streaming
 path VAD-gates short windows upstream (the silent-window failure cannot
 arise) and LocalAgreement-2 must see every committed token (D20).
+
+## D32 — Crash-safe incremental WAV for the live pass
+
+**Decision:** The live pass writes `audio-system.wav` / `audio-mic.wav`
+incrementally through a new `StreamingWAVWriter`: a 44-byte header with
+placeholder sizes is written at session start, every captured frame is
+appended to the open file handle, and the RIFF / `data` chunk sizes are
+re-patched in place (throttled to ~1x/s) so the on-disk file is at all times
+a valid WAV. The previous design — `LiveRunner` accumulating the whole
+recording in two in-RAM `[Float]` buffers and calling `WAVWriter.write` once,
+at the end of a clean run-loop exit — is removed.
+
+**Why:** A dogfooding incident lost an ~18-minute recording in full. The live
+engine wedged (a silently stalled capture stream — see D33), the menubar's
+60s stop-grace then force-killed it, and because the WAVs had not yet been
+written the post-recording `refine` failed with "recording folder contains
+no audio-system.wav". Buffering the entire recording for a single end-of-run
+write means any abnormal end — wedge, crash, OOM, force-kill — loses 100% of
+the captured audio. Incremental writing makes a recording always
+recoverable: the worst case is <=1s of un-patched tail. It also bounds the
+live pass's memory, which previously grew unbounded with recording length.
+
+## D33 — Capture-stream stall detection + auto-restart (reusing pause/resume)
+
+**Decision:** Each capture engine (`SystemAudioCaptureEngine`,
+`MicCaptureEngine`) runs a `FrameWatchdog` that fires if no audio frame is
+delivered within a per-stream threshold (6s system, 4s mic). On a stall,
+`DeviceCaptureSource.handleStall(stream:)` tears down and rebuilds that one
+capture engine — exactly the operation `handleSleep`/`handleWake` already
+perform for system sleep — with capped exponential-backoff retry
+(1->2->4->8->10s) re-scheduled off the serial restart queue so a long retry
+never blocks a concurrent sleep/wake. The recovery is surfaced as the
+existing in-band pause/resume control frames, so the engine treats a stall
+recovery identically to a sleep gap; `recording_paused`/`recording_resumed`
+carry `reason: "stall_recovery"`. A second, longer engine-side watchdog
+(20s, via a periodic run-loop tick) is the backstop for a daemon that dies
+outright: it annotates the gap in `live.md` and keeps the run loop alive,
+never ending a stream on silence — only on a real socket EOF.
+
+**Why:** ScreenCaptureKit (and, separately, the AVFoundation mic) streams can
+stop delivering audio buffers with no error and no end-of-stream — observed
+in the field after ~17 minutes. Nothing detected it: the capture engines had
+no inactivity timer, and the engine's run loop blocked forever on a source
+that would never yield a frame or an EOF, so the menubar kept showing
+"recording" on a dead session (its crash-watch only fires on process exit).
+Reusing the proven sleep/wake rebuild path — rather than inventing a new
+recovery mechanism or a new wire message — keeps the change small and means
+the engine needs no protocol change. The two-tier design (the daemon
+restarts its own stream fast; the engine tolerates a longer outage without
+wedging) means a recording continues through a transient capture failure
+and, combined with D32's incremental WAV, survives even a total
+capture-daemon loss.

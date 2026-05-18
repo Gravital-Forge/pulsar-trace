@@ -414,7 +414,7 @@ Emitted when capture pauses mid-session. Category: `recording_lifecycle`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `recording_id` | string | The recording. |
-| `reason` | string | Stable code: `sleep` (Mac slept, R7) or `device_change` (active audio device changed, R8). |
+| `reason` | string | Stable code: `sleep` (Mac slept, R7), `device_change` (active audio device changed, R8), or `stall_recovery` (a capture stream silently stopped delivering audio and the capture daemon restarted it). |
 
 ```jsonl
 {"id":"evt_01KR...","reason":"sleep","recording_id":"rec_4f2a","ts":"2026-05-16T14:42:11Z","type":"recording_paused","version":1}
@@ -428,7 +428,7 @@ after — the `recording_paused` that preceded it. Category: `recording_lifecycl
 | Field | Type | Description |
 |-------|------|-------------|
 | `recording_id` | string | The recording. |
-| `reason` | string | The reason capture had paused — `sleep` or `device_change`. |
+| `reason` | string | The reason capture had paused — `sleep`, `device_change`, or `stall_recovery`. |
 
 ```jsonl
 {"id":"evt_01KR...","reason":"sleep","recording_id":"rec_4f2a","ts":"2026-05-16T14:48:33Z","type":"recording_resumed","version":1}

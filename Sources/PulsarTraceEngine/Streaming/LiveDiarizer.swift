@@ -30,6 +30,27 @@ public struct LiveSpeakerSpan: Sendable, Equatable {
     }
 }
 
+/// The narrow seam `LiveRunner` drives live diarization through.
+///
+/// `LiveDiarizer` is the production conformer (a long-lived windowed-pyannote
+/// subprocess). The protocol exists so the run loop can be exercised against a
+/// **stub** — in particular one whose `diarizeWindow` hangs — to prove the
+/// resilience invariant that a wedged diarizer never stalls transcription or
+/// `live.md` (the diarizer runs off the run loop's critical path).
+///
+/// Every member is `async` so a conformer may be an `actor`.
+protocol LiveDiarizing: Sendable {
+    /// Diarize one window of recent system-stream audio; `windowStart` is the
+    /// window's recording-absolute offset. A hiccup yields `[]`.
+    func diarizeWindow(
+        samples: [Float], windowStart: Duration
+    ) async -> [LiveSpeakerSpan]
+    /// Live-speaker centroids keyed by provisional key (R18 library lookup).
+    func centroids() async -> [String: [Float]]
+    /// The pyannote model checkpoint's HF commit SHA (R18 revision scoping).
+    func modelRevision() async -> String
+}
+
 /// Live (streaming) speaker diarization for the system stream (Epic 6 — R15,
 /// R16).
 ///
@@ -67,7 +88,7 @@ public struct LiveSpeakerSpan: Sendable, Equatable {
 ///
 /// An `actor`: it owns subprocess state and the running live-speaker set, both
 /// mutable and not safe to touch concurrently.
-public actor LiveDiarizer {
+public actor LiveDiarizer: LiveDiarizing {
 
     /// Reuses the offline `Diarizer.Configuration` shape — same Python
     /// interpreter, working directory, environment. Only the module differs.

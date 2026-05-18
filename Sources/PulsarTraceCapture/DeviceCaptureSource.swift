@@ -55,17 +55,33 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         }
     }
 
-    private enum Stream { case system, mic }
+    private enum Stream: Sendable, Hashable { case system, mic }
 
     private let configuration: Configuration
     private let systemServer: CaptureSocketServer
     private let micServer: CaptureSocketServer
     private let sleepWake = SleepWakeMonitor()
 
+    /// Serializes every operation that rebuilds engine state — `handleSleep`,
+    /// `handleWake`, and `handleStall`. They all stop and replace engines, so
+    /// they must never overlap. A dedicated serial queue (not the `Task`
+    /// executor) gives a single, ordered place to fence them.
+    private let restartQueue = DispatchQueue(label: "com.pulsartrace.capture.restart")
+
     private let lock = NSLock()
     private var micEngine: MicCaptureEngine?
     private var systemEngine: SystemAudioCaptureEngine?
     private var paused = false
+    /// Streams with a stall restart in flight — guards against a watchdog on
+    /// the *fresh* engine firing again before the restart settles, and against
+    /// re-entering `handleStall` for a stream already being rebuilt.
+    private var restartingStreams: Set<Stream> = []
+    /// Wall-clock time each stream's *current* engine was installed (initial
+    /// start, `handleWake`, or a successful `handleStall` install). A stall
+    /// callback dispatched just before an engine was replaced (e.g. across a
+    /// sleep/wake) is stale: if the live engine is younger than its stall
+    /// threshold, it cannot have genuinely stalled, so `handleStall` skips.
+    private var engineInstalledAt: [Stream: Date] = [:]
     /// Set once `stopCapture()` begins. A sleep/wake handler that fires during
     /// or after teardown is a no-op — it must not resurrect engines or enqueue
     /// onto a closing socket.
@@ -108,12 +124,16 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         lock.withLock {
             micEngine = mic
             resolvedMicName = mic.deviceName
+            engineInstalledAt[.mic] = Date()
         }
 
         if configuration.systemAudioEnabled {
             let system = makeSystemEngine()
             try await system.start()
-            lock.withLock { systemEngine = system }
+            lock.withLock {
+                systemEngine = system
+                engineInstalledAt[.system] = Date()
+            }
         }
 
         sleepWake.onSleep = { [weak self] in self?.handleSleep() }
@@ -162,12 +182,14 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     private func makeMicEngine() -> MicCaptureEngine {
         let engine = MicCaptureEngine(deviceID: configuration.micDeviceID)
         engine.onEvent = { [weak self] event in self?.route(event, .mic) }
+        engine.onStall = { [weak self] in self?.handleStall(stream: .mic) }
         return engine
     }
 
     private func makeSystemEngine() -> SystemAudioCaptureEngine {
         let engine = SystemAudioCaptureEngine(filter: .allApps)
         engine.onEvent = { [weak self] event in self?.route(event, .system) }
+        engine.onStall = { [weak self] in self?.handleStall(stream: .system) }
         return engine
     }
 
@@ -184,79 +206,325 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         }
     }
 
+    // MARK: - Restart coordination
+
+    /// Run an `async` body to completion synchronously on the calling thread.
+    /// Used inside `restartQueue` blocks (a background serial queue, never the
+    /// async executor) so `handleSleep` / `handleWake` / `handleStall` run
+    /// strictly one at a time on that queue without overlapping engine state.
+    ///
+    /// Only ever wraps *bounded* awaits (engine `start()`/`stop()`, event
+    /// emission). A multi-second `Task.sleep` must never run under it — that
+    /// would pin the serial `restartQueue` thread; the stall-retry backoff is
+    /// re-scheduled via `restartQueue.asyncAfter` instead.
+    private func runBlocking(_ body: @escaping @Sendable () async -> Void) {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached { await body(); done.signal() }
+        done.wait()
+    }
+
+    /// `runBlocking` variant that carries a result back to the caller via a
+    /// `Sendable` box — the body runs in a detached task, so a captured `var`
+    /// cannot be mutated directly.
+    private func runBlocking<T: Sendable>(
+        _ body: @escaping @Sendable () async -> T
+    ) -> T {
+        let box = ResultBox<T>()
+        let done = DispatchSemaphore(value: 0)
+        Task.detached { box.set(await body()); done.signal() }
+        done.wait()
+        return box.take()
+    }
+
+    /// One-shot `Sendable` carrier for `runBlocking`'s returning variant.
+    private final class ResultBox<T: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: T?
+        func set(_ v: T) { lock.withLock { value = v } }
+        func take() -> T { lock.withLock { value! } }
+    }
+
     // MARK: - Sleep / wake (R7)
 
     private func handleSleep() {
-        let skip = lock.withLock { () -> Bool in
-            if stopped || paused { return true }
-            paused = true
-            pauseWall = Date()
-            return false
-        }
-        guard !skip else { return }
+        restartQueue.async { [self] in
+            let skip = lock.withLock { () -> Bool in
+                if stopped || paused { return true }
+                paused = true
+                pauseWall = Date()
+                return false
+            }
+            guard !skip else { return }
 
-        // Mark the gap in both streams before the engines wind down.
-        micServer.enqueue(.paused)
-        if configuration.systemAudioEnabled {
-            systemServer.enqueue(.paused)
-        }
-        let (mic, system) = lock.withLock { (micEngine, systemEngine) }
-        Task {
-            mic?.stop()
-            await system?.stop()
-            await emit(RecordingPausedEvent(
-                recordingId: configuration.recordingId, reason: "sleep"))
+            // Mark the gap in both streams before the engines wind down.
+            micServer.enqueue(.paused)
+            if configuration.systemAudioEnabled {
+                systemServer.enqueue(.paused)
+            }
+            let (mic, system) = lock.withLock { (micEngine, systemEngine) }
+            runBlocking { [self] in
+                mic?.stop()
+                await system?.stop()
+                await emit(RecordingPausedEvent(
+                    recordingId: configuration.recordingId, reason: "sleep"))
+            }
         }
     }
 
     private func handleWake() {
-        let pausedAt = lock.withLock { () -> Date? in
-            guard !stopped, paused else { return nil }
-            return pauseWall
-        }
-        guard let pausedAt else { return }
-        let gap = Date().timeIntervalSince(pausedAt)
+        restartQueue.async { [self] in
+            let pausedAt = lock.withLock { () -> Date? in
+                guard !stopped, paused else { return nil }
+                return pauseWall
+            }
+            guard let pausedAt else { return }
+            let gap = Date().timeIntervalSince(pausedAt)
 
-        Task {
-            guard !lock.withLock({ stopped }) else { return }
-            // Fresh engine instances — the capture sessions were torn down on
-            // sleep — feeding the same socket servers.
-            let mic = makeMicEngine()
-            try? mic.start()
-            var system: SystemAudioCaptureEngine?
-            if configuration.systemAudioEnabled {
-                let engine = makeSystemEngine()
-                try? await engine.start()
-                system = engine
+            runBlocking { [self] in
+                guard !lock.withLock({ stopped }) else { return }
+                // Fresh engine instances — the capture sessions were torn down
+                // on sleep — feeding the same socket servers.
+                let mic = makeMicEngine()
+                try? mic.start()
+                var system: SystemAudioCaptureEngine?
+                if configuration.systemAudioEnabled {
+                    let engine = makeSystemEngine()
+                    try? await engine.start()
+                    system = engine
+                }
+                // Teardown may have begun while the engines were starting — if
+                // so, stop the just-created engines instead of installing them.
+                let abort = lock.withLock { () -> Bool in
+                    guard !stopped else { return true }
+                    micEngine = mic
+                    systemEngine = system
+                    let now = Date()
+                    engineInstalledAt[.mic] = now
+                    if system != nil { engineInstalledAt[.system] = now }
+                    return false
+                }
+                if abort {
+                    mic.stop()
+                    await system?.stop()
+                    return
+                }
+                // Announce the resume on both sockets *before* un-gating
+                // frames, so the engine never sees post-resume audio ahead of
+                // its resume marker; `paused` still gates `route()` until the
+                // line below.
+                let gapEvent = AudioStreamEvent.resumed(gap: .seconds(gap))
+                micServer.enqueue(gapEvent)
+                if configuration.systemAudioEnabled {
+                    systemServer.enqueue(gapEvent)
+                }
+                lock.withLock {
+                    paused = false
+                    pauseWall = nil
+                }
+                await emit(RecordingResumedEvent(
+                    recordingId: configuration.recordingId, reason: "sleep"))
             }
-            // Teardown may have begun while the engines were starting — if so,
-            // stop the just-created engines instead of installing them.
-            let abort = lock.withLock { () -> Bool in
-                guard !stopped else { return true }
-                micEngine = mic
-                systemEngine = system
-                return false
-            }
-            if abort {
-                mic.stop()
-                await system?.stop()
-                return
-            }
-            // Announce the resume on both sockets *before* un-gating frames,
-            // so the engine never sees post-resume audio ahead of its resume
-            // marker; `paused` still gates `route()` until the line below.
-            let gapEvent = AudioStreamEvent.resumed(gap: .seconds(gap))
-            micServer.enqueue(gapEvent)
-            if configuration.systemAudioEnabled {
-                systemServer.enqueue(gapEvent)
-            }
-            lock.withLock {
-                paused = false
-                pauseWall = nil
-            }
-            await emit(RecordingResumedEvent(
-                recordingId: configuration.recordingId, reason: "sleep"))
         }
+    }
+
+    // MARK: - Stall recovery
+
+    /// Capped exponential backoff between failed restart attempts: 1s → 2s →
+    /// 4s → 8s, then clamped at 10s indefinitely.
+    private static let initialBackoff: Duration = .seconds(1)
+    private static let backoffCap: Duration = .seconds(10)
+
+    /// One stream's capture watchdog fired: no frame within its threshold,
+    /// with no error and no end-of-stream. Restart that one stream in place —
+    /// the same stop-engine / build-fresh-engine / resume operation as a
+    /// sleep+wake, scoped to a single stream — while the other stream and the
+    /// rest of the recording keep running.
+    ///
+    /// Serialized with `handleSleep` / `handleWake` on `restartQueue`. The
+    /// retry backoff does NOT block the serial queue: a failed attempt
+    /// re-schedules the next one with `restartQueue.asyncAfter` and returns,
+    /// so each queued block is short and `handleSleep`/`handleWake` can
+    /// interleave between attempts.
+    private func handleStall(stream: Stream) {
+        let stallWall = Date()
+        restartQueue.async { [self] in
+            // Bail if teardown began, a sleep is in progress (the wake rebuilds
+            // both engines anyway), or this stream is already being restarted.
+            //
+            // Also bail if this stream's engine was installed more recently
+            // than its stall threshold ago: the callback was dispatched before
+            // an engine swap (e.g. across sleep/wake) and now targets a fresh,
+            // healthy engine that has had no chance to genuinely stall.
+            let proceed = lock.withLock { () -> Bool in
+                guard !stopped, !paused, !restartingStreams.contains(stream)
+                else { return false }
+                if let installedAt = engineInstalledAt[stream],
+                   Date().timeIntervalSince(installedAt)
+                       < secondsValue(stallThreshold(for: stream)) {
+                    return false
+                }
+                restartingStreams.insert(stream)
+                return true
+            }
+            guard proceed else { return }
+
+            log(stream == .system
+                ? "system audio stream stalled — restarting"
+                : "microphone stream stalled — restarting")
+
+            // Mark the gap on this stream's socket only.
+            server(for: stream).enqueue(.paused)
+
+            // Emit the paused event first so each `recording_resumed` is
+            // preceded by its `recording_paused` (Hard Invariant #8), then
+            // stop the stalled engine. These are bounded awaits, so `runBlocking`
+            // is safe here — no multi-second sleep runs under it.
+            runBlocking { [self] in
+                await emit(RecordingPausedEvent(
+                    recordingId: configuration.recordingId,
+                    reason: "stall_recovery"))
+                switch stream {
+                case .system:
+                    let engine = lock.withLock { systemEngine }
+                    await engine?.stop()
+                case .mic:
+                    let engine = lock.withLock { micEngine }
+                    engine?.stop()
+                }
+            }
+
+            // First restart attempt; subsequent ones are re-scheduled via
+            // `asyncAfter` so the serial queue is free during every backoff.
+            attemptStallRestart(
+                stream: stream, stallWall: stallWall,
+                backoff: DeviceCaptureSource.initialBackoff)
+        }
+    }
+
+    /// A failed restart attempt, reduced to a path-free error *category* (the
+    /// error's Swift type name) so nothing path-bearing crosses into the log.
+    private struct StartFailure: Sendable {
+        let category: String
+    }
+
+    /// One restart attempt for a stalled stream. Runs on `restartQueue`. On
+    /// success, installs the fresh engine, resumes, and clears the
+    /// `restartingStreams` membership. On failure, re-schedules itself on
+    /// `restartQueue` after `backoff` (the queue stays free meanwhile) with
+    /// the next, doubled backoff. The `restartingStreams` membership is held
+    /// across the whole sequence and cleared only when it ends.
+    private func attemptStallRestart(
+        stream: Stream, stallWall: Date, backoff: Duration
+    ) {
+        // `stopCapture` may have latched `stopped` between attempts — abandon
+        // the sequence and release the membership if so.
+        if lock.withLock({ stopped }) {
+            lock.withLock { _ = restartingStreams.remove(stream) }
+            return
+        }
+
+        let startError: StartFailure? = runBlocking { [self] in
+            do {
+                switch stream {
+                case .system:
+                    let fresh = makeSystemEngine()
+                    try await fresh.start()
+                    // Re-check `stopped` before installing — teardown may have
+                    // begun while `start()` was in flight.
+                    let abort = lock.withLock { () -> Bool in
+                        guard !stopped else { return true }
+                        systemEngine = fresh
+                        engineInstalledAt[.system] = Date()
+                        return false
+                    }
+                    if abort { await fresh.stop() }
+                case .mic:
+                    let fresh = makeMicEngine()
+                    try fresh.start()
+                    let abort = lock.withLock { () -> Bool in
+                        guard !stopped else { return true }
+                        micEngine = fresh
+                        resolvedMicName = fresh.deviceName
+                        engineInstalledAt[.mic] = Date()
+                        return false
+                    }
+                    if abort { fresh.stop() }
+                }
+                return nil
+            } catch {
+                // Carry only the error's *type name* back across the task
+                // boundary — never the full description, which can render a
+                // filesystem path (Hard Invariant #7 / R84).
+                return StartFailure(category: "\(type(of: error))")
+            }
+        }
+
+        // Teardown won the race during `start()` — drop the membership and stop.
+        if lock.withLock({ stopped }) {
+            lock.withLock { _ = restartingStreams.remove(stream) }
+            return
+        }
+
+        if let startError {
+            // The error category was redacted to a bare type name at the
+            // task boundary above — no filesystem path can reach this log.
+            log("\(stream == .system ? "system audio" : "microphone")"
+                + " restart failed (\(startError.category))"
+                + " — retrying in \(backoff)")
+            let next = min(backoff * 2, DeviceCaptureSource.backoffCap)
+            restartQueue.asyncAfter(
+                deadline: .now() + secondsValue(backoff)
+            ) { [self] in
+                attemptStallRestart(
+                    stream: stream, stallWall: stallWall, backoff: next)
+            }
+            return
+        }
+
+        // Started and installed. Announce the resume on this stream's socket
+        // and emit the lifecycle event; the gap is wall-clock elapsed since
+        // the watchdog fired. Release the membership last.
+        let gap = Date().timeIntervalSince(stallWall)
+        server(for: stream).enqueue(.resumed(gap: .seconds(gap)))
+        runBlocking { [self] in
+            await emit(RecordingResumedEvent(
+                recordingId: configuration.recordingId,
+                reason: "stall_recovery"))
+        }
+        log(stream == .system
+            ? "system audio stream recovered"
+            : "microphone stream recovered")
+        lock.withLock { _ = restartingStreams.remove(stream) }
+    }
+
+    private func server(for stream: Stream) -> CaptureSocketServer {
+        switch stream {
+        case .system: return systemServer
+        case .mic: return micServer
+        }
+    }
+
+    /// The stall threshold of the engine type backing `stream` — used to size
+    /// the stale-callback guard in `handleStall`.
+    private func stallThreshold(for stream: Stream) -> Duration {
+        switch stream {
+        case .system: return SystemAudioCaptureEngine.stallThreshold
+        case .mic: return MicCaptureEngine.stallThreshold
+        }
+    }
+
+    /// A `Duration` as a `TimeInterval` (seconds, fractional) for comparison
+    /// against `Date` arithmetic.
+    private func secondsValue(_ duration: Duration) -> TimeInterval {
+        let c = duration.components
+        return TimeInterval(c.seconds)
+            + TimeInterval(c.attoseconds) / 1_000_000_000_000_000_000
+    }
+
+    /// Operational diagnostic to stderr — the daemon's log channel.
+    private func log(_ message: String) {
+        FileHandle.standardError.write(
+            Data("pulsartrace-capture: \(message)\n".utf8))
     }
 
     private func emit<P: EventPayload>(_ payload: P) async {

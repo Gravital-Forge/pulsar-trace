@@ -33,23 +33,54 @@ final class LiveRunner: Sendable {
         case resumed(StreamTag, Duration)
         /// A stream ended; carries which one.
         case ended(StreamTag)
+        /// A periodic heartbeat from the ticker child task (~1 Hz). Carries no
+        /// stream — it drives the per-stream silence watchdog (Fix A) and keeps
+        /// the run loop alive even when both capture sockets go silently quiet.
+        case tick
     }
+
+    /// A stream that goes silent for longer than this — delivering neither
+    /// frames nor `.ended` — has its gap annotated once in `live.md` (Fix A).
+    ///
+    /// Chosen comfortably longer than the capture daemon's own 6 s
+    /// stall-restart so the daemon's auto-restart is given a chance to recover
+    /// the socket before the live pass annotates a visible gap. Tests inject a
+    /// far shorter value via the `LiveRunner` initializer.
+    static let defaultSilenceGapThreshold: Duration = .seconds(20)
+
+    /// The ticker child task's heartbeat interval.
+    static let defaultTickInterval: Duration = .seconds(1)
 
     private let configuration: StreamingPipeline.Configuration
     private let writer: LiveMarkdownWriter
     private let logger: Logger
     private let library: SpeakerLibrary?
+    /// Test hook: invoked with `diarBuffer.count` after every system frame
+    /// (Fix C coverage — assert the buffer stays bounded over a long stream).
+    /// `nil` in production.
+    private let diarBufferProbe: (@Sendable (Int) -> Void)?
+    /// Per-stream silence-watchdog threshold (Fix A). Defaults to the
+    /// production `defaultSilenceGapThreshold`; tests inject a short value.
+    private let silenceGapThreshold: Duration
+    /// Ticker heartbeat interval. Defaults to `defaultTickInterval`.
+    private let tickInterval: Duration
 
     init(
         configuration: StreamingPipeline.Configuration,
         writer: LiveMarkdownWriter,
         logger: Logger,
-        library: SpeakerLibrary?
+        library: SpeakerLibrary?,
+        diarBufferProbe: (@Sendable (Int) -> Void)? = nil,
+        silenceGapThreshold: Duration = LiveRunner.defaultSilenceGapThreshold,
+        tickInterval: Duration = LiveRunner.defaultTickInterval
     ) {
         self.configuration = configuration
         self.writer = writer
         self.logger = logger
         self.library = library
+        self.diarBufferProbe = diarBufferProbe
+        self.silenceGapThreshold = silenceGapThreshold
+        self.tickInterval = tickInterval
     }
 
     func run(
@@ -57,7 +88,7 @@ final class LiveRunner: Sendable {
         micTranscriber: WhisperTranscriber?,
         systemSource: some AudioFrameSource,
         micSource: (any AudioFrameSource)?,
-        liveDiarizer: LiveDiarizer?
+        liveDiarizer: (any LiveDiarizing)?
     ) async throws -> StreamingPipeline.Output {
 
         let sink = LiveSink(
@@ -71,19 +102,33 @@ final class LiveRunner: Sendable {
         let (merged, continuation) = AsyncStream.makeStream(of: MergedItem.self)
         let startWall = ContinuousClock.now
 
+        // The pumps and the ticker run as siblings, but they have different
+        // lifetimes: the pumps drive `continuation.finish()`, the ticker must
+        // *not*. So the ticker runs in its own inner group that is cancelled
+        // the instant both pumps return — `continuation.finish()` is then
+        // reached immediately and a normal end is never delayed by the ~1 s
+        // tick cadence (Fix A).
+        let pumpCount = micSource != nil ? 2 : 1
         let readers = Task { [systemSource] in
             await withTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    await Self.pump(.system, source: systemSource,
-                                    into: continuation)
-                }
-                if let micSource {
-                    group.addTask {
-                        await Self.pump(.mic, source: micSource,
+                await withTaskGroup(of: Void.self) { inner in
+                    inner.addTask { [self] in
+                        await self.ticker(into: continuation)
+                    }
+                    group.addTask { [continuation] in
+                        await Self.pump(.system, source: systemSource,
                                         into: continuation)
                     }
+                    if let micSource {
+                        group.addTask { [continuation] in
+                            await Self.pump(.mic, source: micSource,
+                                            into: continuation)
+                        }
+                    }
+                    // Wait for exactly the pumps, then cancel the ticker.
+                    for _ in 0..<pumpCount { _ = await group.next() }
+                    inner.cancelAll()
                 }
-                await group.waitForAll()
                 continuation.finish()
             }
         }
@@ -100,24 +145,96 @@ final class LiveRunner: Sendable {
                 logger: logger)
         }
 
-        // The full system + mic audio, captured so the live pass leaves a
-        // recording folder a later `pulsartrace refine` can consume. The
-        // system buffer doubles as the live-diarizer's window source.
+        // The full system + mic audio is streamed straight to disk as frames
+        // arrive (see `systemWAVWriter` / `micWAVWriter` below) so a crash mid
+        // recording still leaves a recording folder a later `pulsartrace
+        // refine` can consume. `diarBuffer` is kept only as the live-diarizer's
+        // window source — it no longer backs the WAV.
+        //
+        // Fix C: `diarBuffer` is **bounded**. The diarizer only ever slices its
+        // most recent `diarWindow` samples, so after each window is dispatched
+        // the buffer is trimmed from the front to at most `2 * diarWindow`
+        // (a small margin past what the next window needs). `diarBufferBase` is
+        // the recording-absolute sample index of `diarBuffer[0]` — mirroring
+        // `StreamingTranscriber.bufferBaseSample` — so `windowStart` stays
+        // recording-absolute-correct after a trim.
         var diarBuffer: [Float] = []
-        var micBuffer: [Float] = []
+        var diarBufferBase = 0
         let diarStep = durationToSamples(configuration.diarizationStep)
         let diarWindow = durationToSamples(configuration.diarizationWindow)
+        /// Recording-absolute sample count at which the last diarization
+        /// window was dispatched (paces the step cadence; survives trims).
         var lastDiarEnd = 0
         let diarState = DiarState()
+        /// Bounds outstanding live-diarization work to a single window in
+        /// flight (Fix B) and lets the run hand off any in-flight task at exit.
+        let diarGate = DiarGate()
 
         var systemDone = false
         var micDone = !hasMic
+
+        // Fix A — per-stream silence watchdog state. Each stream is watched
+        // **independently**: `lastActivity` records the continuous-clock instant
+        // the stream last delivered a frame OR a pause/resume marker; on a
+        // `.tick` a stream silent past the threshold appends its own gap note
+        // exactly once (`gapAnnotated`), and when frames resume on that stream
+        // it appends its own resumed note and clears its own flag. There is no
+        // cross-stream coupling: if both streams stall at once they each emit a
+        // note — `live.md` is append-only and a duplicate cosmetic note is
+        // harmless. A `.paused` stream is exempt — its quiet is expected.
+        var lastSystemActivity = startWall
+        var lastMicActivity = startWall
+        var systemGapAnnotated = false
+        var micGapAnnotated = false
+        var systemPaused = false
+        var micPaused = false
+
+        // --- incremental WAV capture ----------------------------------------
+        // Open the recording-folder WAVs up front and stream every frame to
+        // them. The header is re-patched after each append, so the file on
+        // disk is always a valid WAV reflecting what was captured — even if the
+        // engine is killed before the success path below. The system WAV is
+        // always written; the mic WAV only when a mic stream exists.
+        let systemWAV = configuration.recordingFolder
+            .appendingPathComponent(RecordingFolder.FileName.audioSystem)
+        let micWAV = configuration.recordingFolder
+            .appendingPathComponent(RecordingFolder.FileName.audioMic)
+        let systemWAVWriter = try StreamingWAVWriter(url: systemWAV)
+        let micWAVWriter = micSource != nil
+            ? try StreamingWAVWriter(url: micWAV)
+            : nil
+
+        // Finalize both WAVs on *every* exit from `run` — the normal end, a
+        // thrown error, or task cancellation. `finalize()` is idempotent, so a
+        // `defer` is the simplest guarantee that the recording folder always
+        // keeps a valid, refine-able capture; the whole point of streaming the
+        // capture to disk.
+        defer {
+            finalizeWAV(systemWAVWriter, stream: "system")
+            finalizeWAV(micWAVWriter, stream: "mic")
+        }
+
+        // Recording-absolute sample count fed to the diarizer so far — the
+        // diarizer's window is sliced from this, not the trimmed `diarBuffer`.
+        var diarTotalSamples: Int { diarBufferBase + diarBuffer.count }
 
         // --- the run loop ---------------------------------------------------
         for await item in merged {
             let elapsed = ContinuousClock.now - startWall
             switch item {
             case .frame(.system, let frame):
+                let systemFrameNow = ContinuousClock.now
+                if systemGapAnnotated {
+                    // Frames are flowing again after an annotated silence gap
+                    // on *this* stream. Append a resumed-style note (append-only
+                    // — live.md is never rewritten) carrying the real measured
+                    // gap, then re-arm the watchdog for this stream.
+                    systemGapAnnotated = false
+                    await sink.appendGap(
+                        .resumed(systemFrameNow - lastSystemActivity))
+                }
+                lastSystemActivity = systemFrameNow
+                appendToWAV(systemWAVWriter, frame.samples, stream: "system")
                 for utt in systemStreamer.ingest(
                     frame: frame, realTimeElapsed: elapsed) {
                     let label = await resolveSystemLabel(
@@ -125,22 +242,63 @@ final class LiveRunner: Sendable {
                     await sink.appendSystemUtterance(
                         utt, label: label, realElapsed: elapsed)
                 }
-                // Feed a diarization window on cadence.
+                // Feed a diarization window on cadence — *off* the run loop's
+                // critical path (Fix B). The window samples + windowStart are
+                // captured as locals and a detached task runs `diarizeWindow`
+                // then `diarState.merge`; the run loop never `await`s the
+                // diarizer subprocess. At most one window is in flight — if the
+                // previous one has not finished, this window is skipped (live
+                // diarization is best-effort/provisional).
                 diarBuffer.append(contentsOf: frame.samples)
                 if let liveDiarizer,
-                   diarBuffer.count - lastDiarEnd >= diarStep,
-                   diarBuffer.count >= diarWindow {
-                    let lo = max(0, diarBuffer.count - diarWindow)
-                    let windowSamples = Array(diarBuffer[lo..<diarBuffer.count])
-                    let windowStart = samplesToDuration(lo)
-                    lastDiarEnd = diarBuffer.count
-                    let spans = await liveDiarizer.diarizeWindow(
-                        samples: windowSamples, windowStart: windowStart)
-                    await diarState.merge(spans)
+                   diarTotalSamples - lastDiarEnd >= diarStep,
+                   diarTotalSamples >= diarWindow {
+                    let loAbs = max(0, diarTotalSamples - diarWindow)
+                    let lo = loAbs - diarBufferBase
+                    lastDiarEnd = diarTotalSamples
+                    if lo >= 0, lo <= diarBuffer.count,
+                       await diarGate.tryAcquire() {
+                        // Copy the window out of `diarBuffer` up front: the
+                        // detached task owns this independent `[Float]`, so the
+                        // run loop's concurrent front-trim of `diarBuffer`
+                        // below cannot mutate the in-flight task's samples.
+                        let windowSamples = Array(diarBuffer[lo...])
+                        let windowStart = samplesToDuration(loAbs)
+                        Task.detached {
+                            let spans = await liveDiarizer.diarizeWindow(
+                                samples: windowSamples,
+                                windowStart: windowStart)
+                            await diarState.merge(spans)
+                            await diarGate.release()
+                        }
+                    }
                 }
+                // Fix C: trim `diarBuffer` to its recent tail on *every* system
+                // frame — not only on a diarization trigger — so the buffer is
+                // held tight at `2 * diarWindow` (it never grows by a whole
+                // step between triggers). The diarizer only ever needs the last
+                // `diarWindow` samples; `2 * diarWindow` is the safety margin.
+                // `diarBufferBase` advances by exactly what is dropped, so the
+                // recording-absolute `windowStart`/`lo` above stay correct.
+                let diarKeep = 2 * diarWindow
+                if diarBuffer.count > diarKeep {
+                    let trim = diarBuffer.count - diarKeep
+                    diarBuffer.removeFirst(trim)
+                    diarBufferBase += trim
+                }
+                diarBufferProbe?(diarBuffer.count)
 
             case .frame(.mic, let frame):
-                micBuffer.append(contentsOf: frame.samples)
+                let micFrameNow = ContinuousClock.now
+                if micGapAnnotated {
+                    // Frames are flowing again on the mic stream after its own
+                    // annotated silence gap — append a resumed note carrying the
+                    // real measured gap and re-arm this stream's watchdog.
+                    micGapAnnotated = false
+                    await sink.appendGap(.resumed(micFrameNow - lastMicActivity))
+                }
+                lastMicActivity = micFrameNow
+                appendToWAV(micWAVWriter, frame.samples, stream: "mic")
                 if let micStreamer {
                     for utt in micStreamer.ingest(
                         frame: frame, realTimeElapsed: elapsed) {
@@ -152,15 +310,49 @@ final class LiveRunner: Sendable {
                 // The capture daemon paused (sleep / device change). Annotate
                 // the gap in live.md once — driven off the system stream; the
                 // mic stream's paired marker is ignored to avoid a double note.
+                systemPaused = true
+                lastSystemActivity = ContinuousClock.now
                 await sink.appendGap(.paused)
 
             case .resumed(.system, let gap):
+                systemPaused = false
+                lastSystemActivity = ContinuousClock.now
                 await sink.appendGap(.resumed(gap))
 
-            case .paused(.mic), .resumed(.mic, _):
+            case .paused(.mic):
                 // The mic stream carries the same pause/resume markers; the
-                // gap is annotated once, off the system stream above.
-                break
+                // gap is annotated once, off the system stream above. The
+                // marker still counts as activity for the mic watchdog.
+                micPaused = true
+                lastMicActivity = ContinuousClock.now
+
+            case .resumed(.mic, _):
+                micPaused = false
+                lastMicActivity = ContinuousClock.now
+
+            case .tick:
+                // Fix A — per-stream silence watchdog. The tick keeps the run
+                // loop alive when both capture sockets stall silently (a
+                // wedged socket delivers neither frames nor `.ended`). A
+                // silence gap is purely an annotation: it NEVER sets
+                // `systemDone`/`micDone` and NEVER breaks the loop.
+                //
+                // Each stream is watched independently — when it goes silent
+                // past the threshold it appends its own `_(recording paused)_`
+                // note exactly once. If both streams stall at the same time
+                // two notes are emitted; that is acceptable (append-only,
+                // cosmetic) and keeps the logic per-stream and clear.
+                let now = ContinuousClock.now
+                if !systemDone, !systemPaused, !systemGapAnnotated,
+                   now - lastSystemActivity >= silenceGapThreshold {
+                    systemGapAnnotated = true
+                    await sink.appendGap(.paused)
+                }
+                if hasMic, !micDone, !micPaused, !micGapAnnotated,
+                   now - lastMicActivity >= silenceGapThreshold {
+                    micGapAnnotated = true
+                    await sink.appendGap(.paused)
+                }
 
             case .ended(.system):
                 let elapsedNow = ContinuousClock.now - startWall
@@ -183,27 +375,20 @@ final class LiveRunner: Sendable {
                 }
                 micDone = true
             }
+            // The exit condition is *exactly* "both streams `.ended`". A
+            // silence gap never reaches here as a done flag.
             if systemDone && micDone { break }
         }
 
+        // Fix B: hand off any in-flight diarization task before returning —
+        // bounded, so a wedged diarizer cannot make the run hang on exit.
+        await diarGate.drain(timeout: .seconds(2))
         _ = await readers.value
         // Propagate the language whisper actually detected on the system
         // stream so Output.language reflects reality. Falls back to "en" only
         // when no window was ever decoded (a silent / empty recording).
         await sink.noteSystemLanguage(
             systemStreamer.detectedLanguage ?? "en")
-
-        // Persist the captured audio into the recording folder so a later
-        // `pulsartrace refine` of this folder has a system (+ mic) WAV to work
-        // from — the canonical 16 kHz mono Int16 storage format (R54e).
-        let systemWAV = configuration.recordingFolder
-            .appendingPathComponent(RecordingFolder.FileName.audioSystem)
-        try? WAVWriter.write(samples: diarBuffer, to: systemWAV)
-        if !micBuffer.isEmpty {
-            let micWAV = configuration.recordingFolder
-                .appendingPathComponent(RecordingFolder.FileName.audioMic)
-            try? WAVWriter.write(samples: micBuffer, to: micWAV)
-        }
 
         let stats = await sink.stats()
         return StreamingPipeline.Output(
@@ -247,6 +432,24 @@ final class LiveRunner: Sendable {
         continuation.yield(.ended(tag))
     }
 
+    /// Yield a `.tick` into the merged stream roughly once per `tickInterval`
+    /// until cancelled (Fix A). The tick is what keeps the run loop alive when
+    /// a capture socket stalls silently — it drives the per-stream silence
+    /// watchdog. It is cancelled the moment both pumps finish, so it never
+    /// delays a normal end and `continuation.finish()` is always reached.
+    private func ticker(
+        into continuation: AsyncStream<MergedItem>.Continuation
+    ) async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: tickInterval)
+            } catch {
+                break   // cancelled
+            }
+            continuation.yield(.tick)
+        }
+    }
+
     /// Resolve the provisional speaker label for a committed system utterance:
     /// the live diarizer's stitched key, optionally upgraded to a library name
     /// (read-only lookup, R18). Always carries the `(provisional)` suffix (R16).
@@ -256,7 +459,7 @@ final class LiveRunner: Sendable {
     func resolveSystemLabel(
         for utterance: CommittedUtterance,
         diarState: DiarState,
-        diarizer: LiveDiarizer?
+        diarizer: (any LiveDiarizing)?
     ) async -> String {
         let key = await diarState.dominantKey(
             start: utterance.start, end: utterance.end) ?? "Them"
@@ -283,6 +486,35 @@ final class LiveRunner: Sendable {
 
     // MARK: - Helpers
 
+    /// Append a frame's samples to a streaming WAV writer. A write failure is
+    /// non-fatal — the live pass must keep transcribing — but it is logged as
+    /// an error so a lost-capture problem is visible (no silent `try?`).
+    private func appendToWAV(
+        _ writer: StreamingWAVWriter?, _ samples: [Float], stream: String
+    ) {
+        guard let writer else { return }
+        do {
+            try writer.append(samples)
+        } catch {
+            logger.error(
+                "streaming WAV append failed",
+                metadata: ["stream": "\(stream)", "error": "\(error)"])
+        }
+    }
+
+    /// Finalize a streaming WAV writer (idempotent). A failure here only means
+    /// the last header patch / close did not complete — logged, never fatal.
+    private func finalizeWAV(_ writer: StreamingWAVWriter?, stream: String) {
+        guard let writer else { return }
+        do {
+            try writer.finalize()
+        } catch {
+            logger.error(
+                "streaming WAV finalize failed",
+                metadata: ["stream": "\(stream)", "error": "\(error)"])
+        }
+    }
+
     private func durationToSamples(_ d: Duration) -> Int {
         let ms = Int(d.components.seconds) * 1000
             + Int(d.components.attoseconds / 1_000_000_000_000_000)
@@ -290,6 +522,46 @@ final class LiveRunner: Sendable {
     }
     private func samplesToDuration(_ count: Int) -> Duration {
         .milliseconds(count * 1000 / AudioFormat.sampleRate)
+    }
+}
+
+/// Bounds the outstanding live-diarization work to a single window in flight
+/// (Fix B).
+///
+/// The run loop dispatches each due diarization window to a detached task so a
+/// wedged diarizer subprocess cannot stall transcription or `live.md`. Without
+/// a bound, a slow diarizer would let detached tasks (and their captured window
+/// samples) pile up unboundedly. `DiarGate` is the bound: `tryAcquire()`
+/// succeeds only when no window is in flight; the detached task `release()`s
+/// when it finishes. A window that cannot acquire is simply skipped — live
+/// diarization is best-effort/provisional and the post-pass is the source of
+/// truth.
+actor DiarGate {
+    private var inFlight = false
+
+    /// Take the single in-flight slot. `true` → caller owns it and must
+    /// eventually `release()`; `false` → a window is already in flight, skip.
+    func tryAcquire() -> Bool {
+        guard !inFlight else { return false }
+        inFlight = true
+        return true
+    }
+
+    /// Release the in-flight slot (called by the detached diar task on finish).
+    func release() { inFlight = false }
+
+    /// At end of run, wait — bounded by `timeout` — for any in-flight window to
+    /// finish so a detached diar task does not outlive the run. A wedged
+    /// diarizer simply times out here; the run still returns.
+    ///
+    /// The poll loop is cancellation-aware: `Task.isCancelled` is part of the
+    /// loop condition, so a cancelled task exits promptly instead of swallowing
+    /// the `CancellationError` from `Task.sleep` and spinning to the deadline.
+    func drain(timeout: Duration) async {
+        let deadline = ContinuousClock.now + timeout
+        while inFlight && ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
     }
 }
 

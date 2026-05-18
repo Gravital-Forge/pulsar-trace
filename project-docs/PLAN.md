@@ -280,6 +280,55 @@ scope:
 
 ---
 
+## Live-recording resilience fixes  — pending commit
+
+Fixes from a dogfooding incident: a real ~18-minute recording where the
+ScreenCaptureKit system-audio stream silently stalled, then ~2 min later the
+mic stream, leaving the engine wedged (alive, not crashed — no `.ips` crash
+report) with the menubar still showing "recording". On Stop the refine failed:
+the recording folder held only `live.md`, no `audio-system.wav`. Root cause:
+the live pass buffered the whole recording in RAM and wrote the WAV only at
+the end of a clean run-loop exit, so the wedge-then-force-kill lost 100% of the
+audio. Not new epic scope.
+
+- [x] Crash-safe incremental WAV (`StreamingWAVWriter`): `LiveRunner` streams
+      `audio-system.wav`/`audio-mic.wav` to disk frame-by-frame, re-patching
+      the RIFF header so the on-disk file is always a valid, refine-able WAV
+      (≤1s lost on a hard kill). Replaces the in-RAM `diarBuffer`/`micBuffer`
+      end-of-run dump; `micBuffer` removed, `diarBuffer` kept only as the live
+      diarizer's window source and now bounded.
+- [x] Capture-daemon stall detection + auto-restart: a per-engine
+      `FrameWatchdog` fires after no audio for 6s (system) / 4s (mic);
+      `DeviceCaptureSource.handleStall(stream:)` rebuilds the stalled capture
+      engine — mirroring the existing sleep/wake recovery — with capped
+      exponential-backoff retry re-scheduled off the serial restart queue.
+      Emits `recording_paused`/`recording_resumed` with `reason:
+      "stall_recovery"`; the socket stays open, so the engine just sees a
+      pause/resume pair.
+- [x] Engine run-loop resilience: a periodic `.tick` drives a per-stream
+      silence watchdog (20s) that annotates a gap in `live.md` without ever
+      wedging or prematurely ending the loop — it exits only on a real socket
+      EOF. The live diarizer is moved off the run-loop critical path (a
+      detached task bounded to one window in flight by a `DiarGate` actor), so
+      a stuck diarizer subprocess can no longer stall transcription / WAV /
+      `live.md`.
+- [x] Tests: Unit (`StreamingWAVWriter` crash-safety, `DiarGate`); Capture
+      (`FrameWatchdog`, stall thresholds, retry backoff, stale-callback guard
+      — all non-device); Pipeline (`LiveRunnerResilience` — stalled stream
+      does not wedge, append-only gap, hung-diarizer isolation, bounded
+      `diarBuffer`). Unit 236, Capture 30 green; Pipeline green bar the two
+      pre-existing concurrent-whisper snapshot flakes (`returningSpeakerAuto-
+      Labelled`, streaming `live.md` body — D8; both pass in isolation).
+- New DECISIONS: D32 (crash-safe incremental WAV), D33 (capture-stall
+  detection + auto-restart reusing the pause/resume mechanism).
+- KNOWN FOLLOW-UP (tracked, deferred): (a) root-cause why the ScreenCaptureKit
+  system-audio stream stalls in the first place; (b) live-diarization windows
+  fail with `nan` embeddings on near-silent / too-short windows (`Mean of
+  empty slice`) — they should yield empty results, not a hard per-window
+  error.
+
+---
+
 ## Cross-cutting (every epic)
 - Tests ship with code. Determinism: seeded RNG, whisper temp 0, pinned hashes.
 - `docs/file-format.md` and `docs/events-schema.md` kept current.

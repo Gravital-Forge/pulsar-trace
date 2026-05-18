@@ -30,8 +30,17 @@ final class MicCaptureEngine: NSObject,
         }
     }
 
+    /// Max silence (no delivered frame) before the mic is treated as silently
+    /// stalled. A live `AVCaptureSession` delivers buffers continuously even
+    /// from a muted mic, so any real gap this long is a stall; 4 s clears
+    /// normal scheduling jitter while reacting faster than system audio.
+    static let stallThreshold: Duration = .seconds(4)
+
     /// Frame sink — set before `start()`. Invoked on the capture delivery queue.
     var onEvent: (@Sendable (AudioStreamEvent) -> Void)?
+    /// Reports that the mic went silent — no frame within `stallThreshold` —
+    /// with no error. Invoked once on the watchdog's private queue.
+    var onStall: (@Sendable () -> Void)?
 
     /// Display name of the microphone resolved by `start()`; `none` until then.
     private(set) var deviceName = "none"
@@ -39,6 +48,9 @@ final class MicCaptureEngine: NSObject,
     private let requestedDeviceID: String?
     private let session = AVCaptureSession()
     private let deliveryQueue = DispatchQueue(label: "com.pulsartrace.capture.mic")
+    private let watchdog = FrameWatchdog(
+        threshold: MicCaptureEngine.stallThreshold,
+        label: "com.pulsartrace.capture.mic.watchdog")
 
     private let lock = NSLock()
     private let converter = SampleBufferConverter()
@@ -85,10 +97,15 @@ final class MicCaptureEngine: NSObject,
 
         lock.withLock { running = true }
         session.startRunning()
+        watchdog.onStall = onStall
+        watchdog.arm()
     }
 
     /// Stop running and emit any zero-padded final partial frame.
     func stop() {
+        // Disarm first — drains the watchdog queue so it cannot fire (and
+        // request a restart) after `stop()` returns.
+        watchdog.disarm()
         lock.withLock { running = false }
         if session.isRunning { session.stopRunning() }
         if let tail = lock.withLock({ converter.flush() }) {
@@ -127,6 +144,7 @@ final class MicCaptureEngine: NSObject,
     }
 
     private func emitFrame(_ samples: [Float]) {
+        watchdog.notifyFrame()
         let index = lock.withLock { () -> Int in
             defer { sequenceIndex += 1 }
             return sequenceIndex

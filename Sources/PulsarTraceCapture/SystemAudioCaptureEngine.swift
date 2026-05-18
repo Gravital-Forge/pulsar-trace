@@ -36,13 +36,26 @@ final class SystemAudioCaptureEngine: NSObject,
         }
     }
 
+    /// Max silence (no delivered frame) before the stream is treated as
+    /// silently stalled. System audio is bursty — ScreenCaptureKit delivers
+    /// silence buffers while nothing plays — so a healthy stream never goes
+    /// this quiet; 6 s comfortably clears normal jitter.
+    static let stallThreshold: Duration = .seconds(6)
+
     /// Frame sink — set before `start()`. Invoked on the capture delivery queue.
     var onEvent: (@Sendable (AudioStreamEvent) -> Void)?
     /// Reports an `SCStream` failure (e.g. TCC revoked mid-session).
     var onStreamError: (@Sendable (Error) -> Void)?
+    /// Reports that the stream went silent — no frame within `stallThreshold`
+    /// — with no error and no end-of-stream. Wired analogously to
+    /// `onStreamError`; invoked once on the watchdog's private queue.
+    var onStall: (@Sendable () -> Void)?
 
     private let filter: ContentFilter
     private let deliveryQueue = DispatchQueue(label: "com.pulsartrace.capture.system")
+    private let watchdog = FrameWatchdog(
+        threshold: SystemAudioCaptureEngine.stallThreshold,
+        label: "com.pulsartrace.capture.system.watchdog")
 
     private let lock = NSLock()
     private let converter = SampleBufferConverter()
@@ -97,10 +110,15 @@ final class SystemAudioCaptureEngine: NSObject,
             self.stream = stream
             running = true
         }
+        watchdog.onStall = onStall
+        watchdog.arm()
     }
 
     /// Stop capture and emit any zero-padded final partial frame.
     func stop() async {
+        // Disarm first — drains the watchdog queue so it cannot fire (and
+        // request a restart) after `stop()` returns.
+        watchdog.disarm()
         let stream = lock.withLock { () -> SCStream? in
             running = false
             return self.stream
@@ -130,6 +148,7 @@ final class SystemAudioCaptureEngine: NSObject,
     }
 
     private func emitFrame(_ samples: [Float]) {
+        watchdog.notifyFrame()
         let index = lock.withLock { () -> Int in
             defer { sequenceIndex += 1 }
             return sequenceIndex
