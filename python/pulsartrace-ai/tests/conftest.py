@@ -1,8 +1,8 @@
-"""Shared pytest fixtures for the PulsarTrace AI layer (Epic 3).
+"""Shared pytest fixtures for the PulsarTrace AI layer.
 
 The diarization tests run **real pyannote** on the committed audio fixtures —
 this is where pyannote correctness is verified (the Swift Pipeline tests use a
-pre-generated JSON fixture so they stay fast; see the epic plan).
+pre-generated JSON fixture so they stay fast).
 
 Loading the pyannote pipeline costs ~10-30s, so it is loaded **once** per test
 session (`session`-scoped fixture) and shared across every diarization test.
@@ -91,8 +91,8 @@ def _load_dotenv() -> None:
     """Load HF_TOKEN from the repo `.env` if it is not already in the env.
 
     pyannote community-1 is a gated model; the token is needed to download it.
-    Production (Epic 10) moves the token to the macOS Keychain — this dev-only
-    `.env` fallback is documented in DECISIONS.md D9/D10.
+    Production moves the token to the macOS Keychain — this dev-only `.env`
+    fallback is documented in DECISIONS.md D9/D10.
     """
     if os.environ.get("HF_TOKEN"):
         return

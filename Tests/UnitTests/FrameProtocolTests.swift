@@ -40,7 +40,7 @@ struct FrameProtocolTests {
         }
     }
 
-    // MARK: - Control frames (Epic 7: pause/resume)
+    // MARK: - Control frames (pause/resume)
 
     @Test("Paused control frame round-trips through length + payload")
     func pausedControlFrame() throws {

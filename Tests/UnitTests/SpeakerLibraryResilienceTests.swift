@@ -2,10 +2,10 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Coverage of the Epic 5 speaker-library resilience edge cases (PRD §15):
+/// Coverage of the speaker-library resilience edge cases (PRD §15):
 /// the last-good backup on every write, and auto-restore + warn when the
 /// database is found corrupt on open.
-@Suite("Speaker library resilience (Epic 5)")
+@Suite("Speaker library resilience")
 struct SpeakerLibraryResilienceTests {
 
     private func tempDir() -> URL {

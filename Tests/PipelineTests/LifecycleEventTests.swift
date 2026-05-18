@@ -4,8 +4,7 @@ import Logging
 @testable import PulsarTraceEngine
 
 /// Pipeline coverage that a clean process lifecycle emits the
-/// `app_started` / `app_stopped` event pair into today's events file (§8.13,
-/// Epic 1 "Done" criterion).
+/// `app_started` / `app_stopped` event pair into today's events file (§8.13).
 @Suite("Lifecycle events")
 struct LifecycleEventTests {
 

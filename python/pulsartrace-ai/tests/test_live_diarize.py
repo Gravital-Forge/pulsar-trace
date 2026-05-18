@@ -1,4 +1,4 @@
-"""Real-pyannote tests for the live (windowed) diarization layer (Epic 6).
+"""Real-pyannote tests for the live (windowed) diarization layer.
 
 `pulsartrace_ai.live_diarize` is the captive subprocess the Swift `LiveDiarizer`
 drives for the live pass. These run the actual pyannote pipeline on a window of

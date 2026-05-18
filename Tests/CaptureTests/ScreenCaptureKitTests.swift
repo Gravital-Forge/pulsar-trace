@@ -8,7 +8,7 @@ import Testing
 /// PulsarTrace captures system audio with ScreenCaptureKit, never BlackHole —
 /// BlackHole is only the loopback *test fixture*. This proves the host can open
 /// an `SCStream` with `capturesAudio` and receive audio buffers, the capability
-/// Epic 7's system-audio capture path depends on. Opt-in only; see
+/// the system-audio capture path depends on. Opt-in only; see
 /// `DeviceTestGate`.
 ///
 /// Asserts that audio buffers flow (ScreenCaptureKit delivers them continuously

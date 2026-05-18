@@ -90,7 +90,7 @@ public enum EnvironmentDoctor {
     }
 
     /// CPU architecture. Apple Silicon is the supported target; PulsarTrace
-    /// runs on Intel but transcription is much slower (PRD Epic 9/10 edge case).
+    /// runs on Intel but transcription is much slower.
     public static func architectureCheck(isAppleSilicon: Bool) -> DoctorCheck {
         if isAppleSilicon {
             return DoctorCheck(

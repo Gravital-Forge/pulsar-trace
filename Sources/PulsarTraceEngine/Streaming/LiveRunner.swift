@@ -2,7 +2,7 @@ import Foundation
 import Logging
 
 /// Drives the live pass's streams and turns committed utterances into
-/// append-only `live.md` lines (Epic 6). The execution core behind
+/// append-only `live.md` lines. The execution core behind
 /// `StreamingPipeline`.
 ///
 /// Split out of `StreamingPipeline` so the wiring (file creation, events,
@@ -24,7 +24,7 @@ final class LiveRunner: Sendable {
     /// Which physical stream a merged frame came from.
     enum StreamTag: Sendable { case system, mic }
     /// One merged-stream item: a frame plus its origin, a pause/resume marker
-    /// (Epic 7 — capture daemon sleep/wake), or an end marker.
+    /// (capture daemon sleep/wake), or an end marker.
     enum MergedItem: Sendable {
         case frame(StreamTag, AudioFrame)
         /// The stream paused (capture daemon: system sleep / device change).

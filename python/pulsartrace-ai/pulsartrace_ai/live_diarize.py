@@ -1,4 +1,4 @@
-"""Live (streaming) speaker diarization for PulsarTrace Epic 6.
+"""Live (streaming) speaker diarization for PulsarTrace.
 
 This module is the captive-subprocess entry point the Swift engine spawns for
 the **live pass** — provisional, best-effort speaker IDs for the system stream
@@ -8,9 +8,9 @@ remains the source of truth; this is the low-latency companion.
 ## Why windowed-pyannote, not diart (Open Question #1 — see DECISIONS.md D19)
 
 The PRD recommended ``diart`` for the live pass. ``diart`` cannot be installed
-here without breaking the working Epic 3 offline diarization: ``pip install
-diart`` resolves ``pyannote.audio`` **down to 3.4.0** (and ``numpy`` to
-1.26.4), but Epic 3 standardised on ``pyannote/speaker-diarization-community-1``
+here without breaking the working offline diarization: ``pip install diart``
+resolves ``pyannote.audio`` **down to 3.4.0** (and ``numpy`` to 1.26.4), but
+the offline pass standardised on ``pyannote/speaker-diarization-community-1``
 which requires pyannote.audio **4.x**. Downgrading would break offline
 diarization and the speaker-library centroids' cross-comparability (R29). The
 PRD's §16 explicitly lists *windowed-pyannote* as the viable alternative, so

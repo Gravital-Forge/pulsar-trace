@@ -3,10 +3,8 @@ import PulsarTraceEngine
 
 /// `pulsartrace` — the user-facing CLI.
 ///
-/// Epic 1 ships a subcommand-dispatch skeleton only. The real subcommands
-/// (`refine`, `record`, `speakers`, `events`, `doctor`) land in later epics;
-/// each is currently a stub that explains which epic delivers it. Wiring the
-/// dispatch and the `AppLifecycle` event pair now keeps later epics additive.
+/// Dispatches to the subcommands (`refine`, `record`, `speakers`, `events`,
+/// `doctor`) and wraps each run in the `AppLifecycle` event pair.
 @main
 struct CLIMain {
     static func main() async {

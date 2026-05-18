@@ -1,4 +1,4 @@
-"""Real-pyannote diarization tests for the PulsarTrace AI layer (Epic 3, R67).
+"""Real-pyannote diarization tests for the PulsarTrace AI layer (R67).
 
 These run the actual ``pyannote/speaker-diarization-community-1`` pipeline on
 the committed audio fixtures. They are the project's verification that the
@@ -45,7 +45,7 @@ def test_two_speakers_alternating(audio_dir, diarization_pipeline):
 
 
 def test_two_speakers_overlap_surfaces_both(audio_dir, diarization_pipeline):
-    """Overlapping speech: both attributions appear (Epic 3 edge case).
+    """Overlapping speech: both attributions appear (edge case).
 
     ``spans`` preserves overlap — there must exist a moment where two
     different speakers' spans overlap in time.
@@ -75,7 +75,7 @@ def test_two_speakers_overlap_surfaces_both(audio_dir, diarization_pipeline):
 
 
 def test_single_speaker_no_ghost_speakers(audio_dir, diarization_pipeline):
-    """Single-speaker recording → exactly 1 speaker, no ghosts (Epic 3 edge)."""
+    """Single-speaker recording → exactly 1 speaker, no ghosts (edge case)."""
     result = diarize(
         audio_dir / "single-speaker-30s.wav", pipeline=diarization_pipeline
     )
@@ -116,9 +116,9 @@ def test_embeddings_have_correct_dimension(audio_dir, diarization_pipeline):
 def test_result_carries_model_identity(audio_dir, diarization_pipeline):
     """Model identity is in the output (Open Question #3).
 
-    Epic 5's speaker library keys centroids off the model checkpoint's HF
-    commit SHA (``model_revision``) so it can refuse to match embeddings
-    across a model change; the pyannote.audio library version is carried as a
+    The speaker library keys centroids off the model checkpoint's HF commit
+    SHA (``model_revision``) so it can refuse to match embeddings across a
+    model change; the pyannote.audio library version is carried as a
     secondary identity field.
     """
     result = diarize(

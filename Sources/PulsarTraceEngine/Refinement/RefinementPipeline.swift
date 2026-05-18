@@ -1,7 +1,7 @@
 import Foundation
 import Logging
 
-/// The full offline refinement pass behind `pulsartrace refine` (Epic 4, the
+/// The full offline refinement pass behind `pulsartrace refine` (the
 /// v0.1 ship point): an audio file (or recording folder) →
 /// whisper transcription → pyannote diarization → reconciled, speaker-labelled
 /// `final.md` + `metadata.json`.
@@ -22,7 +22,7 @@ import Logging
 ///
 /// Progress (R26): a lightweight `ProgressReporter` closure receives stage
 /// updates; the CLI prints them to stderr. The menubar consuming progress over
-/// `control.sock` is Epic 8 — not built here.
+/// `control.sock` is a future addition — not built here.
 public struct RefinementPipeline: Sendable {
 
     /// A coarse pipeline stage, for progress reporting (R26).
@@ -162,12 +162,12 @@ public struct RefinementPipeline: Sendable {
     ///   - whisperModelName: model name recorded in `metadata.json` / events.
     ///   - whisperModelSHA256: pinned model hash recorded in `metadata.json`.
     ///   - recordingStart: wall-clock recording start for the `final.md` header.
-    ///   - library: the persistent speaker library (Epic 5). When supplied,
+    ///   - library: the persistent speaker library. When supplied,
     ///     post-pass clusters are reconciled against it — known speakers get
     ///     their library name, new speakers an `Unknown #N` placeholder
-    ///     (R22, R23). `nil` keeps the Epic 4 `Speaker_N` behaviour.
+    ///     (R22, R23). `nil` keeps the no-library `Speaker_N` behaviour.
     ///   - precomputedDiarization: an injected diarization result that bypasses
-    ///     the `diarizer` subprocess. The seam that lets Epic 5's reconciliation
+    ///     the `diarizer` subprocess. The seam that lets reconciliation
     ///     be tested deterministically against committed JSON fixtures without
     ///     spawning pyannote; production passes `nil`.
     ///   - progress: optional progress sink (R26).
@@ -258,13 +258,13 @@ public struct RefinementPipeline: Sendable {
         // --- Stage 3: diarize the system stream -----------------------------
         // Diarization only makes sense if whisper found speech. With no
         // utterances there is nothing to attribute, so skip pyannote entirely
-        // (Epic 4 edge case: low-quality input / no usable speech).
+        // (edge case: low-quality input / no usable speech).
         var diarization: DiarizationResult?
         if !systemTranscription.segments.isEmpty {
             progress?(.diarizing)
             if let precomputedDiarization {
                 // Test seam: a committed diarization JSON fixture stands in for
-                // the pyannote subprocess so Epic 5 reconciliation is
+                // the pyannote subprocess so reconciliation is
                 // deterministic without spawning Python.
                 diarization = precomputedDiarization
             } else {
@@ -385,9 +385,9 @@ public struct RefinementPipeline: Sendable {
         // --- Done ------------------------------------------------------------
         progress?(.done)
         let wallSeconds = clock().timeIntervalSince(startedAt)
-        // Epic 5: `speakers_new` / `speakers_matched` are now real — the
-        // reconciler reports how many clusters were new vs. library matches.
-        // Without a library (Epic 4 behaviour) every speaker counts as "new".
+        // `speakers_new` / `speakers_matched`: the reconciler reports how many
+        // clusters were new vs. library matches.
+        // Without a library, every speaker counts as "new".
         let speakersNew = reconciliation?.newCount ?? merged.speakers.count
         let speakersMatched = reconciliation?.matchedCount ?? 0
         _ = try? await events?.append(RefinementCompletedEvent(
@@ -422,7 +422,7 @@ public struct RefinementPipeline: Sendable {
     /// Transcribe a single WAV through `FixturePlaybackSource` → whisper.
     ///
     /// A partial / slightly-malformed WAV header is tolerated by `WAVReader`,
-    /// which recovers what is readable rather than crashing (Epic 4 edge case).
+    /// which recovers what is readable rather than crashing (edge case).
     private func transcribe(
         wav: URL,
         transcriberFactory: @Sendable () throws -> WhisperTranscriber,
@@ -436,7 +436,7 @@ public struct RefinementPipeline: Sendable {
 
             // No usable speech at all: hand back an empty transcript rather
             // than letting `whisper_full` throw `emptyAudio`. The pipeline then
-            // writes a valid, explanatory `final.md` (Epic 4 edge case).
+            // writes a valid, explanatory `final.md` (edge case).
             guard !samples.isEmpty else {
                 return StreamTranscription(
                     segments: [], language: "unknown", audioDuration: .zero)
@@ -483,7 +483,7 @@ public struct RefinementPipeline: Sendable {
         /// Distinct speaker display labels, first-appearance order.
         let speakers: [String]
         /// Display label → stable library speaker id, for reconciled speakers
-        /// (Epic 5). `You` and unreconciled speakers are absent.
+        /// for reconciled speakers. `You` and unreconciled speakers are absent.
         let speakerIdByLabel: [String: String]
     }
 
@@ -491,14 +491,14 @@ public struct RefinementPipeline: Sendable {
     /// the optional mic stream (always `You`) into one time-ordered
     /// `TranscriptDocument`.
     ///
-    /// When a `reconciliation` is supplied (Epic 5), each diarized speaker's
+    /// When a `reconciliation` is supplied, each diarized speaker's
     /// `Speaker_N` label is replaced by the persistent library name
-    /// (`Steve`, `Unknown #1`) — R22. Without it, the Epic 4 `Speaker_N`
+    /// (`Steve`, `Unknown #1`) — R22. Without it, the `Speaker_N`
     /// behaviour is kept.
     ///
     /// When there are no utterances at all, an empty-transcript `final.md` is
     /// still produced — with a single explanatory note line — so a consumer
-    /// gets a valid file rather than a crash or garbage (Epic 4 edge case).
+    /// gets a valid file rather than a crash or garbage (edge case).
     private func mergeStreams(
         system: StreamTranscription,
         diarization: DiarizationResult?,
@@ -518,7 +518,7 @@ public struct RefinementPipeline: Sendable {
                 count: system.segments.count)
         }
 
-        // Epic 5 (R22): rewrite each `Speaker_N` display label to its
+        // R22: rewrite each `Speaker_N` display label to its
         // reconciled library name. `DiarizationMerge` emits `Speaker_N` and
         // co-attributed `Speaker_0+Speaker_1`; build a `Speaker_N → name` map
         // (via the raw-label round-trip) and remap each `+`-joined component.

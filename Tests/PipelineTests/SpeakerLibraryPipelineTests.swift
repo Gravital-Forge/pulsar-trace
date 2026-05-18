@@ -3,7 +3,7 @@ import Foundation
 import SnapshotTesting
 @testable import PulsarTraceEngine
 
-/// The Epic 5 "done" criterion (PRD §15): refine recording A — a new speaker
+/// The speaker-library "done" criterion (PRD §15): refine recording A — a new speaker
 /// becomes `Unknown #1` in the library — then refine recording B containing
 /// the *same* voice, and the speaker is auto-labelled with the same
 /// name/`spk_` id in `final.md`.
@@ -16,7 +16,7 @@ import SnapshotTesting
 /// `~/Library` is never touched.
 ///
 /// `.serialized` because whisper.cpp is single-context per process (D8/D15).
-@Suite("Speaker library pipeline (Epic 5)", .serialized)
+@Suite("Speaker library pipeline", .serialized)
 struct SpeakerLibraryPipelineTests {
 
     private static let recordingStart = Date(timeIntervalSince1970: 1_777_000_000)
@@ -63,7 +63,7 @@ struct SpeakerLibraryPipelineTests {
             workingDirectory: URL(fileURLWithPath: "/tmp")))
     }
 
-    // MARK: - The Epic 5 "done" criterion
+    // MARK: - The speaker-library "done" criterion
 
     @Test("a returning speaker is auto-labelled with the name set on recording A")
     func returningSpeakerAutoLabelled() async throws {
@@ -136,7 +136,7 @@ struct SpeakerLibraryPipelineTests {
                 precomputedDiarization: diarB)
         }
 
-        // THE EPIC 5 "DONE" CRITERION: B's speaker is auto-labelled with the
+        // THE SPEAKER-LIBRARY "DONE" CRITERION: B's speaker is auto-labelled with the
         // name assigned during A — not a fresh `Unknown #2`, not `Speaker_0`.
         #expect(outputB.speakers == ["Unknown #1"])
         let finalB = try String(contentsOf: outputB.finalURL, encoding: .utf8)

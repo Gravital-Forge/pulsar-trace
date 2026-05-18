@@ -3,7 +3,7 @@ import Foundation
 /// The catalogue of event types known to this build.
 ///
 /// `docs/events-schema.md` is the human-facing contract; this registry is the
-/// machine-facing one. Later epics extend it by appending entries — the
+/// machine-facing one. New event types extend it by appending entries — the
 /// `EventWriter` does not need to change. Keeping every type registered in one
 /// place makes it cheap to verify "every significant operation emits exactly
 /// one event" (R82) by diffing this list against the product's operations.
@@ -32,9 +32,6 @@ public enum EventRegistry {
     }
 
     /// All event types this build knows how to emit.
-    ///
-    /// Epic 1 registers only the `system` `app_started` / `app_stopped` pair.
-    /// Later epics append their types here as they implement emission.
     public static let all: [Entry] = [
         Entry(
             type: AppStartedEvent.eventType,
@@ -46,13 +43,13 @@ public enum EventRegistry {
             version: AppStoppedEvent.schemaVersion,
             category: .system
         ),
-        // Epic 2: whisper model downloaded + SHA-256 verified.
+        // whisper model downloaded + SHA-256 verified.
         Entry(
             type: ModelDownloadedEvent.eventType,
             version: ModelDownloadedEvent.schemaVersion,
             category: .system
         ),
-        // Epic 4: refinement lifecycle (`pulsartrace refine`).
+        // Refinement lifecycle (`pulsartrace refine`).
         Entry(
             type: RefinementStartedEvent.eventType,
             version: RefinementStartedEvent.schemaVersion,
@@ -68,7 +65,7 @@ public enum EventRegistry {
             version: RefinementFailedEvent.schemaVersion,
             category: .refinementLifecycle
         ),
-        // Epic 4: file operations produced by a refine pass.
+        // File operations produced by a refine pass.
         Entry(
             type: FinalMDWrittenEvent.eventType,
             version: FinalMDWrittenEvent.schemaVersion,
@@ -84,13 +81,13 @@ public enum EventRegistry {
             version: LiveMDReplacedByFinalEvent.schemaVersion,
             category: .fileOperations
         ),
-        // Epic 6: live-pass file operations.
+        // Live-pass file operations.
         Entry(
             type: LiveMDStartedEvent.eventType,
             version: LiveMDStartedEvent.schemaVersion,
             category: .fileOperations
         ),
-        // Epic 5: speaker library operations.
+        // Speaker library operations.
         Entry(
             type: SpeakerCreatedEvent.eventType,
             version: SpeakerCreatedEvent.schemaVersion,
@@ -136,7 +133,7 @@ public enum EventRegistry {
             version: SpeakerCentroidUpdatedEvent.schemaVersion,
             category: .speakerLibrary
         ),
-        // Epic 5: speaker-library database health (system category).
+        // Speaker-library database health (system category).
         Entry(
             type: LibraryBackupCreatedEvent.eventType,
             version: LibraryBackupCreatedEvent.schemaVersion,
@@ -147,7 +144,7 @@ public enum EventRegistry {
             version: LibraryCorruptionDetectedEvent.schemaVersion,
             category: .system
         ),
-        // Epic 7: recording lifecycle (`pulsartrace-capture`).
+        // Recording lifecycle (`pulsartrace-capture`).
         Entry(
             type: RecordingStartedEvent.eventType,
             version: RecordingStartedEvent.schemaVersion,
@@ -168,7 +165,7 @@ public enum EventRegistry {
             version: RecordingStoppedEvent.schemaVersion,
             category: .recordingLifecycle
         ),
-        // Epic 7: TCC permission changes (system category).
+        // TCC permission changes (system category).
         Entry(
             type: PermissionChangedEvent.eventType,
             version: PermissionChangedEvent.schemaVersion,

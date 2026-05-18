@@ -2,11 +2,11 @@ import Foundation
 import Logging
 
 /// Retroactively rewrites past `final.md` files after a speaker rename / merge
-/// / split (Epic 8 — project-docs/DECISIONS.md D16).
+/// / split (project-docs/DECISIONS.md D16).
 ///
-/// Epic 5 made a `pulsartrace speakers rename` update the speaker library only;
-/// D16 deferred the *retroactive* rewrite of already-refined `final.md` files
-/// to Epic 8. This type is that rewrite: given a speaker's appearances (from
+/// A `pulsartrace speakers rename` updates the speaker library only; D16 splits
+/// the *retroactive* rewrite of already-refined `final.md` files into this
+/// separate step. This type is that rewrite: given a speaker's appearances (from
 /// `SpeakerLibrary.appearances(of:)`) it locates each recording folder on disk,
 /// rewrites the speaker label in every utterance line of its `final.md`, backs
 /// up the prior file, updates the `metadata.json` speakers array, and emits one
@@ -19,7 +19,7 @@ import Logging
 /// - Non-utterance lines (the marker, header, blank lines) — preserved
 ///   byte-for-byte.
 ///
-/// The menubar editor (later in Epic 8) drives this: it performs the library
+/// The menubar editor drives this: it performs the library
 /// mutation with `suppressEvent: true`, calls `rewrite`, then emits the
 /// `speaker_*` event with a populated `applied_to_recordings` in causal order
 /// followed by one `final_md_rewritten` per `RecordingResult`.

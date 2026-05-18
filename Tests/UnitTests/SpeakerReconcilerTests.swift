@@ -4,7 +4,7 @@ import Foundation
 
 /// Unit coverage of `SpeakerReconciler` — the bridge between a recording's
 /// diarization clusters and the persistent library (R22, R23).
-@Suite("Speaker reconciler (Epic 5)")
+@Suite("Speaker reconciler")
 struct SpeakerReconcilerTests {
 
     private func tempDir() -> URL {

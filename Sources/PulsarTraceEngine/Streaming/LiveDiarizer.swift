@@ -51,15 +51,14 @@ protocol LiveDiarizing: Sendable {
     func modelRevision() async -> String
 }
 
-/// Live (streaming) speaker diarization for the system stream (Epic 6 — R15,
-/// R16).
+/// Live (streaming) speaker diarization for the system stream (R15, R16).
 ///
 /// ## diart vs windowed-pyannote — Open Question #1 (project-docs/DECISIONS.md D19)
 ///
 /// The PRD recommended `diart`. `diart` cannot be installed in this project's
 /// venv without downgrading `pyannote.audio` from the pinned 4.0.4 to 3.4.0
 /// (and `numpy` to 1.26.4) — `pip install diart` resolves exactly that. That
-/// downgrade would break the working Epic 3 offline diarization, which depends
+/// downgrade would break the working offline diarization, which depends
 /// on `pyannote/speaker-diarization-community-1` (a pyannote 4.x model) and on
 /// embeddings staying cross-comparable with the speaker library (R29). PRD §16
 /// explicitly lists **windowed-pyannote** as the viable alternative, so that is

@@ -140,7 +140,7 @@ struct DiarizationMergeTests {
 
         #expect(rendered.contains("] Speaker_0:**"))
         #expect(rendered.contains("] Speaker_1:**"))
-        // The Epic 2 placeholder must be gone.
+        // The single placeholder speaker label must be gone.
         #expect(!rendered.contains("] Speaker:**"))
     }
 }

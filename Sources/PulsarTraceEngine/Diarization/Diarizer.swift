@@ -7,10 +7,10 @@ import Logging
 /// - pyannote runs in the embedded Python layer (`python/pulsartrace-ai/`),
 ///   never mixed into Swift. whisper.cpp stays in Swift; pyannote stays in
 ///   Python.
-/// - For the offline epic the `Diarizer` spawns the Python diarization as a
+/// - For offline refinement the `Diarizer` spawns the Python diarization as a
 ///   **one-shot subprocess** per refine: it is handed a WAV path and gets back
 ///   JSON (speaker spans + per-speaker embeddings) on stdout. The long-lived
-///   live `diart` runtime is a separate Epic 6 concern and is not built here.
+///   live `diart` runtime is handled separately (`LiveDiarizer`), not here.
 /// - **R17**: the entry point only ever receives the *system-stream* WAV. The
 ///   mic stream is never diarized — "You" is always "You". This is structural:
 ///   `Diarizer` has a single `diarizeSystemStream(wavPath:)` method and no
@@ -27,7 +27,7 @@ public actor Diarizer {
     /// How to reach the captive Python diarization layer.
     ///
     /// In development (project-docs/DECISIONS.md D3) this points at the venv built by
-    /// `python/build-venv.sh`. Epic 10 swaps these for the bundled
+    /// `python/build-venv.sh`. A future change swaps these for the bundled
     /// `python-build-standalone` runtime inside the `.app`; the IPC boundary
     /// is identical, so only this configuration changes.
     public struct Configuration: Sendable {
@@ -41,8 +41,8 @@ public actor Diarizer {
         public let moduleName: String
         /// Extra environment for the subprocess. The Hugging Face token
         /// (`HF_TOKEN`, required for the gated community-1 model) and
-        /// `HF_HOME` (cache redirect) are passed through here. Production
-        /// (Epic 10) sources the token from the macOS Keychain; development
+        /// `HF_HOME` (cache redirect) are passed through here. In production
+        /// the token is sourced from the macOS Keychain; development
         /// loads it from the repo `.env`.
         public let environment: [String: String]
         /// Hard wall-clock ceiling for one diarization run. The pyannote model

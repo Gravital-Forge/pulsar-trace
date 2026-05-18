@@ -1,7 +1,7 @@
 import Foundation
 
-/// Strictly append-only writer for a recording's `live.md` (Epic 6 — R12,
-/// R35, R35a, R36, R37).
+/// Strictly append-only writer for a recording's `live.md` (R12, R35,
+/// R35a, R36, R37).
 ///
 /// `live.md` is one of PulsarTrace's three public API surfaces: an external AI
 /// agent `tail -f`s it during a meeting. Two hard invariants govern it:
@@ -119,7 +119,7 @@ public actor LiveMarkdownWriter {
         try appendLine("**[\(stamp)] \(speakerLabel):** \(text)")
     }
 
-    /// A capture pause/resume to annotate in `live.md` (Epic 7, R7).
+    /// A capture pause/resume to annotate in `live.md` (R7).
     public enum GapKind: Sendable {
         /// Capture paused — the Mac slept or the audio device changed.
         case paused

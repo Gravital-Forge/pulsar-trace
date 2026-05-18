@@ -19,7 +19,7 @@ public struct CommittedUtterance: Sendable, Equatable {
     }
 }
 
-/// Streaming transcription for the live pass (Epic 6 — R10).
+/// Streaming transcription for the live pass (R10).
 ///
 /// Consumes any `AudioFrameSource` at whatever pace the source delivers frames
 /// (real-time for a device / `ffmpeg -re` pipe / `FixturePlaybackSource`
@@ -52,7 +52,7 @@ public struct CommittedUtterance: Sendable, Equatable {
 /// `BlankTokenFilter` drops `[BLANK_AUDIO]` / silence-hallucination segments —
 /// so a quiet meeting does not accrete "thanks for watching" lines.
 ///
-/// ## Backpressure (Epic 6 edge case)
+/// ## Backpressure
 ///
 /// whisper on a window must finish before the next window is due, or the
 /// sample buffer grows unbounded. The transcriber tracks how far decoding lags
@@ -198,7 +198,7 @@ public final class StreamingTranscriber {
         while recordingSampleCount - lastDecodeEndSample >= stepSamples
             && recordingSampleCount - windowAnchorSample >= stepSamples {
 
-            // Backpressure (Epic 6 edge case): if real time has run far past
+            // Backpressure: if real time has run far past
             // the anchor — whisper cannot keep up — skip the anchor forward so
             // the buffer and the lag stay bounded. The skipped audio is lost
             // to the live pass (coarser commits); the post-pass recovers it.

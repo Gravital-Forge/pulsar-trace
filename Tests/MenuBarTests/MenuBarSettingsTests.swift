@@ -2,9 +2,9 @@ import Testing
 import Foundation
 @testable import PulsarTraceMenuBar
 
-/// Epic 8 — `MenuBarSettings` round-trips every property through an injected
+/// `MenuBarSettings` round-trips every property through an injected
 /// `UserDefaults` suite, so a relaunch restores the user's choices (R42/R43).
-@Suite("MenuBarSettings (Epic 8)")
+@Suite("MenuBarSettings")
 @MainActor
 struct MenuBarSettingsTests {
 

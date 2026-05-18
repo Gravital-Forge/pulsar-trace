@@ -12,7 +12,7 @@ import Foundation
 ///
 /// All mutating work runs on a single serial `DispatchQueue` so concurrent
 /// loggers cannot interleave partial lines, and so a midnight rotation cannot
-/// race a write (an edge case owned by Epic 1). The queue — rather than an
+/// race a write. The queue — rather than an
 /// actor — is used deliberately: `append` is called synchronously from
 /// `FileLogHandler.log`, which is not `async`, and `flush()` is a synchronous
 /// barrier that reliably drains every queued line on `shutdown()`. A fire-and-

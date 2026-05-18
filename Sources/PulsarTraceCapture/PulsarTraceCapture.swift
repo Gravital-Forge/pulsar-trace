@@ -1,4 +1,4 @@
-/// PulsarTraceCapture — Epic 7's real device-capture module.
+/// PulsarTraceCapture — the real device-capture module.
 ///
 /// This module owns the macOS audio APIs: AVFoundation for the microphone and
 /// ScreenCaptureKit for system audio. It resamples/downmixes both to the

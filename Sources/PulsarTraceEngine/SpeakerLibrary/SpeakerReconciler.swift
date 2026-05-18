@@ -48,8 +48,8 @@ public struct SpeakerReconciler: Sendable {
     /// - Parameters:
     ///   - diarization: the recording's pyannote result (per-speaker embeddings).
     ///   - recordingId: the recording's stable id (`rec_<short>`).
-    ///   - recordingFolderName: the recording folder basename (for Epic 8's
-    ///     later retroactive `final.md` rewrite).
+    ///   - recordingFolderName: the recording folder basename (for the
+    ///     retroactive `final.md` rewrite).
     /// - Returns: the per-label name/id mapping the pipeline renders into
     ///   `final.md` and `metadata.json`.
     public func reconcile(

@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Epic 8 Step 1 — the engine-side retroactive `final.md` rewrite (D16).
+/// The engine-side retroactive `final.md` rewrite (D16).
 ///
 /// `FinalMarkdownRewriter` rewrites a speaker label across past `final.md`
 /// files after a rename/merge/split. These tests build hand-written fixture
@@ -10,7 +10,7 @@ import Foundation
 /// and assert the rewrite is surgical: only the utterance-line *label* field
 /// changes, prose and structural lines are byte-identical, `live.md` is never
 /// touched, and one `final_md_rewritten` event fires per rewritten recording.
-@Suite("FinalMarkdownRewriter (Epic 8)")
+@Suite("FinalMarkdownRewriter")
 struct FinalMarkdownRewriterTests {
 
     // MARK: - Fixtures

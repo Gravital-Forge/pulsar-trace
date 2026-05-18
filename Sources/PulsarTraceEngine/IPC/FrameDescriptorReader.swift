@@ -13,7 +13,7 @@ import Darwin
 /// calls and pushes decoded items into an `AsyncThrowingStream`; the async
 /// iterator just awaits the stream. This keeps blocking I/O off the cooperative
 /// thread pool without spawning a thread per frame. A zero-length frame or a
-/// clean EOF terminates the stream (R75). Control frames (pause/resume, Epic 7)
+/// clean EOF terminates the stream (R75). Control frames (pause/resume)
 /// are decoded into `.paused` / `.resumed` items alongside PCM `.frame`s.
 final class FrameDescriptorReader: @unchecked Sendable {
     private let fd: Int32

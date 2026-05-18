@@ -3,7 +3,7 @@ import Foundation
 import SnapshotTesting
 @testable import PulsarTraceEngine
 
-/// Pipeline coverage of the Epic 4 refinement pass (`pulsartrace refine`):
+/// Pipeline coverage of the refinement pass (`pulsartrace refine`):
 /// R20, R21, R24, R27, R38, R39, plus the refinement event sequence.
 ///
 /// These tests run the **real** pipeline end-to-end — real whisper (`base`
@@ -19,7 +19,7 @@ import SnapshotTesting
 /// fixed seeds (PRD §12) — so the `final.md` body and `metadata.json` (volatile
 /// fields normalized) are stable across runs. `.serialized` because
 /// whisper.cpp's Metal backend is single-context per process (project-docs/DECISIONS.md D8).
-@Suite("Refinement pipeline (Epic 4)", .serialized)
+@Suite("Refinement pipeline", .serialized)
 struct RefinementPipelineTests {
 
     /// A fixed wall-clock so the `final.md` header / metadata are deterministic.
@@ -292,7 +292,7 @@ struct RefinementPipelineTests {
         let modelURL = try await baseModelURL()
 
         // A pure-silence WAV: whisper finds no speech, diarization is skipped,
-        // and the pipeline must still write a valid final.md (Epic 4 edge case).
+        // and the pipeline must still write a valid final.md (edge case).
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let wav = dir.appendingPathComponent("silence.wav")

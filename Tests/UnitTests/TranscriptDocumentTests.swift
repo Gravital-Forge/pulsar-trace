@@ -51,7 +51,7 @@ struct TranscriptDocumentTests {
         #expect(lines[4] == "**[00:00:12] Speaker:** Right, the redirect URI isn't handled.")
     }
 
-    @Test("Epic 2 uses the single placeholder speaker label for every line")
+    @Test("the transcription pass uses the single placeholder speaker label for every line")
     func placeholderSpeaker() {
         let doc = TranscriptDocument(
             recordingStart: Self.start,

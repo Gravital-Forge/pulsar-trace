@@ -8,7 +8,7 @@ import Foundation
 /// file. Instead every write goes to a sibling temp file and is `rename(2)`'d
 /// into place — `rename` is atomic on the same volume, so a reader sees either
 /// the whole old file or the whole new file, never a torn one. An editor with
-/// the file open reloads cleanly (Epic 4 edge case).
+/// the file open reloads cleanly (edge case).
 ///
 /// The temp file is created in the *same directory* as the destination so the
 /// rename never crosses a filesystem boundary (which would silently fall back

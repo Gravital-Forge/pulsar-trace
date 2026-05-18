@@ -2,15 +2,15 @@ import Foundation
 
 /// Merges whisper transcript utterances with pyannote speaker spans by
 /// timestamp overlap, producing the per-segment `Speaker_N` labels that the
-/// R13 transcript format renders (replacing Epic 2's single placeholder
-/// `Speaker`).
+/// R13 transcript format renders (in place of a single placeholder `Speaker`
+/// when diarization is unavailable).
 ///
-/// Attribution rule (documented per the epic brief): each utterance is
+/// Attribution rule: each utterance is
 /// assigned to the speaker whose spans overlap it the **most** in time
 /// ("dominant overlap"). This is robust to the inevitable slack between
 /// whisper's segment boundaries and pyannote's turn boundaries.
 ///
-/// Overlapping speech (Epic 3 edge case): when an utterance overlaps two
+/// Overlapping speech (edge case): when an utterance overlaps two
 /// speakers and the *second*-most-overlapping speaker still covers a
 /// meaningful share of the utterance, **both** attributions are surfaced — the
 /// label becomes `Speaker_0+Speaker_1`. A short incidental overlap does not
@@ -95,7 +95,7 @@ public enum DiarizationMerge {
         var labels = [diarization.displayLabel(for: primary)]
 
         // Co-attribute a secondary speaker only when it covers a meaningful
-        // share of the utterance (Epic 3 overlap edge case).
+        // share of the utterance (overlap edge case).
         if ranked.count > 1 {
             let secondary = ranked[1]
             if secondary.value / utteranceLength >= overlapShareThreshold {

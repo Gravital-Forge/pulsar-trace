@@ -2,13 +2,12 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the append-only `live.md` writer (Epic 6 — R12, R35a,
-/// R36, R37).
+/// Unit coverage of the append-only `live.md` writer (R12, R35a, R36, R37).
 ///
 /// `live.md` is a public API surface an agent `tail -f`s. These tests assert
 /// the two hard invariants: created at session start with marker + header
 /// (R35a/R37), and strictly append-only with monotonic byte growth (R36/R12).
-@Suite("Append-only live.md writer (Epic 6)")
+@Suite("Append-only live.md writer")
 struct LiveMarkdownWriterTests {
 
     /// A throwaway temp directory for one test's `live.md`.

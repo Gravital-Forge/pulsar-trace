@@ -1,8 +1,8 @@
 import Testing
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the whisper blank/hallucination filter (Epic 2 edge case:
-/// silence must not produce text).
+/// Unit coverage of the whisper blank/hallucination filter (silence must not
+/// produce text).
 @Suite("BlankTokenFilter")
 struct BlankTokenFilterTests {
 

@@ -20,8 +20,8 @@ public enum AudioStreamEvent: Sendable, Equatable {
 /// Everything above this protocol — chunking, transcription, diarization,
 /// file output — is written against `AudioFrameSource` and cannot tell whether
 /// frames originated from a real device, a fixture WAV, stdin, or a Unix
-/// socket. This is the seam that makes nine of ten epics testable without
-/// audio hardware.
+/// socket. This is the seam that makes nearly the whole engine testable
+/// without audio hardware.
 ///
 /// A source is an `AsyncSequence` of `AudioStreamEvent`. Iteration begins after
 /// `start()` and ends with a clean `nil` from the iterator (end-of-stream).

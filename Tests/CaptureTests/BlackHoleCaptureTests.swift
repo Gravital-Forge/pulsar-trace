@@ -6,7 +6,7 @@ import Testing
 ///
 /// Proves this host can actually open BlackHole 2ch through AVFoundation and
 /// receive audio sample buffers — the capability the `Capture` test layer and
-/// Epic 7's `DeviceCaptureSource` depend on. Opt-in only; see `DeviceTestGate`.
+/// `DeviceCaptureSource` depend on. Opt-in only; see `DeviceTestGate`.
 ///
 /// The test asserts that *buffers flow*, not that they carry signal: with
 /// nothing routed into BlackHole the buffers are silent, and that still proves

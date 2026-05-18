@@ -3,9 +3,9 @@ import Foundation
 import PulsarTraceEngine
 @testable import PulsarTraceMenuBar
 
-/// Epic 8 — `RecordingViewModel`'s status machine (R40, R45), exercised through
+/// `RecordingViewModel`'s status machine (R40, R45), exercised through
 /// the injected orchestration seam so no real capture/engine processes spawn.
-@Suite("RecordingViewModel (Epic 8)")
+@Suite("RecordingViewModel")
 @MainActor
 struct RecordingViewModelTests {
 

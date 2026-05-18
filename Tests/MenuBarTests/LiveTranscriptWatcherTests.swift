@@ -2,9 +2,9 @@ import Testing
 import Foundation
 @testable import PulsarTraceMenuBar
 
-/// Epic 8 — `LiveTranscriptWatcher` tails an append-only `live.md` and exposes
+/// `LiveTranscriptWatcher` tails an append-only `live.md` and exposes
 /// its complete lines (R40). Read-only — it never writes the file.
-@Suite("LiveTranscriptWatcher (Epic 8)")
+@Suite("LiveTranscriptWatcher")
 @MainActor
 struct LiveTranscriptWatcherTests {
 

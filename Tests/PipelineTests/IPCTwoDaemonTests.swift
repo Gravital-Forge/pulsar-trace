@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Layer 4 — IPC integration for Epic 7's real-capture path, with no audio
+/// Layer 4 — IPC integration for the real-capture path, with no audio
 /// devices. Two concerns the in-process Pipeline tests do not exercise:
 ///
 /// 1. **Two-socket consumption** — the engine reads a system stream *and* a
@@ -14,7 +14,7 @@ import Foundation
 ///    gap annotation.
 ///
 /// `.serialized`: whisper.cpp is single-context per process (D8).
-@Suite("Capture IPC integration (Epic 7)", .serialized)
+@Suite("Capture IPC integration", .serialized)
 struct IPCTwoDaemonTests {
 
     private func tempFolder() -> URL {

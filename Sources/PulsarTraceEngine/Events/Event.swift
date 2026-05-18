@@ -18,7 +18,7 @@ extension EventPayload {
     public static var schemaVersion: Int { 1 }
 }
 
-// MARK: - System events (Epic 1)
+// MARK: - System events
 
 /// `app_started` — emitted once when the engine/CLI process starts (§8.13).
 ///
@@ -65,7 +65,7 @@ public struct AppStoppedEvent: EventPayload {
     }
 }
 
-// MARK: - System events (Epic 2)
+// MARK: - Model-download events
 
 /// `model_downloaded` — emitted once after a whisper model is downloaded *and*
 /// its SHA-256 verified (R54d). A failed/corrupt download emits nothing — the
@@ -101,10 +101,10 @@ public struct ModelDownloadedEvent: EventPayload {
     }
 }
 
-// MARK: - Refinement lifecycle events (Epic 4)
+// MARK: - Refinement lifecycle events
 
 /// `refinement_started` — emitted once when `pulsartrace refine` begins work on
-/// a recording, before any transcription/diarization (§8.13, Epic 4).
+/// a recording, before any transcription/diarization (§8.13).
 ///
 /// Causal order: this is the *first* event a refine emits, so a consumer
 /// tailing the log sees the cause before any of its file-write effects.
@@ -128,11 +128,11 @@ public struct RefinementStartedEvent: EventPayload {
 }
 
 /// `refinement_completed` — emitted once, last, after a refine pass has written
-/// `final.md` and `metadata.json` to disk (§8.13, Epic 4).
+/// `final.md` and `metadata.json` to disk (§8.13).
 ///
-/// For Epic 4 there is no speaker library yet, so every identified speaker is
-/// "new": `speakersNew` equals `speakersIdentified` and `speakersMatched` is 0.
-/// Epic 5 reconciles against the library and these split meaningfully.
+/// Without a configured speaker library, every identified speaker is "new":
+/// `speakersNew` equals `speakersIdentified` and `speakersMatched` is 0. When a
+/// library is reconciled against, these split meaningfully.
 public struct RefinementCompletedEvent: EventPayload {
     public static let eventType = "refinement_completed"
 
@@ -141,9 +141,11 @@ public struct RefinementCompletedEvent: EventPayload {
     public let durationSeconds: Double
     /// Total distinct speakers in the final transcript.
     public let speakersIdentified: Int
-    /// Speakers not matched to the library (Epic 4: all of them).
+    /// Speakers not matched to the library (all of them when no library is
+    /// configured).
     public let speakersNew: Int
-    /// Speakers matched to an existing library entry (Epic 4: always 0).
+    /// Speakers matched to an existing library entry (0 when no library is
+    /// configured).
     public let speakersMatched: Int
 
     public init(
@@ -169,7 +171,7 @@ public struct RefinementCompletedEvent: EventPayload {
     }
 }
 
-/// `refinement_failed` — emitted when a refine pass aborts (§8.13, Epic 4).
+/// `refinement_failed` — emitted when a refine pass aborts (§8.13).
 ///
 /// `errorClass` is a coarse, stable category (never a raw error string with a
 /// file path in it — Hard Invariant #7). `retryAvailable` tells a consumer
@@ -196,7 +198,7 @@ public struct RefinementFailedEvent: EventPayload {
     }
 }
 
-// MARK: - File-operation events (Epic 4)
+// MARK: - File-operation events
 
 /// `final_md_written` — emitted after `final.md` is durably on disk for the
 /// first time (no prior `final.md` existed). Category: `file_operations`.
@@ -226,18 +228,18 @@ public struct FinalMDWrittenEvent: EventPayload {
 }
 
 /// `final_md_rewritten` — emitted when an existing `final.md` is replaced
-/// (a re-refine, R27, or — in Epic 5 — a speaker rename/merge).
+/// (a re-refine, R27, or a speaker rename/merge).
 ///
-/// `reason` is a stable code: Epic 4 emits `re_refine`. Always paired with the
-/// cause that triggered it (Hard Invariant #8) — for Epic 4 the cause is the
-/// `refinement_started` of the re-refine pass.
+/// `reason` is a stable code: a re-refine pass emits `re_refine`. Always paired
+/// with the cause that triggered it (Hard Invariant #8) — for a re-refine the
+/// cause is the `refinement_started` of that pass.
 public struct FinalMDRewrittenEvent: EventPayload {
     public static let eventType = "final_md_rewritten"
 
     public let recordingId: String
     public let pathBasename: String
     public let sha256: String
-    /// Why the file was rewritten — Epic 4: `re_refine`.
+    /// Why the file was rewritten — e.g. `re_refine`.
     public let reason: String
 
     public init(recordingId: String, pathBasename: String, sha256: String, reason: String) {
@@ -256,7 +258,7 @@ public struct FinalMDRewrittenEvent: EventPayload {
 }
 
 /// `live_md_replaced_by_final` — emitted when refinement supersedes an existing
-/// `live.md` (§8.13, Epic 4). The `live.md` is preserved as `.live.md.bak`.
+/// `live.md` (§8.13). The `live.md` is preserved as `.live.md.bak`.
 public struct LiveMDReplacedByFinalEvent: EventPayload {
     public static let eventType = "live_md_replaced_by_final"
 
@@ -271,7 +273,7 @@ public struct LiveMDReplacedByFinalEvent: EventPayload {
     }
 }
 
-// MARK: - Live-pass events (Epic 6)
+// MARK: - Live-pass events
 
 /// `live_md_started` — emitted when a recording's `live.md` is created at
 /// session start (R35a). Per PRD §8.13 the payload is `{recording_id,
@@ -300,10 +302,10 @@ public struct LiveMDStartedEvent: EventPayload {
     }
 }
 
-// MARK: - Recording-lifecycle events (Epic 7)
+// MARK: - Recording-lifecycle events
 
 /// `recording_started` — emitted by `pulsartrace-capture` once a recording
-/// session begins producing audio (§8.13, Epic 7).
+/// session begins producing audio (§8.13).
 ///
 /// Causal order: emitted after hardware capture has started and the first
 /// frame has reached a socket — not at socket bind time — so a consumer
@@ -346,7 +348,7 @@ public struct RecordingStartedEvent: EventPayload {
 }
 
 /// `recording_paused` — emitted by `pulsartrace-capture` when capture pauses
-/// mid-session (§8.13, Epic 7): the Mac went to sleep (R7) or the active audio
+/// mid-session (§8.13): the Mac went to sleep (R7) or the active audio
 /// device changed (R8).
 public struct RecordingPausedEvent: EventPayload {
     public static let eventType = "recording_paused"
@@ -367,7 +369,7 @@ public struct RecordingPausedEvent: EventPayload {
 }
 
 /// `recording_resumed` — emitted by `pulsartrace-capture` when capture resumes
-/// after a pause (§8.13, Epic 7). Always paired with the `recording_paused`
+/// after a pause (§8.13). Always paired with the `recording_paused`
 /// that preceded it (Hard Invariant #8).
 public struct RecordingResumedEvent: EventPayload {
     public static let eventType = "recording_resumed"
@@ -388,7 +390,7 @@ public struct RecordingResumedEvent: EventPayload {
 }
 
 /// `recording_stopped` — emitted by `pulsartrace-capture` once a recording
-/// session ends and both audio streams are flushed (§8.13, Epic 7).
+/// session ends and both audio streams are flushed (§8.13).
 public struct RecordingStoppedEvent: EventPayload {
     public static let eventType = "recording_stopped"
 
@@ -414,7 +416,7 @@ public struct RecordingStoppedEvent: EventPayload {
 
 /// `permission_changed` — emitted by `pulsartrace-capture` when a TCC
 /// permission it depends on (Microphone or Screen Recording) changes state
-/// (§8.13, Epic 7). Checked at launch and on the system's TCC-change
+/// (§8.13). Checked at launch and on the system's TCC-change
 /// notification.
 public struct PermissionChangedEvent: EventPayload {
     public static let eventType = "permission_changed"
@@ -435,10 +437,10 @@ public struct PermissionChangedEvent: EventPayload {
     }
 }
 
-// MARK: - Speaker library events (Epic 5)
+// MARK: - Speaker library events
 
 /// `speaker_created` — emitted when a new speaker is added to the persistent
-/// library (§8.13, Epic 5). A new speaker is born either when refinement finds
+/// library (§8.13). A new speaker is born either when refinement finds
 /// a cluster that matches no existing library entry (`initialName` is an
 /// `Unknown #N` placeholder), or via a `speaker_split`.
 ///
@@ -471,18 +473,18 @@ public struct SpeakerCreatedEvent: EventPayload {
 
 /// `speaker_renamed` — emitted when a speaker's display name changes (§8.13).
 ///
-/// R83: `speaker_id` is unchanged across a rename — only `name` moves. Epic 5
-/// CLI `rename` does NOT retroactively rewrite past `final.md` files (that is
-/// Epic 8 scope, project-docs/DECISIONS.md D16), so `appliedToRecordings` is empty for an
-/// Epic 5-originated rename — no `final_md_rewritten` is paired with it.
+/// R83: `speaker_id` is unchanged across a rename — only `name` moves. The
+/// library CLI `rename` does NOT retroactively rewrite past `final.md` files
+/// (project-docs/DECISIONS.md D16), so `appliedToRecordings` is empty for a
+/// CLI-originated rename — no `final_md_rewritten` is paired with it.
 public struct SpeakerRenamedEvent: EventPayload {
     public static let eventType = "speaker_renamed"
 
     public let speakerId: String
     public let oldName: String
     public let newName: String
-    /// Recordings whose `final.md` was rewritten as a result. Empty for an
-    /// Epic 5 CLI rename (the rewrite is Epic 8 scope — D16).
+    /// Recordings whose `final.md` was rewritten as a result. Empty for a
+    /// library CLI rename (D16).
     public let appliedToRecordings: [String]
 
     public init(
@@ -507,7 +509,7 @@ public struct SpeakerRenamedEvent: EventPayload {
 
 /// `speaker_merged` — emitted when two speakers are merged: the `merged`
 /// speaker is soft-deleted and its appearances re-attributed to `primary`,
-/// whose centroid is recomputed (§8.13, Epic 5).
+/// whose centroid is recomputed (§8.13).
 public struct SpeakerMergedEvent: EventPayload {
     public static let eventType = "speaker_merged"
 
@@ -515,7 +517,8 @@ public struct SpeakerMergedEvent: EventPayload {
     public let primarySpeakerId: String
     /// The speaker folded into `primary` (soft-deleted, recoverable).
     public let mergedSpeakerId: String
-    /// Recordings whose `final.md` was rewritten. Empty for Epic 5 (D16).
+    /// Recordings whose `final.md` was rewritten. Empty for a library CLI
+    /// operation (D16).
     public let appliedToRecordings: [String]
 
     public init(
@@ -536,7 +539,7 @@ public struct SpeakerMergedEvent: EventPayload {
 }
 
 /// `speaker_split` — emitted when a subset of one speaker's appearances is
-/// peeled off into a brand-new speaker (§8.13, Epic 5). Always followed by a
+/// peeled off into a brand-new speaker (§8.13). Always followed by a
 /// `speaker_created` for the new speaker.
 public struct SpeakerSplitEvent: EventPayload {
     public static let eventType = "speaker_split"
@@ -545,7 +548,8 @@ public struct SpeakerSplitEvent: EventPayload {
     public let originalSpeakerId: String
     /// The new speaker created to hold the peeled-off appearances.
     public let newSpeakerId: String
-    /// Recordings whose `final.md` was rewritten. Empty for Epic 5 (D16).
+    /// Recordings whose `final.md` was rewritten. Empty for a library CLI
+    /// operation (D16).
     public let appliedToRecordings: [String]
 
     public init(
@@ -571,7 +575,7 @@ public struct SpeakerDeletedEvent: EventPayload {
     public static let eventType = "speaker_deleted"
 
     public let speakerId: String
-    /// Always `true` — Epic 5 deletes are always soft (R32b).
+    /// Always `true` — speaker deletes are always soft (R32b).
     public let softDelete: Bool
     /// ISO-8601 UTC instant after which the record is no longer recoverable.
     public let recoverableUntil: String
@@ -691,7 +695,7 @@ public struct LibraryBackupCreatedEvent: EventPayload {
 
 /// `library_corruption_detected` — emitted when the speaker-library database
 /// fails to open / integrity-check and the last-good backup is restored
-/// (§8.13, Epic 5 edge case "library corrupted").
+/// (§8.13, edge case "library corrupted").
 public struct LibraryCorruptionDetectedEvent: EventPayload {
     public static let eventType = "library_corruption_detected"
 

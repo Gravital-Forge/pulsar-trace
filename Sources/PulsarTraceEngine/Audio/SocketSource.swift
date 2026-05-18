@@ -10,10 +10,10 @@ import Darwin
 /// domain socket (R73).
 ///
 /// In production this connects to `capture.sock`, written by
-/// `pulsartrace-capture` (Epic 7). The frame protocol is identical to
-/// `PipeSource`'s, so the engine cannot tell socket-fed audio from pipe-fed
-/// audio. In Epic 1 there is no real producer; the IPC integration tests stand
-/// up a fixture-driven writer on the other end of the socket.
+/// `pulsartrace-capture`. The frame protocol is identical to `PipeSource`'s,
+/// so the engine cannot tell socket-fed audio from pipe-fed audio. The IPC
+/// integration tests stand up a fixture-driven writer on the other end of
+/// the socket.
 public final class SocketSource: AudioFrameSource, @unchecked Sendable {
     public typealias Element = AudioStreamEvent
 
@@ -71,12 +71,11 @@ public final class SocketSource: AudioFrameSource, @unchecked Sendable {
     /// Open and connect a `SOCK_STREAM` Unix domain socket.
     ///
     /// The producer must already be `listen()`ing before `connect()` is called.
-    /// In Epic 1 this is guaranteed: the only producers are tests, which call
-    /// `FixtureSocketServer.start()` (which returns after `listen()`) before
-    /// the consumer's `start()`. A connect-retry against a separately-spawned
-    /// producer process is an Epic 7 concern (the real capture daemon) and is
-    /// intentionally not done here — a naive retry that closes half-open
-    /// sockets pollutes the listen backlog.
+    /// For tests this is guaranteed: they call `FixtureSocketServer.start()`
+    /// (which returns after `listen()`) before the consumer's `start()`. A
+    /// connect-retry against a separately-spawned producer process (the real
+    /// capture daemon) is intentionally not done here — a naive retry that
+    /// closes half-open sockets pollutes the listen backlog.
     static func connect(to path: String) throws -> Int32 {
         let sunPathCapacity = MemoryLayout.size(ofValue: sockaddr_un().sun_path)
         guard path.utf8.count < sunPathCapacity else {

@@ -9,7 +9,7 @@ import Logging
 /// bootstraps logging + the events writer and emits `app_started`; `stop()`
 /// emits `app_stopped` and flushes both logs.
 public final class AppLifecycle: @unchecked Sendable {
-    /// The shared events writer for the process; later epics emit through it.
+    /// The shared events writer for the process; subsystems emit through it.
     public let events: EventWriter
     private let rotator: LogRotator
     private let logger: Logger

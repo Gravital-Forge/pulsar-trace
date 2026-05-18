@@ -3,10 +3,10 @@ import PulsarTraceEngine
 
 /// `pulsartrace-engine` — the streaming engine binary.
 ///
-/// Epic 1 scope: consume an `AudioFrameSource` and report a frame count.
-/// Epic 2 adds `--transcribe`: run a source through `WhisperTranscriber` and
-/// print the R13 markdown transcript. Whisper streaming and diarization land in
-/// later epics behind the same source-consuming loop.
+/// In its simplest mode it consumes an `AudioFrameSource` and reports a frame
+/// count. `--transcribe` runs a source through `WhisperTranscriber` and
+/// prints the R13 markdown transcript. Whisper streaming and diarization run
+/// behind the same source-consuming loop.
 ///
 /// Usage:
 ///   pulsartrace-engine --stdin                  Read raw f32le PCM from stdin.
@@ -71,7 +71,7 @@ struct EngineMain {
             """)
     }
 
-    /// Epic 2: offline-transcribe a fixture source and render R13 markdown.
+    /// Offline-transcribe a fixture source and render R13 markdown.
     ///
     /// Downloads/verifies the requested model on first use (R54c/R54d), keeps
     /// it resident in one `WhisperTranscriber`, and runs the whole fixture
@@ -99,13 +99,13 @@ struct EngineMain {
         return output.markdown
     }
 
-    /// Epic 6/7: run the live pass — streaming transcription + provisional
+    /// Run the live pass — streaming transcription + provisional
     /// live diarization — over a source, growing an append-only `live.md`.
     ///
     /// Sources:
     /// - `--stdin` / `--source fixture <wav>` — a single stream, treated as the
     ///   **system stream** (diarized, `Them …` labels).
-    /// - `--system-socket <path>` (+ optional `--mic-socket <path>`) — Epic 7
+    /// - `--system-socket <path>` (+ optional `--mic-socket <path>`) —
     ///   real-capture mode: the system stream and, when paired, the `You` mic
     ///   stream, each read from a `pulsartrace-capture` Unix domain socket.
     ///
@@ -132,7 +132,7 @@ struct EngineMain {
                 .deletingPathExtension().lastPathComponent
         } else if let systemSocket = value(after: "--system-socket", in: args)
                     ?? value(after: "--mic-socket", in: args) {
-            // Epic 7: capture-daemon sockets. The system socket is the primary
+            // Capture-daemon sockets. The system socket is the primary
             // (diarized) stream; a mic socket is a paired `You` stream only
             // when a system socket is also present.
             source = SocketSource(socketPath: URL(fileURLWithPath: systemSocket))
@@ -219,7 +219,7 @@ struct EngineMain {
 
     /// Build the `LiveDiarizer.Configuration` against the dev venv + repo
     /// `.env` — mirrors `RefineCommand.makeDiarizer`'s wiring (project-docs/DECISIONS.md
-    /// D3/D9). Epic 10 swaps this for the bundled python runtime.
+    /// D3/D9). A future change swaps this for the bundled python runtime.
     static func liveDiarizerConfig() -> LiveDiarizer.Configuration {
         let env = ProcessInfo.processInfo.environment
         let repoRoot: URL

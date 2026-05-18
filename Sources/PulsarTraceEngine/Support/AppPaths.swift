@@ -39,21 +39,21 @@ public struct AppPaths: Sendable {
         applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
     }
 
-    /// Directory for per-session capture sockets: `…/PulsarTrace/sockets/`
-    /// (Epic 7). `pulsartrace-capture` binds its Unix domain sockets here;
+    /// Directory for per-session capture sockets: `…/PulsarTrace/sockets/`.
+    /// `pulsartrace-capture` binds its Unix domain sockets here;
     /// `pulsartrace-engine` connects to them via `SocketSource`.
     public var socketDirectory: URL {
         applicationSupport.appendingPathComponent("sockets", isDirectory: true)
     }
 
-    /// The system-audio capture socket for one recording session (Epic 7).
+    /// The system-audio capture socket for one recording session.
     /// The `recordingId` keeps concurrent sessions from colliding.
     public func systemSocketURL(recordingId: String) -> URL {
         socketDirectory.appendingPathComponent(
             "\(recordingId)-system.sock", isDirectory: false)
     }
 
-    /// The microphone capture socket for one recording session (Epic 7).
+    /// The microphone capture socket for one recording session.
     public func micSocketURL(recordingId: String) -> URL {
         socketDirectory.appendingPathComponent(
             "\(recordingId)-mic.sock", isDirectory: false)
@@ -63,7 +63,7 @@ public struct AppPaths: Sendable {
 /// ISO-8601 / UTC formatting used by both the operational log and events log.
 ///
 /// The formatters are allocated once and cached as statics: `logLine`/`event`
-/// are hot paths in later epics (one call per log line / per event), and
+/// are hot paths (one call per log line / per event), and
 /// `ISO8601DateFormatter`/`DateFormatter` are expensive to construct. The
 /// formatters are immutable after construction and only read here, so sharing
 /// them across threads is safe.

@@ -36,7 +36,7 @@ struct EventSnapshotTests {
         assertSnapshot(of: line, as: .lines)
     }
 
-    // MARK: - Speaker library events (Epic 5)
+    // MARK: - Speaker library events
 
     /// Encode `payload` with a fixed envelope so the JSONL line is snapshot-stable.
     private func line<P: EventPayload>(
@@ -124,7 +124,7 @@ struct EventSnapshotTests {
             recoveredFromBackup: true)), as: .lines)
     }
 
-    // MARK: - Live-pass events (Epic 6)
+    // MARK: - Live-pass events
 
     @Test("live_md_started JSONL line matches the recorded snapshot")
     func liveMDStartedSnapshot() throws {
@@ -133,7 +133,7 @@ struct EventSnapshotTests {
             pathBasename: "live.md")), as: .lines)
     }
 
-    // MARK: - Recording-lifecycle events (Epic 7)
+    // MARK: - Recording-lifecycle events
 
     @Test("recording_started JSONL line matches the recorded snapshot")
     func recordingStartedSnapshot() throws {

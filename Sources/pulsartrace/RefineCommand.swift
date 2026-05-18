@@ -6,8 +6,8 @@ import PulsarTraceEngine
 /// `final.md` + `metadata.json`.
 ///
 /// Progress (R26) is reported as lightweight stderr lines. The menubar
-/// consuming progress over `control.sock` is Epic 8 — for the CLI, stderr is
-/// the whole progress surface.
+/// consuming progress over `control.sock` is a future addition — not built
+/// here; for the CLI, stderr is the whole progress surface.
 enum RefineCommand {
 
     /// Parsed `refine` arguments.
@@ -59,7 +59,7 @@ enum RefineCommand {
         do {
             // The whole refine orchestration — model fetch, VAD, diarizer
             // wiring, speaker library, pipeline — lives in `OfflineRefiner`
-            // so the Epic 8 menubar can run an identical refine in-process
+            // so the menubar can run an identical refine in-process
             // without shelling to this CLI (D23).
             let refiner = OfflineRefiner(events: events, paths: .standard)
             let output = try await refiner.refine(

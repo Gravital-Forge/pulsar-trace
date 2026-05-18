@@ -2,9 +2,9 @@ import Foundation
 
 /// First-run onboarding tour (R46) — a P2/deferred feature.
 ///
-/// R46 (the guided onboarding tour) is P2 and not built in Epic 8. This stub
+/// R46 (the guided onboarding tour) is P2 and not yet built. This stub
 /// keeps the menubar's wiring complete: `OnboardingTourView` binds to it and,
-/// because `isNeeded` is always `false`, the tour never shows. A later epic
+/// because `isNeeded` is always `false`, the tour never shows. A later change
 /// can flesh this out without changing the call sites.
 @MainActor
 @Observable

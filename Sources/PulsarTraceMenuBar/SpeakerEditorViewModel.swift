@@ -23,7 +23,7 @@ public struct UndoToast: Identifiable, Sendable {
 /// Drives the menubar speaker editor (R44): rename / merge / split / delete /
 /// undelete, each followed by the retroactive `final.md` rewrite (D16).
 ///
-/// Every mutating op follows the Epic 8 causal contract:
+/// Every mutating op follows the causal contract:
 /// 1. mutate `SpeakerLibrary` with `suppressEvent: true` (DB write only),
 /// 2. run `FinalMarkdownRewriter` over the affected appearances,
 /// 3. emit the single `speaker_*` event with a populated

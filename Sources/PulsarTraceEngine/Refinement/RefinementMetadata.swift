@@ -17,14 +17,15 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
 
     /// One speaker in the refined transcript.
     public struct Speaker: Codable, Equatable, Sendable {
-        /// Transcript-facing label. From Epic 5 this is the persistent library
-        /// name (`Steve`, `Unknown #1`) for system-stream speakers; `You` for
-        /// the mic stream. Pre-Epic-5 `final.md` files carry `Speaker_N`.
+        /// Transcript-facing label. When a speaker library is configured this
+        /// is the persistent library name (`Steve`, `Unknown #1`) for
+        /// system-stream speakers; `You` for the mic stream. Without a library
+        /// `final.md` files carry `Speaker_N`.
         public let label: String
         /// True for the mic-stream speaker (`You`) — never diarized (R17).
         public let isMicrophone: Bool
         /// Stable library speaker id (`spk_<ulid>`, R83) — present for a
-        /// system-stream speaker reconciled against the library (Epic 5),
+        /// system-stream speaker reconciled against the library,
         /// `nil` for `You` and for a speaker not reconciled (e.g. diarization
         /// skipped, or no library configured).
         public let speakerId: String?

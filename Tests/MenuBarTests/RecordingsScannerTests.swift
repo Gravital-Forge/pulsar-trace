@@ -3,9 +3,9 @@ import Foundation
 import PulsarTraceEngine
 @testable import PulsarTraceMenuBar
 
-/// Epic 8 — `RecordingsScanner` builds the menubar recordings list (R31) from
+/// `RecordingsScanner` builds the menubar recordings list (R31) from
 /// the `metadata.json` sidecars under the output folder(s).
-@Suite("RecordingsScanner (Epic 8)")
+@Suite("RecordingsScanner")
 @MainActor
 struct RecordingsScannerTests {
 

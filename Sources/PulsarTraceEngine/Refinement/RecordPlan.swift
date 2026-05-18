@@ -8,7 +8,7 @@ import Foundation
 /// never touches the filesystem or spawns a process. `RecordOrchestrator`
 /// consumes the plan; `RecordCommand` (CLI) parses options into it. Keeping
 /// argv construction here makes the capture↔engine wiring unit-testable
-/// without real audio, and is the orchestration code path the Epic 8 menubar
+/// without real audio, and is the orchestration code path the menubar
 /// reuses.
 public struct RecordPlan: Sendable, Equatable {
     /// The recording id (`rec_<short>`) shared by capture, engine, and events.

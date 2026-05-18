@@ -2,10 +2,10 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of `StreamingTranscriber`'s pure utterance-grouping logic
-/// (Epic 6). The whisper-driven streaming behaviour is exercised end-to-end in
+/// Unit coverage of `StreamingTranscriber`'s pure utterance-grouping logic.
+/// The whisper-driven streaming behaviour is exercised end-to-end in
 /// the Pipeline suite; this covers the deterministic grouping in isolation.
-@Suite("Streaming transcriber grouping (Epic 6)")
+@Suite("Streaming transcriber grouping")
 struct StreamingTranscriberUnitTests {
 
     private func token(_ text: String, startMS: Int, endMS: Int)

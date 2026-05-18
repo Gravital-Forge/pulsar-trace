@@ -41,7 +41,7 @@ struct DiarizationE2ETests {
     }
 
     /// Load `HF_TOKEN` (and any other vars) from the repo `.env` for the
-    /// subprocess. Production (Epic 10) sources the token from the Keychain;
+    /// subprocess. Production sources the token from the Keychain;
     /// this dev-only `.env` read is documented in project-docs/DECISIONS.md D9.
     private static func dotEnv() -> [String: String] {
         let envFile = repoRoot.appendingPathComponent(".env")

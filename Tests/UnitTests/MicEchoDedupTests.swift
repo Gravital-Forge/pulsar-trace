@@ -2,12 +2,12 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of mic-echo deduplication (Epic 6, R19).
+/// Unit coverage of mic-echo deduplication (R19).
 ///
 /// When the user listens on speakers, the mic picks up the system audio and
 /// the same words appear twice. R19: a mic utterance > 0.5 similar to a system
 /// utterance within ±5 s is an echo — the mic-side copy is dropped.
-@Suite("Mic-echo dedup (Epic 6, R19)")
+@Suite("Mic-echo dedup (R19)")
 struct MicEchoDedupTests {
 
     @Test("identical text within the window is detected as an echo")

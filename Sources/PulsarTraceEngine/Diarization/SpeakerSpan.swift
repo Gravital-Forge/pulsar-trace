@@ -36,8 +36,8 @@ public struct SpeakerSpan: Sendable, Equatable {
 ///
 /// 256-dimensional in pyannote community-1. The embedding is in pyannote's own
 /// vector space so it is directly comparable with the live pass and the
-/// persistent speaker library — provided the `modelRevision` matches (Epic 5
-/// refuses cross-checkpoint matches; Open Question #3).
+/// persistent speaker library — provided the `modelRevision` matches (the
+/// speaker library refuses cross-checkpoint matches; Open Question #3).
 public struct SpeakerEmbedding: Sendable, Equatable {
     /// Raw pyannote speaker label this embedding belongs to.
     public let speaker: String
@@ -56,7 +56,7 @@ public struct DiarizationResult: Sendable, Equatable {
     /// pyannote model identifier (`pyannote/speaker-diarization-community-1`).
     public let model: String
     /// Hugging Face hub commit SHA of the model *checkpoint*. This is the
-    /// authoritative model identity — Epic 5's speaker library refuses to
+    /// authoritative model identity — the speaker library refuses to
     /// match embeddings across a different `modelRevision` (Open Question #3).
     /// Empty when an older Python build produced the JSON.
     public let modelRevision: String

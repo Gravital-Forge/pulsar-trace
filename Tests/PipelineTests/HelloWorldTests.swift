@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Proves the `Pipeline` test target and fixture locator work (Epic 1).
+/// Proves the `Pipeline` test target and fixture locator work.
 @Suite("Pipeline hello-world")
 struct PipelineHelloWorldTests {
 

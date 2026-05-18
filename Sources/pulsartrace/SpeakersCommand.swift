@@ -2,7 +2,7 @@ import Foundation
 import PulsarTraceEngine
 
 /// `pulsartrace speakers <list|rename|merge|delete>` — terminal management of
-/// the persistent speaker library (R49, Epic 5).
+/// the persistent speaker library (R49).
 ///
 /// Operates directly on `~/Library/Application Support/PulsarTrace/speakers.sqlite`
 /// and emits the corresponding `speaker_*` events.
@@ -10,8 +10,9 @@ import PulsarTraceEngine
 /// Scope note (project-docs/DECISIONS.md D16): `rename`/`merge` here update the library and
 /// emit the speaker event, but do NOT retroactively rewrite past `final.md`
 /// files — that retroactive rewrite (and the paired `final_md_rewritten`
-/// event) is Epic 8 scope per PRD §15. The new name takes effect on the next
-/// `pulsartrace refine` of a recording, when reconciliation applies it.
+/// event) is the menubar speaker editor's job per PRD §15. From the CLI, the
+/// new name takes effect on the next `pulsartrace refine` of a recording,
+/// when reconciliation applies it.
 enum SpeakersCommand {
 
     /// Run `pulsartrace speakers …`. Returns the process exit code.
@@ -98,7 +99,7 @@ enum SpeakersCommand {
         try await library.rename(speakerId: id, to: newName)
         out("renamed \(id) → \"\(newName)\"")
         out("note: past final.md files are not rewritten; the new name applies "
-            + "on the next `pulsartrace refine` (Epic 8 adds retroactive rewrite).")
+            + "on the next `pulsartrace refine`.")
         return 0
     }
 
@@ -143,7 +144,7 @@ enum SpeakersCommand {
               merge  <primary-id> <other-id>  Merge two speakers (soft, undoable)
               delete <speaker-id>           Soft-delete a speaker (undoable 30d)
 
-            Split and the menubar editor are delivered in Epic 8.
+            Speaker split is available in the menubar speaker editor.
             """)
     }
 

@@ -3,7 +3,7 @@ import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// PulsarTrace's menubar app (Epic 8, D27).
+/// PulsarTrace's menubar app (D27).
 ///
 /// A thin SwiftUI shell over `PulsarTraceMenuBar`'s ViewModels — no logic
 /// lives here. It is a `MenuBarExtra` app: an accessory-policy process with no
@@ -16,7 +16,7 @@ struct PulsarTraceMacApp: App {
 
     init() {
         // No Dock icon, no app-switcher entry — PulsarTrace lives in the
-        // menubar (D27). Set in code; there is no `.app` bundle in Epic 8.
+        // menubar (D27). Set in code; there is no `.app` bundle yet.
         //
         // `NSApplication.shared` — not the `NSApp` global — because `App.init()`
         // runs before SwiftUI has created the application object: `NSApp` is

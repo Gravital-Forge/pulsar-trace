@@ -2,7 +2,7 @@ import Foundation
 import Logging
 
 /// Runs one offline refine pass in-process — the reusable orchestration shared
-/// by the `pulsartrace refine` CLI and the Epic 8 menubar (D23: the menubar
+/// by the `pulsartrace refine` CLI and the menubar (D23: the menubar
 /// must NOT shell out to the `pulsartrace` CLI; both are sibling front-ends
 /// over `PulsarTraceEngine`).
 ///
@@ -16,7 +16,7 @@ import Logging
 /// dev-tree path baked into the binary at build time.
 /// `PULSARTRACE_REPO_ROOT`, `PULSARTRACE_VENV_PYTHON` and `HF_TOKEN`
 /// environment variables take precedence so a binary can run off a machine
-/// that is not the build host, ahead of full Epic 10 packaging.
+/// that is not the build host, ahead of full app packaging.
 public struct OfflineRefiner: Sendable {
 
     /// A lightweight progress line — the CLI prints these to stderr, the
@@ -99,8 +99,8 @@ public struct OfflineRefiner: Sendable {
 
     /// Build a `Diarizer` against the dev venv + repo `.env` (D3/D9).
     ///
-    /// Epic 10 swaps this for the bundled `python-build-standalone` runtime;
-    /// the IPC boundary is identical, only this wiring changes.
+    /// Packaging will later swap this for the bundled `python-build-standalone`
+    /// runtime; the IPC boundary is identical, only this wiring changes.
     public static func makeDiarizer() throws -> Diarizer {
         let repoRoot = repoRootURL()
         let pythonWorkingDir = repoRoot
@@ -142,7 +142,7 @@ public struct OfflineRefiner: Sendable {
     ///
     /// `PULSARTRACE_REPO_ROOT` (if set) takes precedence — a cheap robustness
     /// override so the binary can be run off the build host ahead of full
-    /// Epic 10 packaging (D3). The `#filePath`-derived path is the dev-tree
+    /// app packaging (D3). The `#filePath`-derived path is the dev-tree
     /// fallback: a build-machine path baked into the binary.
     private static func repoRootURL() -> URL {
         if let root = ProcessInfo.processInfo.environment["PULSARTRACE_REPO_ROOT"],

@@ -55,7 +55,7 @@ final class SQLiteDatabase {
             handle = nil
             throw SQLiteError.open(rc, message)
         }
-        // WAL (R32a): a concurrent reader (the live engine, Epic 6) and a
+        // WAL (R32a): a concurrent reader (the live engine) and a
         // single writer coexist; two writers serialize on SQLite's lock.
         //
         // `sqlite3_exec` reports SQLITE_OK even when SQLite silently falls
@@ -176,7 +176,7 @@ final class SQLiteDatabase {
 
     /// The schema migration counter (`PRAGMA user_version`). 0 on a fresh
     /// database; `SpeakerLibrary.migrate` sets it to the current schema
-    /// version so Epic 8's migration knows what is already applied.
+    /// version so a future schema migration knows what is already applied.
     var userVersion: Int32 {
         get {
             (try? query("PRAGMA user_version;").first?.int(0)).flatMap { $0 }

@@ -1,7 +1,7 @@
 import Foundation
 import Logging
 
-/// The persistent, cross-recording speaker library (Epic 5 — R28, R30, R32a,
+/// The persistent, cross-recording speaker library (R28, R30, R32a,
 /// R32b, R83).
 ///
 /// An `actor` over a single SQLite database (`speakers.sqlite`). Diarization
@@ -195,7 +195,7 @@ public actor SpeakerLibrary {
     // MARK: - Schema (R28)
 
     /// The current speaker-library schema version. Stored in `PRAGMA
-    /// user_version` (S3) so Epic 8's migration can tell what is applied.
+    /// user_version` (S3) so a future schema migration can tell what is applied.
     /// Bump this and add a versioned migration step when the schema changes.
     private static let schemaVersion: Int32 = 1
 
@@ -243,8 +243,8 @@ public actor SpeakerLibrary {
                     ON speakers(deleted_at);
                 """)
         }
-        // Record the applied schema version (S3) so Epic 8's migration knows
-        // what is in place. `user_version` is a connection-level pragma, not
+        // Record the applied schema version (S3) so a future schema migration
+        // knows what is in place. `user_version` is a connection-level pragma, not
         // transactional, so it is set after the DDL transaction commits.
         if db.userVersion < schemaVersion {
             try db.setUserVersion(schemaVersion)
@@ -443,17 +443,18 @@ public actor SpeakerLibrary {
 
     // MARK: - Rename (R83 — speaker_renamed)
 
-    /// Change a speaker's display name. The `id` is unchanged (R83). Epic 5
-    /// does NOT retroactively rewrite past `final.md` files (D16 — that is
-    /// Epic 8), so `applied_to_recordings` is empty and no `final_md_rewritten`
-    /// is paired with this event.
+    /// Change a speaker's display name. The `id` is unchanged (R83). This
+    /// method does NOT retroactively rewrite past `final.md` files (D16 — the
+    /// rewrite is a separate step), so `applied_to_recordings` is empty and no
+    /// `final_md_rewritten` is paired with this event.
     ///
     /// - Parameter suppressEvent: when `true`, the DB write + backup are done
-    ///   but `speaker_renamed` is NOT emitted. The Epic 8 caller uses this so
-    ///   it can emit the event AFTER the retroactive `final.md` rewrite, with a
-    ///   populated `applied_to_recordings`, in causal order. The returned old
-    ///   name is what the caller needs to drive the rewrite. Default `false`
-    ///   keeps the Epic 5 behaviour unchanged.
+    ///   but `speaker_renamed` is NOT emitted. A caller that drives the
+    ///   retroactive rewrite uses this so it can emit the event AFTER the
+    ///   `final.md` rewrite, with a populated `applied_to_recordings`, in
+    ///   causal order. The returned old name is what the caller needs to drive
+    ///   the rewrite. Default `false` keeps the plain rename behaviour
+    ///   unchanged.
     /// - Returns: the speaker's name *before* the rename.
     @discardableResult
     public func rename(
@@ -534,14 +535,15 @@ public actor SpeakerLibrary {
     /// as the count-weighted mean of the two (R30). Emits `speaker_merged`.
     ///
     /// A false merge of two genuinely-distinct speakers is recoverable via
-    /// `unmerge` (Epic 5 edge case "two distinct speakers within threshold").
+    /// `unmerge` (edge case "two distinct speakers within threshold").
     ///
     /// - Parameter suppressEvent: when `true`, the DB mutation + backup are
-    ///   done but `speaker_merged` is NOT emitted — the Epic 8 caller emits it
-    ///   after the retroactive `final.md` rewrite with a populated
-    ///   `applied_to_recordings`. Default `false` keeps the Epic 5 behaviour.
+    ///   done but `speaker_merged` is NOT emitted — a caller that drives the
+    ///   retroactive rewrite emits it after the `final.md` rewrite with a
+    ///   populated `applied_to_recordings`. Default `false` keeps the plain
+    ///   merge behaviour.
     /// - Returns: `(primaryName, otherName)` — the display names before the
-    ///   merge, so the Epic 8 caller can rewrite `otherName` to `primaryName`
+    ///   merge, so the caller can rewrite `otherName` to `primaryName`
     ///   across the merged speaker's past `final.md` files.
     @discardableResult
     public func merge(
@@ -683,16 +685,17 @@ public actor SpeakerLibrary {
     /// speaker. Emits `speaker_split` followed by `speaker_created` for the new
     /// speaker.
     ///
-    /// CLI surface for split is Epic 8; this library operation exists and is
-    /// tested in Epic 5 (per the brief).
+    /// The CLI surface for split is a separate, later concern; this library
+    /// operation exists and is tested directly.
     ///
     /// - Parameter suppressEvent: when `true`, the `speaker_split` event is NOT
-    ///   emitted — the Epic 8 caller emits it after the retroactive `final.md`
-    ///   rewrite with a populated `applied_to_recordings`. The `speaker_created`
-    ///   for the new speaker is still emitted: it records a genuine new library
-    ///   row, not the retroactive rewrite. Default `false` keeps Epic 5
-    ///   behaviour. The original speaker's name (needed to drive the rewrite of
-    ///   the moved recordings to `newName`) is `speaker(id: originalId)?.name`.
+    ///   emitted — a caller that drives the retroactive rewrite emits it after
+    ///   the `final.md` rewrite with a populated `applied_to_recordings`. The
+    ///   `speaker_created` for the new speaker is still emitted: it records a
+    ///   genuine new library row, not the retroactive rewrite. Default `false`
+    ///   keeps the plain split behaviour. The original speaker's name (needed
+    ///   to drive the rewrite of moved recordings to `newName`) is
+    ///   `speaker(id: originalId)?.name`.
     /// - Returns: the new `Speaker`.
     @discardableResult
     public func split(

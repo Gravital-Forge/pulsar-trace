@@ -13,25 +13,26 @@ import Foundation
 /// ```
 ///
 /// - The header carries the local wall-clock at which recording *started*,
-///   captured once. (Epic 4 also stores it in `metadata.json`; Epic 2 just
-///   writes the header.)
+///   captured once. This renderer only writes the header; the wall-clock is
+///   also stored in `metadata.json` by the recording pipeline.
 /// - Each utterance line's `[HH:MM:SS]` is **seconds-since-recording-start**,
 ///   not wall-clock — this is the R13 wording and it sidesteps DST / timezone
 ///   shifts mid-recording.
-/// - Epic 2 has no diarization, so every line uses the single placeholder
-///   speaker label `Speaker`. Epic 3 replaces it with diarized labels.
+/// - When no speaker labels are supplied, every line uses the single
+///   placeholder speaker label `Speaker`; callers with diarization pass
+///   per-segment labels instead.
 ///
 /// `live.md` / `final.md` is a public API surface; treat this format as
 /// SemVer-stable (see `docs/file-format.md`).
 public struct TranscriptDocument: Sendable, Equatable {
 
-    /// The file marker. Epic 2's offline path produces a finished transcript.
+    /// The file marker. The offline path produces a finished transcript.
     public enum Marker: String, Sendable {
         case live = "<!-- pulsartrace:live -->"
         case final = "<!-- pulsartrace:final -->"
     }
 
-    /// The placeholder speaker label used until Epic 3 adds diarization.
+    /// The placeholder speaker label used when no diarized labels are supplied.
     public static let placeholderSpeaker = "Speaker"
 
     /// Wall-clock at which recording started (header line).
@@ -47,7 +48,7 @@ public struct TranscriptDocument: Sendable, Equatable {
     ///   - recordingStart: wall-clock recording-start instant (header).
     ///   - segments: utterances with start/end relative to `recordingStart`.
     ///   - speakerLabels: one label per segment; when `nil` every line gets the
-    ///     placeholder `Speaker` (Epic 2 has no diarization).
+    ///     placeholder `Speaker`.
     ///   - marker: `.final` for the offline path (default).
     public init(
         recordingStart: Date,

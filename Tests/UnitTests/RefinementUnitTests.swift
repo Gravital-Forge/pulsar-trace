@@ -2,13 +2,13 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the Epic 4 refinement building blocks: the atomic-write
+/// Unit coverage of the refinement building blocks: the atomic-write
 /// helper, the `metadata.json` shape, the recording-folder input dispatch, and
 /// the refinement event payload encoding.
 ///
 /// These are pure / filesystem-only and run in well under the Unit budget —
 /// the heavy whisper + pyannote path is exercised by the Pipeline suite.
-@Suite("Refinement units (Epic 4)")
+@Suite("Refinement units")
 struct RefinementUnitTests {
 
     /// A throwaway temp directory for one test; cleaned up by the caller.

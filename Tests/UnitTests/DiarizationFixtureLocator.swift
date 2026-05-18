@@ -2,7 +2,7 @@ import Foundation
 
 /// Resolves committed diarization JSON fixtures by repo-relative path.
 ///
-/// These fixtures are generated **once** from real pyannote (Epic 3) and
+/// These fixtures are generated **once** from real pyannote and
 /// committed at `Tests/Fixtures/diarization/`. The Swift merge / Pipeline
 /// tests consume them so they stay fast and deterministic — running pyannote
 /// (~10–30s model load) in every Swift test run would blow the ~30s budget.

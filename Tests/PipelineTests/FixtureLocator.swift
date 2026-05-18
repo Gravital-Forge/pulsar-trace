@@ -31,7 +31,7 @@ enum FixtureLocator {
     }
 
     /// The committed diarization JSON fixtures directory. These are generated
-    /// once from real pyannote (Epic 3) and committed so the Swift merge /
+    /// once from real pyannote and committed so the Swift merge /
     /// Pipeline tests stay fast — see `DiarizationMergePipelineTests`.
     static let diarizationDirectory: URL =
         testsRoot.appendingPathComponent("Fixtures/diarization", isDirectory: true)

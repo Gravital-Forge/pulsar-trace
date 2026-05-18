@@ -59,7 +59,7 @@ struct DiarizationMergePipelineTests {
             diarization: diarization)
 
         let markdown = document.render()
-        // Real diarized labels replace the Epic 2 placeholder.
+        // Real diarized labels replace the single placeholder speaker label.
         #expect(markdown.contains("] Speaker_0:**"))
         #expect(markdown.contains("] Speaker_1:**"))
         #expect(!markdown.contains("] Speaker:**"))

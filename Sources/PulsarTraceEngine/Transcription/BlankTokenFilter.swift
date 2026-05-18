@@ -6,7 +6,7 @@ import Foundation
 /// still occasionally emits a bracketed marker like `[BLANK_AUDIO]`, a bare
 /// musical note, or — on long silence — a stock hallucination ("thanks for
 /// watching", "please subscribe"). Those are not real utterances and must not
-/// reach `final.md`. This is the Epic 2 edge case: silence must yield no text.
+/// reach `final.md`. The governing rule: silence must yield no text.
 ///
 /// The filter is intentionally conservative: it only drops a segment when the
 /// *entire* segment is a known marker or a known full-segment hallucination, so

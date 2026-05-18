@@ -4,7 +4,7 @@ import AVFoundation
 @testable import PulsarTraceCapture
 @testable import PulsarTraceEngine
 
-/// Layer 3 — live capture through Epic 7's capture engines (R1, R2).
+/// Layer 3 — live capture through the capture engines (R1, R2).
 ///
 /// `ScreenCaptureKitTests` / `BlackHoleCaptureTests` prove the raw OS APIs
 /// work on this host; these tests prove the PulsarTrace *wrappers* —
@@ -15,7 +15,7 @@ import AVFoundation
 /// They assert that frames *flow* and are correctly shaped, not that they
 /// carry a particular signal — capturing with nothing playing yields silent
 /// frames, and that still proves the capture path.
-@Suite("Live capture engines (Epic 7)", .tags(.liveCapture),
+@Suite("Live capture engines", .tags(.liveCapture),
        .enabled(if: DeviceTestGate.enabled))
 struct DeviceCaptureEngineTests {
 

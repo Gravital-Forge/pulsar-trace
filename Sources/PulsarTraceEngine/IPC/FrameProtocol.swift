@@ -2,10 +2,9 @@ import Foundation
 
 /// The `capture.sock` binary frame protocol (R76, §17).
 ///
-/// `pulsartrace-capture` (Epic 7) writes PCM frames to a Unix domain socket;
+/// `pulsartrace-capture` writes PCM frames to a Unix domain socket;
 /// `pulsartrace-engine` reads them via `SocketSource`. The same framing is used
-/// when piping raw PCM into the engine over stdin. In Epic 1 there is no real
-/// producer — only the codec and the consuming sources exist.
+/// when piping raw PCM into the engine over stdin.
 ///
 /// Wire format, per frame:
 ///
@@ -19,7 +18,7 @@ import Foundation
 /// frame, then closes. Consumers also treat a clean EOF (no more bytes) as
 /// end-of-stream so an abruptly-closed producer still terminates cleanly.
 ///
-/// ## Control frames (Epic 7)
+/// ## Control frames
 ///
 /// A PCM frame's payload is always a positive multiple of 4 (Float32 samples).
 /// `pulsartrace-capture` also needs to signal pause/resume (system sleep, R7;
@@ -27,9 +26,9 @@ import Foundation
 /// neither `0` nor a multiple of 4 — a value a PCM frame can never have — whose
 /// payload is a 1-byte opcode followed by opcode-specific data. The
 /// read-exactly-`length`-bytes invariant is preserved, and the encoding is
-/// purely additive: `FixtureSocketServer`, `PipeSource`, and every Epic 1–6
-/// test write only frames + the zero-length EOS, so they are unaffected. See
-/// `project-docs/DECISIONS.md` (D21).
+/// purely additive: `FixtureSocketServer`, `PipeSource`, and any PCM-only
+/// producer write only frames + the zero-length EOS, so they are unaffected.
+/// See `project-docs/DECISIONS.md` (D21).
 public enum FrameProtocol {
 
     /// The end-of-stream sentinel: a frame whose declared length is zero.

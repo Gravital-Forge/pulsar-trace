@@ -6,7 +6,7 @@ import Foundation
 /// (`DiarizationDecoder`) and the `DiarizationResult` label mapping.
 ///
 /// Uses the committed `Tests/Fixtures/diarization/*.json` fixtures, which were
-/// generated once from real pyannote (Epic 3). No subprocess, no model load —
+/// generated once from real pyannote. No subprocess, no model load —
 /// these are pure decoding tests, well under the Unit budget.
 @Suite("Diarization JSON decoding")
 struct DiarizationDecodeTests {
@@ -97,7 +97,7 @@ struct DiarizationDecodeTests {
     func decodesModelRevision() throws {
         let data = try DiarizationFixtureLocator.data("two-speakers-alternating.json")
         let result = try DiarizationDecoder.decode(data)
-        // Regenerated Epic-3 fixtures carry the HF checkpoint commit SHA.
+        // Regenerated diarization fixtures carry the HF checkpoint commit SHA.
         #expect(!result.modelRevision.isEmpty)
 
         // A blob from an older Python build (no model_revision) still decodes

@@ -2,14 +2,14 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the Epic 5 speaker library: centroid math, cosine
+/// Unit coverage of the speaker library: centroid math, cosine
 /// matching, the SQLite-backed `SpeakerLibrary` actor, soft-delete + undo,
 /// merge/split and their undos, cross-model-revision refusal, and the
 /// `spk_<ulid>` ID stability invariant (R83).
 ///
 /// Uses synthetic embeddings for sharp threshold control AND the real 256-d
 /// embeddings committed at `Tests/Fixtures/diarization/*.json`.
-@Suite("Speaker library (Epic 5)")
+@Suite("Speaker library")
 struct SpeakerLibraryUnitTests {
 
     // MARK: - Helpers
@@ -56,8 +56,8 @@ struct SpeakerLibraryUnitTests {
 
     // MARK: - Event registry
 
-    @Test("all 11 Epic 5 events are registered in the EventRegistry")
-    func epic5EventsRegistered() {
+    @Test("all 11 speaker-library events are registered in the EventRegistry")
+    func allSpeakerLibraryEventsRegistered() {
         let speakerEvents = [
             "speaker_created", "speaker_renamed", "speaker_merged",
             "speaker_split", "speaker_deleted", "speaker_undeleted",

@@ -2,12 +2,12 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the LocalAgreement-2 committer (Epic 6, R10).
+/// Unit coverage of the LocalAgreement-2 committer (R10).
 ///
 /// The committer is the pure core of streaming transcription: it only commits
 /// a word once two consecutive whisper hypotheses agree on it, so `live.md`
 /// never has to be rewritten (R36).
-@Suite("LocalAgreement-2 committer (Epic 6)")
+@Suite("LocalAgreement-2 committer")
 struct LiveAgreementCommitterTests {
 
     /// Build a hypothesis token list from plain words at evenly-spaced times.

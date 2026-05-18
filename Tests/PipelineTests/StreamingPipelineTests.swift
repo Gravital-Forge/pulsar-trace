@@ -3,8 +3,7 @@ import Foundation
 import SnapshotTesting
 @testable import PulsarTraceEngine
 
-/// Pipeline coverage of the live pass (Epic 6 — R10, R12, R14, R16, R35a,
-/// R36, R37).
+/// Pipeline coverage of the live pass (R10, R12, R14, R16, R35a, R36, R37).
 ///
 /// Drives a real fixture WAV through `FixturePlaybackSource` →
 /// `StreamingTranscriber` (sliding-window whisper + LocalAgreement-2) →
@@ -18,7 +17,7 @@ import SnapshotTesting
 ///
 /// `.serialized`: whisper.cpp is single-context per process (D8) — only one
 /// transcriber alive at a time, like the real engine.
-@Suite("Streaming pipeline (Epic 6)", .serialized)
+@Suite("Streaming pipeline", .serialized)
 struct StreamingPipelineTests {
 
     private func baseModelURL() async throws -> URL {
@@ -118,7 +117,7 @@ struct StreamingPipelineTests {
     }
 
     /// Real-time-paced run: assert `live.md` grows monotonically and lag stays
-    /// **bounded** under backpressure (the Epic 6 edge case).
+    /// **bounded** under backpressure.
     ///
     /// Note on R10: the PRD's "≤ 5 s median" target is specified *on M-series*
     /// — i.e. the Metal/GPU whisper backend. This test suite must use the CPU
@@ -168,7 +167,7 @@ struct StreamingPipelineTests {
         poller.cancel()
 
         #expect(output.utteranceLines > 0)
-        // Backpressure invariant (Epic 6 edge case): CPU whisper cannot keep
+        // Backpressure invariant: CPU whisper cannot keep
         // real-time pace, so the backpressure path skips the anchor forward to
         // keep lag bounded. The fixture is ~24 s; lag must stay well under the
         // whole-recording length — i.e. it does not grow without limit.

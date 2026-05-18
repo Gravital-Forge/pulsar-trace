@@ -59,15 +59,15 @@ public struct Speaker: Sendable, Equatable, Identifiable {
 
 /// One speaker ↔ recording appearance link (R28 appearances table).
 ///
-/// Kept as a separate table so Epic 8 can later enumerate every `final.md` a
-/// speaker appears in and retroactively rewrite it after a rename/merge.
+/// Kept as a separate table so the retroactive rewrite can enumerate every
+/// `final.md` a speaker appears in and rewrite it after a rename/merge.
 public struct SpeakerAppearance: Sendable, Equatable {
     /// The speaker (`spk_<ulid>`).
     public let speakerId: String
     /// The recording (`rec_<short>`).
     public let recordingId: String
-    /// Basename of the recording folder, so Epic 8 can locate `final.md`
-    /// (basename only — Invariant #7).
+    /// Basename of the recording folder, so the retroactive rewrite can locate
+    /// `final.md` (basename only — Invariant #7).
     public let recordingFolderName: String
     /// Wall-clock the appearance was recorded (ISO-8601 UTC).
     public let observedAt: String

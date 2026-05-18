@@ -1,13 +1,13 @@
 import Foundation
 import Logging
 
-/// The Epic 1 engine core: consumes any `AudioFrameSource` and counts frames.
+/// The engine core: consumes any `AudioFrameSource` and counts frames.
 ///
 /// This is deliberately minimal — it is the proof that the engine talks only
 /// to the `AudioFrameSource` abstraction (invariant 3) and handles every
-/// source's end-of-stream uniformly (R75). Epics 2+ replace the body of the
-/// per-frame work with whisper streaming, diarization, and file output; the
-/// source-consuming loop stays exactly as it is here.
+/// source's end-of-stream uniformly (R75). Higher-level passes replace the
+/// body of the per-frame work with whisper streaming, diarization, and file
+/// output; the source-consuming loop stays exactly as it is here.
 public struct FrameConsumer: Sendable {
 
     /// Summary of a completed consumption run.

@@ -42,7 +42,7 @@ enum RecordCommand {
             return 0
         }
 
-        // --- host guards (Epic 9 edge cases) --------------------------------
+        // --- host guards (edge cases) ---------------------------------------
         let os = ProcessInfo.processInfo.operatingSystemVersion
         if os.majorVersion < 14 {
             err("record: PulsarTrace requires macOS 14 or later "

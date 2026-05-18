@@ -1,6 +1,6 @@
 import Foundation
 
-/// LocalAgreement-2 commit logic for streaming transcription (Epic 6, R10).
+/// LocalAgreement-2 commit logic for streaming transcription (R10).
 ///
 /// The streaming path runs whisper repeatedly on overlapping windows of recent
 /// audio. Each run produces a *hypothesis* — the best transcript whisper can

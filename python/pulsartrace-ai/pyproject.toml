@@ -9,8 +9,7 @@ license = { text = "MIT" }
 # Runtime dependencies. Exact versions (the full transitive closure) are
 # pinned in requirements.lock — the source of truth installed by
 # python/build-venv.sh. These ranges document the direct deps only; the lock
-# governs what is actually installed. diart (live diarization) is added in
-# Epic 6; Epic 3 is offline-only.
+# governs what is actually installed.
 dependencies = [
     "pyannote.audio>=4.0,<5.0",
     "torch>=2.8",

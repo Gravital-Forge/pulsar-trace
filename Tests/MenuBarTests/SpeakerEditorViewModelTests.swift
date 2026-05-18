@@ -3,10 +3,10 @@ import Foundation
 import PulsarTraceEngine
 @testable import PulsarTraceMenuBar
 
-/// Epic 8 — `SpeakerEditorViewModel` drives rename/merge/delete/undelete and
+/// `SpeakerEditorViewModel` drives rename/merge/delete/undelete and
 /// the retroactive `final.md` rewrite (R44, D16), emitting `speaker_*` events
 /// with a populated `applied_to_recordings` in causal order.
-@Suite("SpeakerEditorViewModel (Epic 8)")
+@Suite("SpeakerEditorViewModel")
 @MainActor
 struct SpeakerEditorViewModelTests {
 

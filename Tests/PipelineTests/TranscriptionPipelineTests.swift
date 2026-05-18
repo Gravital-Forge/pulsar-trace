@@ -73,7 +73,7 @@ struct TranscriptionPipelineTests {
         #expect(text.contains("barista"))
         #expect(text.contains("cinnamon"))
 
-        // Every utterance line uses the Epic 2 placeholder speaker.
+        // Every utterance line uses the single placeholder speaker label.
         for line in output.markdown.split(separator: "\n") where line.hasPrefix("**[") {
             #expect(line.contains("] Speaker:**"))
         }
@@ -94,8 +94,8 @@ struct TranscriptionPipelineTests {
             try await pipeline.run(source: source, transcriber: transcriber)
         }
 
-        // Epic 2 edge case: whisper must not hallucinate "thanks for watching"
-        // (or any stock phrase) over the leading silence.
+        // whisper must not hallucinate "thanks for watching" (or any stock
+        // phrase) over the leading silence.
         let text = output.markdown.lowercased()
         #expect(!text.contains("thanks for watching"))
         #expect(!text.contains("please subscribe"))

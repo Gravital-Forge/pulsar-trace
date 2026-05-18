@@ -1,7 +1,7 @@
 import Foundation
 import Logging
 
-/// The live pass, end to end (Epic 6).
+/// The live pass, end to end.
 ///
 /// Drives one or two `AudioFrameSource`s at real-time pace and grows an
 /// append-only `live.md` so an external AI agent can `tail -f` it during a
@@ -25,7 +25,7 @@ import Logging
 /// ## Stream mapping (single-pipe input)
 ///
 /// A single `--stdin` / `--source fixture` stream is treated as the **system
-/// stream**: it is diarized and labelled `Them …`. This matches Epic 4's
+/// stream**: it is diarized and labelled `Them …`. This matches the
 /// bare-WAV rule (a lone stream is system audio) and the PRD's framing that the
 /// system stream is "the one or more Them-speakers". The mic stream is opt-in:
 /// when a paired mic source is supplied, its utterances are `You` and never

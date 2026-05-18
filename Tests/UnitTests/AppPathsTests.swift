@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of `AppPaths` location resolution (Epic 7 adds the capture
+/// Unit coverage of `AppPaths` location resolution (including the capture
 /// socket paths).
 @Suite("AppPaths")
 struct AppPathsTests {

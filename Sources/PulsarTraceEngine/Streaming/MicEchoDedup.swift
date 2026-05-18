@@ -1,6 +1,6 @@
 import Foundation
 
-/// Mic-echo deduplication for the live pass (Epic 6, R19).
+/// Mic-echo deduplication for the live pass (R19).
 ///
 /// When the user listens to a call on **speakers** (not headphones), the
 /// system audio is played out loud and the **microphone picks it up too**. The

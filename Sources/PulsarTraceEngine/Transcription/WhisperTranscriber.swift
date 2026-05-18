@@ -58,10 +58,11 @@ public struct SpeechRegion: Sendable, Equatable {
 /// no `whisper-cli` subprocess. The model file is loaded with Metal
 /// acceleration enabled (the library is built `-DGGML_METAL=ON`).
 ///
-/// Epic 2 is offline-only: `transcribe(_:)` takes the *whole* recording as one
-/// contiguous Float32 buffer and makes a single `whisper_full` call. With no
-/// chunking there are no chunk-boundary artifacts, which satisfies R11 for the
-/// offline path. Streaming/overlap-windowing is Epic 6.
+/// The offline path uses `transcribe(_:)`: it takes the *whole* recording as
+/// one contiguous Float32 buffer and makes a single `whisper_full` call. With
+/// no chunking there are no chunk-boundary artifacts, which satisfies R11 for
+/// the offline path. The live pass instead drives `transcribeWindow(_:)`
+/// repeatedly on overlapping windows.
 ///
 /// Decoding (`transcribe(_:)`): greedy sampling with a small temperature and
 /// whisper's temperature fallback enabled — a window that fails whisper's
@@ -78,9 +79,9 @@ public struct SpeechRegion: Sendable, Equatable {
 ///
 /// Metal serialization: whisper.cpp's Metal backend keeps a per-device
 /// residency set that asserts (`GGML_ASSERT(rsets->data count == 0)`) if two
-/// `whisper_context`s are constructed/freed concurrently in one process. Epic 2
-/// is one source = one transcriber, but the engine is a long-lived process and
-/// nothing stops a future caller (Epic 4 re-refine, tests) from holding two at
+/// `whisper_context`s are constructed/freed concurrently in one process. The
+/// common case is one source = one transcriber, but the engine is a long-lived
+/// process and nothing stops a caller (re-refine, tests) from holding two at
 /// once. A process-wide lock makes context create/free and each `whisper_full`
 /// call mutually exclusive — correctness over a theoretical parallel speedup
 /// that the offline path doesn't need anyway. See project-docs/DECISIONS.md D8.
@@ -406,7 +407,7 @@ public final class WhisperTranscriber {
     }
 
     /// Transcribe one *streaming window* — a short, recent slice of audio —
-    /// reusing this object's resident `whisper_context` (Epic 6, R10).
+    /// reusing this object's resident `whisper_context` (R10).
     ///
     /// Unlike `transcribe(_:)` (the offline whole-recording path), this is
     /// called repeatedly on overlapping windows by `StreamingTranscriber`.
@@ -514,7 +515,7 @@ public final class WhisperTranscriber {
         params.temperature = options.temperature
         params.temperature_inc = options.temperatureFallbackStep
         params.greedy.best_of = 1
-        // Hallucination suppression (Epic 2 edge case): drop blank/non-speech
+        // Hallucination suppression: drop blank/non-speech
         // tokens at the decoder, and gate on the no-speech probability.
         params.suppress_blank = true
         params.suppress_nst = true
@@ -578,7 +579,7 @@ public final class WhisperTranscriber {
             segments: collectSegments(dropHallucinations: true), language: language)
     }
 
-    /// Log the `*.en`-model-on-arbitrary-audio warning (Epic 2 edge case). We
+    /// Log the `*.en`-model-on-arbitrary-audio warning. We
     /// default to a multilingual model, so this is only ever a warning path.
     private func warnIfEnglishOnlyModel() {
         if isEnglishOnlyModel {

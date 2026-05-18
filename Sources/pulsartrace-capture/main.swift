@@ -8,7 +8,7 @@ import Glibc
 import Darwin
 #endif
 
-/// `pulsartrace-capture` — the real device-capture daemon (Epic 7).
+/// `pulsartrace-capture` — the real device-capture daemon.
 ///
 /// It owns AVFoundation (mic) and ScreenCaptureKit (system audio) — the only
 /// PulsarTrace process that needs TCC permissions (R4) — and streams 16 kHz
@@ -22,8 +22,8 @@ import Darwin
 ///                       [--model <name>]
 ///
 /// Startup handshake: the daemon binds both sockets, prints `ready` on stdout,
-/// then starts capture. An orchestrator (the `pulsartrace record` CLI, Epic 9,
-/// or the menubar, Epic 8) waits for that line before connecting the engine —
+/// then starts capture. An orchestrator (the `pulsartrace record` CLI
+/// or the menubar) waits for that line before connecting the engine —
 /// the engine's `SocketSource` has no connect-retry.
 @main
 struct CaptureMain {

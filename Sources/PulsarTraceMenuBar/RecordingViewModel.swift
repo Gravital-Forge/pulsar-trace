@@ -65,7 +65,7 @@ public final class RecordingViewModel {
 
     /// Resolves a binary name (`pulsartrace-capture`) to an on-disk URL. The
     /// production default points at `.build/debug/<name>` derived from
-    /// `#filePath`; Epic 10 swaps this to `Bundle.main`.
+    /// `#filePath`; a future change swaps this to `Bundle.main`.
     private let binaryURLResolver: @Sendable (String) -> URL
 
     /// Drives the post-recording refine pass.
@@ -154,11 +154,11 @@ public final class RecordingViewModel {
         let orchestrator = orchestratorFactory(plan, binaryURLResolver)
         self.orchestrator = orchestrator
 
-        // KNOWN ISSUE (deferred — see Epic 10 first-run permissions wizard):
+        // KNOWN ISSUE (deferred — see the future first-run permissions wizard):
         // starting without TCC mic/system-audio grants races the OS permission
         // prompt — `orchestrator.start` can fail and surface a "permissions
         // not granted" error before the user has finished responding to the
-        // prompt. Deliberately left as-is; the Epic 10 first-run wizard will
+        // prompt. Deliberately left as-is; the first-run wizard will
         // request and confirm grants up front, before the first start.
         do {
             try await orchestrator.start(readyTimeout: .seconds(20))
@@ -296,7 +296,7 @@ public final class RecordingViewModel {
     }
 
     /// Production binary resolver: `.build/debug/<name>` relative to the repo
-    /// root derived from `#filePath`. Epic 10 swaps this to `Bundle.main`.
+    /// root derived from `#filePath`. A future change swaps this to `Bundle.main`.
     nonisolated static let defaultBinaryURLResolver: @Sendable (String) -> URL = { name in
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // PulsarTraceMenuBar

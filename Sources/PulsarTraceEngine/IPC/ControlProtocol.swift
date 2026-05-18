@@ -7,9 +7,9 @@ import Foundation
 /// one JSON object per line, UTF-8, newline-terminated — so it can be driven
 /// from a shell or read incrementally without a length framing layer.
 ///
-/// Epic 1 ships the message definitions and codec only; the engine does not yet
-/// listen on a real control socket (that lands with streaming / the menubar
-/// app). Defining the contract now keeps later epics additive.
+/// This file defines the message definitions and codec only; the engine does
+/// not yet listen on a real control socket (that lands with streaming / the
+/// menubar app). Defining the contract here keeps later changes additive.
 public enum ControlProtocol {
 
     /// A message sent *to* the engine (app/CLI → engine).

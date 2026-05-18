@@ -1,4 +1,4 @@
-"""Offline speaker diarization (PulsarTrace Epic 3).
+"""Offline speaker diarization for PulsarTrace.
 
 This module is the captive-subprocess entry point the Swift engine spawns to
 diarize a recording's **system stream**. It loads
@@ -10,17 +10,17 @@ Architecture (see ``.claude/skills/pulsartrace-execution`` and PRD §17):
 
 * whisper.cpp stays in Swift; pyannote stays here in Python. Never mixed.
 * The Swift ``Diarizer`` invokes this as a **one-shot** subprocess per refine —
-  pass a WAV path, get JSON back. The long-lived live ``diart`` runtime is a
-  separate Epic 6 concern and is *not* built here.
+  pass a WAV path, get JSON back. The long-lived live diarization runtime is a
+  separate concern (``live_diarize.py``) and is *not* built here.
 * **R17**: only the system-stream WAV is ever passed in. The mic stream is
   never diarized — "You" is always "You". This module has no notion of a mic
   stream by construction; it diarizes exactly the file it is handed.
 * **R29**: embeddings come straight from pyannote's own pipeline so they are
-  cross-comparable with the future live pass and the persistent speaker
-  library. The model checkpoint's Hugging Face commit SHA (``model_revision``)
-  is carried in the output so Epic 5 can refuse to match library centroids
-  across a model change (Open Question #3); the pyannote.audio library
-  version is carried alongside it as a secondary identity field.
+  cross-comparable with the live pass and the persistent speaker library. The
+  model checkpoint's Hugging Face commit SHA (``model_revision``) is carried
+  in the output so the speaker library can refuse to match centroids across a
+  model change (Open Question #3); the pyannote.audio library version is
+  carried alongside it as a secondary identity field.
 
 Output JSON contract (consumed by Swift ``Diarizer``)::
 
@@ -206,9 +206,9 @@ def _hf_token() -> str:
     """The Hugging Face token, required for the gated community-1 model.
 
     Read from the ``HF_TOKEN`` environment variable. In development the Swift
-    layer / a developer loads it from ``.env``; production (Epic 10) moves it
-    to the macOS Keychain and exports it into this subprocess's environment
-    the same way. Either way this module only ever sees an env var.
+    layer / a developer loads it from ``.env``; production moves it to the
+    macOS Keychain and exports it into this subprocess's environment the same
+    way. Either way this module only ever sees an env var.
     """
     token = os.environ.get("HF_TOKEN", "").strip()
     if not token:
@@ -223,8 +223,8 @@ def _hf_token() -> str:
 def _model_revision(token: str | None = None) -> str:
     """The Hugging Face hub commit SHA of the diarization model checkpoint.
 
-    Epic 5's speaker library refuses to match centroids across a *model*
-    change (Open Question #3). The pyannote.audio *library* version is not a
+    The speaker library refuses to match centroids across a *model* change
+    (Open Question #3). The pyannote.audio *library* version is not a
     reliable proxy for that — the same library can load different checkpoints,
     and a checkpoint can be re-uploaded under the same library version. So we
     record the model repo's commit SHA: the actual checkpoint identity.

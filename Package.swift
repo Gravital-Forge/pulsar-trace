@@ -31,7 +31,7 @@ let package = Package(
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.17.0"),
     ],
     targets: [
-        // System-library wrapper around the vendored whisper.cpp (Epic 2).
+        // System-library wrapper around the vendored whisper.cpp.
         // The dylib + headers are produced by scripts/build-whisper.sh; see
         // project-docs/DECISIONS.md D7 for the integration approach and pinned commit.
         .systemLibrary(name: "CWhisper"),
@@ -60,15 +60,15 @@ let package = Package(
             name: "pulsartrace-engine",
             dependencies: ["PulsarTraceEngine"]
         ),
-        // The user-facing CLI. `refine`/`speakers` (Epics 4–5) and the Epic 9
-        // surface (`record`, `doctor`, `events tail`). Depends on
+        // The user-facing CLI. `refine`/`speakers`, plus `record`, `doctor`,
+        // and `events tail`. Depends on
         // PulsarTraceCapture so `doctor` can read TCC permission state and
         // `doctor --capture-test` can drive the real capture path (R68).
         .executableTarget(
             name: "pulsartrace",
             dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
         ),
-        // Epic 7: real device capture. Owns AVFoundation (mic) and
+        // Real device capture. Owns AVFoundation (mic) and
         // ScreenCaptureKit (system audio) — the only code that needs TCC
         // grants — and writes 16 kHz mono Float32 frames to Unix domain
         // sockets the engine reads via `SocketSource`. Depends on
@@ -83,7 +83,7 @@ let package = Package(
             name: "pulsartrace-capture",
             dependencies: ["PulsarTraceCapture"]
         ),
-        // Epic 8: the menubar UI logic. All ViewModels, settings persistence,
+        // The menubar UI logic. All ViewModels, settings persistence,
         // the recordings scanner, the live-transcript watcher, the speaker
         // editor — everything testable. No SwiftUI. `PulsarTraceCapture`
         // already depends on `PulsarTraceEngine`, so depending on both here
@@ -92,7 +92,7 @@ let package = Package(
             name: "PulsarTraceMenuBar",
             dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
         ),
-        // Epic 8: the thin SwiftUI executable — `MenuBarExtra` + `Settings`
+        // The thin SwiftUI executable — `MenuBarExtra` + `Settings`
         // scenes bound to `PulsarTraceMenuBar`'s ViewModels. No logic, no
         // unit tests; exercised only by manual smoke test (D27).
         .executableTarget(
@@ -127,7 +127,7 @@ let package = Package(
             name: "CaptureTests",
             dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
         ),
-        // Epic 8: menubar UI logic tests — pure logic + temp-folder fixtures,
+        // Menubar UI logic tests — pure logic + temp-folder fixtures,
         // no devices, no real subprocesses (orchestration is behind an
         // injected seam).
         .testTarget(

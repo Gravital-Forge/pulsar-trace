@@ -4,15 +4,15 @@ import Foundation
 /// recording") and dispatches the two `pulsartrace refine` input shapes.
 ///
 /// PRD §6 storage model: a recording lives in its own folder holding the audio
-/// WAV(s), `final.md`, `metadata.json` (and, post-Epic-6, `live.md`):
+/// WAV(s), `final.md`, `metadata.json` and `live.md`:
 ///
 /// ```
 /// 2026-04-30-team-standup/
 ///   audio-system.wav      ← system stream, diarized
 ///   audio-mic.wav         ← mic stream, label "You", never diarized (R17)
-///   live.md               ← provisional transcript (Epic 6)
-///   final.md              ← refined transcript (this epic)
-///   metadata.json         ← machine-readable sidecar (this epic)
+///   live.md               ← provisional transcript
+///   final.md              ← refined transcript
+///   metadata.json         ← machine-readable sidecar
 /// ```
 ///
 /// `refine` accepts two input shapes (project-docs/DECISIONS.md D13):

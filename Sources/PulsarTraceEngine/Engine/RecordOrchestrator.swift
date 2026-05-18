@@ -5,10 +5,9 @@ import Foundation
 /// tears the pair down cleanly (R47).
 ///
 /// The capture daemon must be a separate process — it is the only TCC-gated
-/// PulsarTrace process (R4) — and the engine is spawned separately so a
-/// future menubar (Epic 8) can detect its death. This orchestrator is the
-/// reusable code path: `RecordCommand` (CLI) and the Epic 8 menubar both
-/// drive it.
+/// PulsarTrace process (R4) — and the engine is spawned separately so the
+/// menubar can detect its death. This orchestrator is the reusable code
+/// path: `RecordCommand` (CLI) and the menubar both drive it.
 ///
 /// It is binary-agnostic — the caller passes the two executables and their
 /// argv (built by `RecordPlan`) — so it is testable against stand-in scripts

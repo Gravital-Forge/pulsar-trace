@@ -4,7 +4,7 @@ import Foundation
 
 /// R18 coverage: during the live pass a provisional speaker whose centroid
 /// matches a known library speaker is surfaced **by name** — `<name>
-/// (provisional)` — not the generic `Them (provisional)` (Epic 6).
+/// (provisional)` — not the generic `Them (provisional)`.
 ///
 /// This exercises the exact wiring fixed in review item SW-B: `LiveRunner`
 /// must pass the live diarizer's *real* pyannote model revision to
@@ -17,7 +17,7 @@ import Foundation
 /// No Python subprocess: `LiveDiarizer._seedForTesting` pre-seeds the running
 /// live-speaker set + the model revision the subprocess would otherwise
 /// report, so the test stays fast and device/network-free.
-@Suite("Live pass R18 library lookup (Epic 6)")
+@Suite("Live pass R18 library lookup")
 struct LiveRunnerLibraryLookupTests {
 
     private func tempDir() -> URL {
