@@ -1,7 +1,8 @@
 [project]
 name = "pulsartrace-ai"
 version = "0.1.0"
-description = "PulsarTrace diarization layer — pyannote / diart wrapper run as a captive subprocess by the Swift engine."
+description = "PulsarTrace diarization layer — pyannote wrapper run as a captive subprocess by the Swift engine."
+readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 

@@ -10,7 +10,7 @@ Part of the Gravital Forge product family (sibling to OrbitNote).
 
 ## Status
 
-> **v0.1 — offline pipeline + live streaming.** Buildable and usable today as a command-line tool.
+> **v0.1 — offline pipeline, live streaming, and a menubar app.** Buildable and usable today as a command-line tool or an unsigned dev-build menubar app.
 
 | Capability | State |
 |---|---|
@@ -20,9 +20,10 @@ Part of the Gravital Forge product family (sibling to OrbitNote).
 | Events log (`events/*.jsonl`) — machine-readable activity stream | ✅ Working |
 | Real microphone / system-audio capture (`pulsartrace-capture`) | ✅ Working |
 | Headless CLI — `pulsartrace record`, `doctor`, `events tail`, `install-cli` | ✅ Working |
-| Menubar app, signed/notarized DMG, first-run wizard | ⏳ Planned (Epics 8, 10) |
+| Menubar app — record, settings, speaker editor, live transcript preview | ✅ Working (unsigned dev build) |
+| Signed/notarized DMG, first-run permissions wizard | ⏳ Planned (Epic 10) |
 
-PulsarTrace is a complete **command-line tool** today: record a meeting with `pulsartrace record`, or feed it an existing WAV with `pulsartrace refine`. The menubar UI and signed DMG are the remaining milestone — see [Roadmap](#roadmap). The entire AI pipeline is built and tested against an audio-source abstraction, so every part except real device capture works without touching audio hardware.
+PulsarTrace is a complete **command-line tool** today: record a meeting with `pulsartrace record`, or feed it an existing WAV with `pulsartrace refine`. A **menubar app** (`pulsartrace-mac`) drives the same flow without a terminal — it runs today as an unsigned dev build. A signed/notarized DMG and a first-run permissions wizard are the remaining milestone — see [Roadmap](#roadmap). The entire AI pipeline is built and tested against an audio-source abstraction, so most of it builds and runs without touching audio hardware.
 
 ---
 
@@ -71,11 +72,12 @@ echo 'HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx' > .env
 swift build            # add -c release for production speed
 ```
 
-This produces three binaries under `.build/debug/` (or `.build/release/`):
+This produces four binaries under `.build/debug/` (or `.build/release/`):
 
 - **`pulsartrace`** — the user-facing CLI (`record`, `refine`, `speakers`, `doctor`, `events tail`, `install-cli`)
 - **`pulsartrace-engine`** — the streaming engine (consumes any audio source)
 - **`pulsartrace-capture`** — the device-capture daemon (microphone + system audio)
+- **`pulsartrace-mac`** — the menubar app; run it as a dev `.app` via `scripts/make-dev-app.sh` (a bare `swift run` shows no menu-bar item)
 
 Whisper models download automatically on first use into `~/Library/Caches/PulsarTrace/models/`.
 
@@ -233,7 +235,7 @@ The operational log is for debugging and is safe to attach to a bug report — i
 ┌─────────────────────────────────────────────────────────┐
 │  AudioFrameSource (protocol — 16kHz mono Float32 frames) │
 │   FixturePlaybackSource · PipeSource · SocketSource      │
-│   DeviceCaptureSource (planned, Epic 7)                  │
+│   DeviceCaptureSource (microphone + system audio)        │
 └───────────────────────────┬─────────────────────────────┘
                             ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -260,12 +262,20 @@ Architectural decisions and deviations from the original PRD are recorded in [`D
 ```
 Sources/PulsarTraceEngine/   Core library — audio sources, transcription,
                              diarization, speaker library, streaming, events
+Sources/PulsarTraceCapture/  Device-capture library — AVFoundation mic +
+                             ScreenCaptureKit system audio
+Sources/PulsarTraceMenuBar/  Menubar library — @Observable ViewModels & state
 Sources/pulsartrace/         The `pulsartrace` CLI
 Sources/pulsartrace-engine/  The streaming engine binary
+Sources/pulsartrace-capture/ The device-capture daemon binary
+Sources/pulsartrace-mac/     The menubar app (SwiftUI MenuBarExtra)
 Sources/CWhisper/            whisper.cpp C-API system-library wrapper
 python/pulsartrace-ai/       Embedded Python — pyannote diarization
-Tests/                       Unit / Pipeline / Capture test targets + fixtures
+python/build-venv.sh         Builds the embedded Python environment
+Tests/                       Unit / Pipeline / Capture / MenuBar test targets
+                             + fixtures
 scripts/build-whisper.sh     Vendors + builds whisper.cpp
+scripts/make-dev-app.sh      Wraps `pulsartrace-mac` in a launchable dev `.app`
 docs/                        file-format.md, events-schema.md, release-smoke-test.md
 project-docs/                PRD.md, PLAN.md, DECISIONS.md — requirements,
                              implementation plan, architectural decisions
@@ -279,6 +289,7 @@ project-docs/                PRD.md, PLAN.md, DECISIONS.md — requirements,
 swift test --filter Unit       # pure logic — fast, deterministic, no devices
 swift test --filter Pipeline   # end-to-end on fixture audio (real whisper + pyannote)
 swift test --filter Capture    # real-device tests; skip cleanly when no audio hardware
+swift test --filter MenuBar    # menubar ViewModels — settings, scanner, speaker editor
 ( cd python/pulsartrace-ai && .venv/bin/pytest )   # Python diarization layer
 ```
 
@@ -288,11 +299,11 @@ Pipeline tests run the real models against committed audio fixtures and snapshot
 
 ## Roadmap
 
-v0.1 (offline pipeline + streaming), real device capture, and the full CLI are complete. Remaining milestones toward v1.0:
+v0.1 (offline pipeline + streaming), real device capture, the full CLI, and the menubar app are complete. One milestone remains toward v1.0:
 
 - ✅ **Epic 7 — Real device capture.** `pulsartrace-capture` daemon: microphone via AVFoundation, system audio via ScreenCaptureKit (no virtual audio device needed).
 - ✅ **Epic 9 — CLI surface.** `pulsartrace record`, `doctor` (+ `--capture-test`), `events tail`, `install-cli`.
-- **Epic 8 — Menubar app.** SwiftUI status item, start/stop, settings, speaker-library editor, live transcript preview.
+- ✅ **Epic 8 — Menubar app.** SwiftUI `MenuBarExtra` — start/stop, settings, speaker-library editor, live transcript preview. A retroactive speaker rename rewrites every past `final.md`. Runs today as an unsigned dev build (`scripts/make-dev-app.sh`).
 - **Epic 10 — Distribution.** Signed/notarized DMG, first-run permissions + Hugging Face token wizard.
 
 ---
