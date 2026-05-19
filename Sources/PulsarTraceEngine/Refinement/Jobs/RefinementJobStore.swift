@@ -78,6 +78,25 @@ public actor RefinementJobStore {
         return jobs
     }
 
+    /// Delete every terminal job (`.completed`, `.failed`, `.cancelled`) older
+    /// than `olderThanDays`. Active/paused/queued jobs are never pruned.
+    public func pruneTerminal(
+        olderThanDays days: Int,
+        now: @Sendable () -> Date = { Date() }
+    ) throws {
+        let cutoff = now().addingTimeInterval(-Double(days) * 86400)
+        for job in try listAll() {
+            let isTerminal: Bool
+            switch job.state {
+            case .completed, .failed, .cancelled: isTerminal = true
+            case .queued, .running, .paused:      isTerminal = false
+            }
+            if isTerminal, job.enqueuedAt < cutoff {
+                try delete(id: job.id)
+            }
+        }
+    }
+
     private func url(for id: String) -> URL {
         directory.appendingPathComponent("\(id).json", isDirectory: false)
     }
