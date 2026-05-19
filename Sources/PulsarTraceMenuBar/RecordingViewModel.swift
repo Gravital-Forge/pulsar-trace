@@ -273,7 +273,12 @@ public final class RecordingViewModel {
         if let folder {
             do {
                 try await reRefiner(folder)
-                progressMessage = "Done."
+                // Clear the progress line on success: the menu shows a single
+                // status line (#1), and an idle "Ready" is the confirmation —
+                // a lingering "Done." stacked under "Ready" was the duplication
+                // the menu used to show. A failure message below is kept so it
+                // is not lost.
+                progressMessage = ""
             } catch {
                 progressMessage = "Refine failed: \(error)"
             }

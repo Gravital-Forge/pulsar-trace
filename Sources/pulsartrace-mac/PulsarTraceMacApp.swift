@@ -7,7 +7,8 @@ import SwiftUI
 ///
 /// A thin SwiftUI shell over `PulsarTraceMenuBar`'s ViewModels — no logic
 /// lives here. It is a `MenuBarExtra` app: an accessory-policy process with no
-/// Dock icon and no main window, plus a `Settings` scene.
+/// Dock icon, plus two on-demand `Window` scenes (the unified app window and
+/// the live-transcript window) opened from the menu.
 @main
 struct PulsarTraceMacApp: App {
 
@@ -26,21 +27,37 @@ struct PulsarTraceMacApp: App {
     }
 
     var body: some Scene {
+        // The menubar dropdown — a SwiftUI panel (`.window` style), the style
+        // the app has always shipped with. `MenuRowButtonStyle` restyles its
+        // rows to read as a native-looking dropdown list (#2).
         MenuBarExtra {
-            MenuBarMenuView(events: environment.events)
-                .environment(environment.settings)
+            MenuBarMenuView()
                 .environment(environment.recording)
-                .environment(environment.scanner)
-                .environment(environment.liveWatcher)
+                .environment(environment.navigation)
         } label: {
             Image(systemName: environment.recording.status.menuBarSymbol)
         }
         .menuBarExtraStyle(.window)
 
-        Settings {
-            SettingsView()
+        // The unified app window — Recordings / Speakers / Settings sidebar
+        // (#6). Replaces the inline panel pages and the standalone `Settings`
+        // scene; "Settings…" in the menu opens this window's Settings pane.
+        Window("PulsarTrace", id: WindowID.main) {
+            MainWindowView(events: environment.events)
                 .environment(environment.settings)
+                .environment(environment.recording)
+                .environment(environment.scanner)
+                .environment(environment.navigation)
         }
+        .defaultSize(width: 760, height: 480)
+
+        // The detached live-transcript window (#5) — stays visible
+        // independently of the menubar panel.
+        Window("Live Transcript", id: WindowID.liveTranscript) {
+            LiveTranscriptView()
+                .environment(environment.liveWatcher)
+        }
+        .defaultSize(width: 460, height: 480)
     }
 }
 
@@ -53,6 +70,9 @@ final class AppEnvironment {
     let scanner: RecordingsScanner
     let liveWatcher: LiveTranscriptWatcher
     let onboarding: OnboardingTourViewModel
+
+    /// Shared sidebar-navigation state for the unified window (#6).
+    let navigation = AppNavigation()
 
     /// The process-wide events writer (§8.13). Bootstrapped here and shared by
     /// every component that emits events — the re-refine pass and the speaker

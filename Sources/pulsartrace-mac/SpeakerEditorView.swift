@@ -5,18 +5,22 @@ import SwiftUI
 /// The speaker editor (R44) — list, inline rename, merge/split/delete, undo
 /// toast, recently-deleted section. Pure bindings over `SpeakerEditorViewModel`.
 ///
+/// Rendered as a detail pane of `MainWindowView`'s sidebar window (#6). The
+/// detail root is a plain `List` and Merge/Split live in the window toolbar,
+/// so this pane's window chrome matches the Recordings pane (a `VStack`-rooted
+/// detail made macOS draw the split-view corners/sidebar differently).
+///
 /// The `SpeakerLibrary` actor is opened asynchronously on appear (its init is
 /// `async throws`), so this view owns the optional ViewModel and shows a
 /// loading state until it resolves — or an error state if the open fails.
 struct SpeakerEditorView: View {
-    let settings: MenuBarSettings
     /// The process-wide events writer — wired into the ViewModel so speaker
     /// edits emit `speaker_*` / `final_md_rewritten` events in the shipped app.
+    /// Passed explicitly because `EventWriter` is not an `@Observable` the
+    /// environment can carry.
     let events: EventWriter
-    /// Invoked by the "Back" button. Inline navigation in `MenuBarMenuView`
-    /// (FIX 2) — the view no longer relies on `@Environment(\.dismiss)`, which
-    /// did not work predictably for a sheet on a `MenuBarExtra` panel.
-    var onClose: () -> Void
+
+    @Environment(MenuBarSettings.self) private var settings
 
     @State private var viewModel: SpeakerEditorViewModel?
     /// Set when opening the speaker library fails — shows an error state
@@ -34,20 +38,12 @@ struct SpeakerEditorView: View {
     @State private var showSplit = false
     @State private var splitOriginalId: String?
     @State private var splitNewName = ""
-    @State private var splitRecordingIds = ""
+    /// Recording ids selected to move to the new speaker (#3 — replaces the
+    /// old comma-separated-ids text field).
+    @State private var splitSelectedRecordingIds: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Button { onClose() } label: {
-                    Label("Back", systemImage: "chevron.left")
-                }
-                Text("Speakers").font(.headline)
-                Spacer()
-            }
-            .padding(12)
-            Divider()
-
+        Group {
             if let viewModel {
                 content(viewModel)
             } else if let loadError {
@@ -57,7 +53,20 @@ struct SpeakerEditorView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(width: 440, height: 420)
+        .toolbar {
+            // Always present (disabled until usable) so the window toolbar —
+            // and thus the chrome — does not change as the library loads.
+            ToolbarItemGroup {
+                Button("Merge…") {
+                    if let viewModel { startMerge(viewModel) }
+                }
+                .disabled((viewModel?.liveSpeakers.count ?? 0) < 2)
+                Button("Split…") {
+                    if let viewModel { startSplit(viewModel) }
+                }
+                .disabled(viewModel?.liveSpeakers.isEmpty ?? true)
+            }
+        }
         .task { await loadLibrary() }
         .sheet(isPresented: $showMerge) {
             if let viewModel { mergeSheet(viewModel) }
@@ -69,14 +78,14 @@ struct SpeakerEditorView: View {
 
     @ViewBuilder
     private func content(_ viewModel: SpeakerEditorViewModel) -> some View {
-        if let error = viewModel.lastError {
-            Text(error).foregroundStyle(.red).padding(8)
-        }
         if viewModel.liveSpeakers.isEmpty && viewModel.deletedSpeakers.isEmpty {
             emptyState
         } else {
             List {
-                Section("Speakers") {
+                // Untitled — the pane's navigation title already says
+                // "Speakers"; a `Section("Speakers")` header here was a
+                // duplicate label.
+                Section {
                     ForEach(viewModel.liveSpeakers) { speaker in
                         speakerRow(speaker, viewModel: viewModel)
                     }
@@ -96,26 +105,28 @@ struct SpeakerEditorView: View {
                     }
                 }
             }
-            // R31 — merge / split entry points (thin bindings; the ViewModel
-            // owns all logic).
-            HStack {
-                Button("Merge…") {
-                    mergePrimaryId = viewModel.liveSpeakers.first?.id
-                    mergeOtherId = viewModel.liveSpeakers.dropFirst().first?.id
-                    showMerge = true
-                }
-                .disabled(viewModel.liveSpeakers.count < 2)
-                Button("Split…") {
-                    splitOriginalId = viewModel.liveSpeakers.first?.id
-                    splitNewName = ""
-                    splitRecordingIds = ""
-                    showSplit = true
-                }
-                .disabled(viewModel.liveSpeakers.isEmpty)
-                Spacer()
-            }
-            .padding(8)
+            .overlay(alignment: .top) { errorBanner(viewModel) }
+            .overlay(alignment: .bottom) { undoBanner(viewModel) }
         }
+    }
+
+    /// A transient error banner for a failed edit (`viewModel.lastError`).
+    @ViewBuilder
+    private func errorBanner(_ viewModel: SpeakerEditorViewModel) -> some View {
+        if let error = viewModel.lastError {
+            Text(error)
+                .font(.callout)
+                .foregroundStyle(.white)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.red, in: RoundedRectangle(cornerRadius: 6))
+                .padding(12)
+        }
+    }
+
+    /// The undo affordance shown after a destructive edit (R44).
+    @ViewBuilder
+    private func undoBanner(_ viewModel: SpeakerEditorViewModel) -> some View {
         if let toast = viewModel.undoToast {
             HStack {
                 Text(toast.message)
@@ -127,8 +138,9 @@ struct SpeakerEditorView: View {
                     }
                 }
             }
-            .padding(8)
-            .background(.thinMaterial)
+            .padding(10)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .padding(12)
         }
     }
 
@@ -192,7 +204,14 @@ struct SpeakerEditorView: View {
         }
     }
 
-    // MARK: - Merge sheet
+    // MARK: - Merge
+
+    /// Seed the merge sheet's pickers and present it.
+    private func startMerge(_ viewModel: SpeakerEditorViewModel) {
+        mergePrimaryId = viewModel.liveSpeakers.first?.id
+        mergeOtherId = viewModel.liveSpeakers.dropFirst().first?.id
+        showMerge = true
+    }
 
     @ViewBuilder
     private func mergeSheet(_ viewModel: SpeakerEditorViewModel) -> some View {
@@ -229,8 +248,20 @@ struct SpeakerEditorView: View {
         .frame(width: 320)
     }
 
-    // MARK: - Split sheet
+    // MARK: - Split
 
+    /// Seed the split sheet and present it.
+    private func startSplit(_ viewModel: SpeakerEditorViewModel) {
+        splitOriginalId = viewModel.liveSpeakers.first?.id
+        splitNewName = ""
+        splitSelectedRecordingIds = []
+        showSplit = true
+    }
+
+    /// The split sheet (#3) — pick the source speaker, name the new speaker,
+    /// and tick the recordings to move. The recording multi-select replaces
+    /// the old free-text "comma-separated recording ids" field, which required
+    /// the user to know opaque `rec_<short>` ids.
     @ViewBuilder
     private func splitSheet(_ viewModel: SpeakerEditorViewModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -241,22 +272,26 @@ struct SpeakerEditorView: View {
                 }
             }
             TextField("New speaker name", text: $splitNewName)
-            TextField(
-                "Recording ids to move (comma-separated)",
-                text: $splitRecordingIds)
+
+            Text("Recordings to move")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            SplitRecordingPicker(
+                viewModel: viewModel,
+                speakerId: splitOriginalId,
+                selection: $splitSelectedRecordingIds)
+                .frame(height: 160)
+
             HStack {
                 Spacer()
                 Button("Cancel") { showSplit = false }
                 Button("Split") {
-                    let ids = splitRecordingIds
-                        .split(separator: ",")
-                        .map { $0.trimmingCharacters(in: .whitespaces) }
-                        .filter { !$0.isEmpty }
-                    if let original = splitOriginalId, !ids.isEmpty {
+                    if let original = splitOriginalId,
+                       !splitSelectedRecordingIds.isEmpty {
                         Task {
                             await viewModel.split(
                                 originalId: original,
-                                movingRecordingIds: ids,
+                                movingRecordingIds: Array(splitSelectedRecordingIds),
                                 newName: splitNewName)
                         }
                     }
@@ -264,12 +299,11 @@ struct SpeakerEditorView: View {
                 }
                 .disabled(splitOriginalId == nil
                     || splitNewName.trimmingCharacters(in: .whitespaces).isEmpty
-                    || splitRecordingIds.trimmingCharacters(in: .whitespaces)
-                        .isEmpty)
+                    || splitSelectedRecordingIds.isEmpty)
             }
         }
         .padding(16)
-        .frame(width: 360)
+        .frame(width: 380)
     }
 
     /// Open the `SpeakerLibrary` at the standard app-support path and build the
@@ -288,5 +322,66 @@ struct SpeakerEditorView: View {
         } catch {
             loadError = "\(error)"
         }
+    }
+}
+
+/// The recording multi-select inside the split sheet (#3).
+///
+/// Loads the source speaker's appearances whenever the selected speaker
+/// changes and renders them as toggleable rows. Lives in its own view so the
+/// `.task(id:)`-driven reload is scoped tightly and does not re-run the whole
+/// split sheet.
+private struct SplitRecordingPicker: View {
+    let viewModel: SpeakerEditorViewModel
+    /// The source speaker whose recordings can be moved; `nil` until picked.
+    let speakerId: String?
+    @Binding var selection: Set<String>
+
+    @State private var appearances: [SpeakerAppearance] = []
+    @State private var loaded = false
+
+    var body: some View {
+        Group {
+            if !loaded {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if appearances.isEmpty {
+                Text("This speaker has no recordings to move.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(appearances, id: \.recordingId) { appearance in
+                    Toggle(
+                        appearance.recordingFolderName,
+                        isOn: binding(for: appearance.recordingId))
+                }
+            }
+        }
+        .task(id: speakerId) { await reload() }
+    }
+
+    /// A per-recording toggle binding into the shared `selection` set.
+    private func binding(for recordingId: String) -> Binding<Bool> {
+        Binding(
+            get: { selection.contains(recordingId) },
+            set: { isOn in
+                if isOn { selection.insert(recordingId) }
+                else { selection.remove(recordingId) }
+            })
+    }
+
+    /// Reload appearances for the current speaker. Clears the selection so a
+    /// recording from a previously-picked speaker cannot leak into the split.
+    private func reload() async {
+        loaded = false
+        selection = []
+        guard let speakerId else {
+            appearances = []
+            loaded = true
+            return
+        }
+        appearances = await viewModel.appearances(ofSpeaker: speakerId)
+        loaded = true
     }
 }

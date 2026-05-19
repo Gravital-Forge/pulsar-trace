@@ -82,6 +82,14 @@ public final class SpeakerEditorViewModel {
         }
     }
 
+    /// The recording appearances of a speaker, newest library order — backs
+    /// the split sheet's recording multi-select (#3). A load failure yields an
+    /// empty list rather than throwing: the split sheet simply shows no
+    /// recordings to move.
+    public func appearances(ofSpeaker speakerId: String) async -> [SpeakerAppearance] {
+        (try? await library.appearances(of: speakerId)) ?? []
+    }
+
     // MARK: - Rename
 
     /// Rename a speaker and retroactively rewrite past `final.md` files (R44,

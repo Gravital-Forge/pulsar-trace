@@ -4,8 +4,12 @@ import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// The Settings scene (R42, R43, R41) — mic, model, output folder, hotkey,
+/// The Settings pane (R42, R43, R41) — mic, model, output folder, hotkey,
 /// system-audio toggle. Pure bindings over `MenuBarSettings`.
+///
+/// Rendered as a detail pane of `MainWindowView`'s sidebar window (#6) — it no
+/// longer backs a standalone `Settings` scene, so it carries no fixed frame
+/// and fills the detail column.
 struct SettingsView: View {
     @Environment(MenuBarSettings.self) private var settings
 
@@ -59,7 +63,22 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 340)
+        // A window toolbar so this pane's split-view chrome (corner rounding,
+        // sidebar extent) matches the Recordings and Speakers panes — those
+        // carry a toolbar; a pane without one renders different chrome.
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    if let url = settings.outputFolderURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                } label: {
+                    Label("Reveal Output Folder", systemImage: "folder")
+                }
+                .disabled(settings.outputFolderURL == nil)
+                .help("Reveal the output folder in Finder")
+            }
+        }
     }
 
     private var micBinding: Binding<String?> {
