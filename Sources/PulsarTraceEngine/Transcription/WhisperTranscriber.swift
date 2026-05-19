@@ -331,6 +331,60 @@ public final class WhisperTranscriber {
             language: language ?? (isEnglishOnlyModel ? "en" : "unknown"))
     }
 
+    /// Decode one VAD region as a single `whisper_full` call, with timestamps
+    /// shifted onto the recording timeline.
+    ///
+    /// Intended for callers that iterate regions externally — e.g.
+    /// `ResumableRefiner` (D-Q6), which persists a checkpoint between regions
+    /// and honours a pause gate. Each call acquires `metalLock` independently,
+    /// so the pause gate can fire between consecutive regions. This is the
+    /// public contract that `transcribe(_:regions:options:)` implements
+    /// internally (with the lock already held for the whole batch).
+    ///
+    /// Same blocking / process-lock contract as `transcribe(_:options:)`.
+    ///
+    /// - Parameters:
+    ///   - samples: the whole recording, 16 kHz mono Float32.
+    ///   - region: the speech region to decode, in recording-relative time.
+    ///   - options: decoder tunables; `options.vadModelURL` is ignored — the
+    ///     region is already speech-only.
+    public func transcribeRegion(
+        _ samples: [Float],
+        region: SpeechRegion,
+        options: Options = Options()
+    ) throws -> TranscriptionResult {
+        guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
+        warnIfEnglishOnlyModel()
+
+        Self.metalLock.lock()
+        defer { Self.metalLock.unlock() }
+
+        let sampleCount = samples.count
+        let lo = Self.sampleIndex(of: region.start, sampleCount: sampleCount)
+        let hi = Self.sampleIndex(of: region.end, sampleCount: sampleCount)
+        guard lo < hi else {
+            return TranscriptionResult(
+                segments: [],
+                language: isEnglishOnlyModel ? "en" : "unknown")
+        }
+
+        // whisper VAD off (`whisperVADModel: nil`): the region is already
+        // speech-only. Shift the region-relative segment times back onto
+        // the recording timeline.
+        let decoded = try decodeLocked(
+            Array(samples[lo..<hi]), options: options, whisperVADModel: nil)
+        let offset = Duration.milliseconds(lo * 1000 / AudioFormat.sampleRate)
+        let shifted = decoded.segments.map { seg in
+            TranscriptSegment(
+                start: seg.start + offset,
+                end: seg.end + offset,
+                text: seg.text)
+        }
+        return TranscriptionResult(
+            segments: shifted,
+            language: decoded.language)
+    }
+
     /// Detect the speech regions of a recording with whisper.cpp's bundled
     /// Silero VAD, coalescing regions closer than `minTurnGap` so the transcript
     /// splits at genuine conversational turn pauses rather than at every breath.
