@@ -28,3 +28,17 @@ don't-ask mode. They are easy to get wrong — read them before running:
 
 Example: `swift test --filter UnitTests`, run bare, with
 `dangerouslyDisableSandbox: true`.
+
+## Test posture: no failing tests, ever
+
+Every test must either **pass** or be **explicitly gated** out of the
+normal-development run (`.disabled(...)`, `.enabled(if:)`, or equivalent,
+with a one-line comment naming the gate condition).
+
+If you observe a failing test — even one you didn't touch, even one you
+think is "flaky" or "env-dependent" — that is your problem the moment you
+see it. Either fix the underlying cause, gate the test with an explicit
+skip mechanism, or escalate to the user. Do not move on with a red suite.
+
+"My new tests pass" is not enough. The full relevant suite must be green
+or explicitly-gated after your change.
