@@ -32,7 +32,6 @@
     "defaultMode": "dontAsk",
     "allow": [
       "Bash(swift build)",
-      "AskUserQuestion",
       "Write",
       "Read",
       "Edit",
