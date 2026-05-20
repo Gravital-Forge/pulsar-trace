@@ -34,4 +34,23 @@ struct RefinementJobTests {
         #expect(state.progressFraction != nil)
         #expect(state.progressFraction! > 0.0 && state.progressFraction! < 1.0)
     }
+
+    // MARK: - displayName
+
+    @Test("Stage.displayName returns human-readable labels, not rawValues")
+    func stageDisplayNames() {
+        #expect(RefinementJobState.Stage.resolvingInput.displayName == "Loading audio")
+        #expect(RefinementJobState.Stage.transcribingSystem.displayName == "Transcribing system")
+        #expect(RefinementJobState.Stage.diarizing.displayName == "Diarizing")
+        #expect(RefinementJobState.Stage.transcribingMic.displayName == "Transcribing mic")
+        #expect(RefinementJobState.Stage.merging.displayName == "Merging")
+        #expect(RefinementJobState.Stage.writingFinal.displayName == "Writing transcript")
+        #expect(RefinementJobState.Stage.writingMetadata.displayName == "Writing metadata")
+    }
+
+    @Test("PauseReason.displayName returns human-readable labels, not rawValues")
+    func pauseReasonDisplayNames() {
+        #expect(RefinementJobState.PauseReason.userRequested.displayName == "User paused")
+        #expect(RefinementJobState.PauseReason.recordingInProgress.displayName == "Recording in progress")
+    }
 }

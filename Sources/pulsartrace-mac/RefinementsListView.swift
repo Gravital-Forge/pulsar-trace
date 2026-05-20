@@ -93,7 +93,7 @@ private struct JobRow: View {
             }
             return "\(stage.displayName) (\(done + 1)/\(total))"
         case .paused(let reason, let lastStage):
-            return "Paused (\(reason.rawValue)) at \(lastStage.displayName)"
+            return "Paused (\(reason.displayName)) at \(lastStage.displayName)"
         case .completed(let seconds, let speakerCount):
             let speakerWord = speakerCount == 1 ? "speaker" : "speakers"
             return "Done · \(Int(seconds.rounded()))s · \(speakerCount) \(speakerWord)"

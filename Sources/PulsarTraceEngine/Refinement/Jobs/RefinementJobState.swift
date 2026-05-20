@@ -38,6 +38,15 @@ public enum RefinementJobState: Codable, Equatable, Sendable {
     public enum PauseReason: String, Codable, Sendable {
         case userRequested
         case recordingInProgress
+
+        /// Human-readable label for the UI. The `rawValue` is for
+        /// logging/serialization — never show it to end users.
+        public var displayName: String {
+            switch self {
+            case .userRequested:        return "User paused"
+            case .recordingInProgress:  return "Recording in progress"
+            }
+        }
     }
 
     case queued
