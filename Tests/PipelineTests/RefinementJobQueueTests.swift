@@ -141,6 +141,53 @@ struct RefinementJobQueueTests {
         #expect(snap.recent.count == 1)
     }
 
+    /// `cancel(recordingId:)` removes a queued (not-yet-running) job and
+    /// moves it to `recent` with state `.cancelled`. The currently running
+    /// job is not affected.
+    ///
+    /// Design: a `PauseGate(initiallyOpen: false)` keeps `rec_a` running
+    /// forever (the worker suspends in `waitOpen()`). Bounded polling waits
+    /// until `rec_a` is confirmed running before cancelling the still-queued
+    /// `rec_b`. The gate is opened at the end so the worker can drain before
+    /// the process exits.
+    @Test("cancel removes a queued (not-yet-running) job")
+    func cancelQueued() async throws {
+        let store = RefinementJobStore(directory: tempDir())
+        let neverFinishes = PauseGate(initiallyOpen: false)
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in await neverFinishes.waitOpen() })
+        try await queue.start()
+
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/a"), recordingId: "rec_a",
+            modelName: "base", modelSHA256: "deadbeef")
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/b"), recordingId: "rec_b",
+            modelName: "base", modelSHA256: "deadbeef")
+
+        // Bounded polling: wait until the worker claims rec_a as running.
+        var snap = await queue.snapshot()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline, snap.running?.recordingId != "rec_a" {
+            try await Task.sleep(for: .milliseconds(5))
+            snap = await queue.snapshot()
+        }
+        #expect(snap.running?.recordingId == "rec_a")
+
+        let toCancel = snap.queued.first?.recordingId ?? ""
+        #expect(toCancel == "rec_b")    // make the expected order explicit
+        await queue.cancel(recordingId: toCancel)
+
+        let s = await queue.snapshot()
+        #expect(s.queued.allSatisfy { $0.recordingId != toCancel })
+        #expect(s.recent.contains { $0.recordingId == toCancel && $0.state == .cancelled })
+
+        // Open the gate so the worker can drain and the Task does not
+        // outlive the test process with an orphaned suspension.
+        await neverFinishes.open()
+    }
+
     /// Two enqueued jobs run sequentially through the single-worker queue.
     /// Regression: the worker used to clear itself in a `defer` that ran
     /// *after* the tail `pumpIfIdle()`, leaving job 2 stranded.

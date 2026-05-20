@@ -144,6 +144,19 @@ public actor RefinementJobQueue {
         pumpIfIdle()
     }
 
+    /// Cancel a queued job. A no-op if no queued job with that recording id
+    /// exists. Running and terminal jobs are not affected here — for those,
+    /// the caller must wait (running can finish naturally) or delete the
+    /// terminal record via the store directly.
+    public func cancel(recordingId: String) async {
+        guard let i = queued.firstIndex(where: { $0.recordingId == recordingId })
+        else { return }
+        var job = queued.remove(at: i)
+        job.state = .cancelled
+        try? await store.upsert(job)
+        recent.append(job)
+    }
+
     private func pumpIfIdle() {
         guard current == nil, !queued.isEmpty, worker == nil,
               !pausedForRecording else { return }
