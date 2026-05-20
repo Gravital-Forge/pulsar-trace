@@ -197,3 +197,76 @@ public actor RefinementJobQueue {
         pumpIfIdle()
     }
 }
+
+// MARK: - Production factory
+
+extension RefinementJobQueue {
+    /// Production wiring: real `WhisperTranscriber` + production
+    /// `Diarizer` + the process-wide `EventWriter`.
+    ///
+    /// Used by `AppEnvironment` in `pulsartrace-mac`. The CLI's
+    /// `OfflineRefiner` path stays unchanged (one-shot, no queue).
+    ///
+    /// The `settings` parameter is a forward hook for when the queue
+    /// auto-selects a model per-job (e.g. user preference stored in
+    /// `AppEnvironment`). It is not yet consumed in the body — the job's
+    /// `modelName` field drives model selection today. A TODO marks the
+    /// integration point so Phase-E or the AppEnvironment wiring can
+    /// fill it in without changing this signature.
+    public static func makeStandard(
+        events: EventWriter,
+        paths: AppPaths = .standard,
+        settings: @escaping @Sendable () -> (model: WhisperModel, sha256: String)
+    ) async -> RefinementJobQueue {
+        // TODO C5/D-followup: consume `settings` once the queue auto-picks
+        // a model independently of the job's stored modelName field.
+        let store = RefinementJobStore.standard(paths: paths)
+        let gate = PauseGate(initiallyOpen: true)
+
+        // The closure captures `gate` so the queue and the refiner share it.
+        let runJob: RunJob = { job in
+            let modelStore = ModelStore(events: events)
+            let modelURL = try await modelStore.ensureAvailable(
+                ModelCatalog.model(named: job.modelName) ?? ModelCatalog.base)
+
+            // VAD failure is non-fatal: fall back to whole-buffer transcription
+            // (matches OfflineRefiner.refine behaviour for consistency).
+            let vadURL = try? await modelStore.ensureAvailable(ModelCatalog.sileroVAD)
+
+            let diarizer = try OfflineRefiner.makeDiarizer()
+
+            // WhisperTranscriber is NOT Sendable (whisper_context is not
+            // thread-safe). Creating a new instance per-region is the accepted
+            // project pattern — OfflineRefiner uses a transcriberFactory for
+            // the same reason. The model file is mmapped by whisper.cpp so the
+            // OS page-cache amortises the cost across calls.
+            let refiner = ResumableRefiner(
+                transcribe: { samples, region, options in
+                    let t = try WhisperTranscriber(modelURL: modelURL)
+                    return try t.transcribeRegion(samples, region: region, options: options)
+                },
+                detectRegions: { samples in
+                    guard let vadURL else { return [] }
+                    return try WhisperTranscriber.detectSpeechRegions(
+                        in: samples, vadModelURL: vadURL)
+                },
+                diarize: { wav in
+                    try await diarizer.diarizeSystemStream(wavPath: wav)
+                },
+                pauseGate: gate,
+                // TODO C5/D-followup: wire onStageUpdate to queue.reportStage
+                // once a forward-reference mechanism exists. The queue actor
+                // does not exist yet when `runJob` is constructed, so we cannot
+                // capture it here. Options explored: Box<RefinementJobQueue?>,
+                // 2-step init with a mutable runJob slot, or a separate
+                // ObservableStageProxy. Deferred to Phase-E stage-progress UI
+                // work (E1/E4). The plan's literal code also omits this wiring.
+                events: events)
+            try await refiner.run(job: job)
+        }
+
+        let queue = RefinementJobQueue(store: store, runJob: runJob, pauseGate: gate)
+        try? await queue.start()
+        return queue
+    }
+}
