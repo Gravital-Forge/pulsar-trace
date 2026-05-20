@@ -377,4 +377,37 @@ struct RefinementJobQueueTests {
         let total = await counter.n
         #expect(total == 2)
     }
+
+    @Test("recent list is capped at 100 entries")
+    func recentListCapped() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-recent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = RefinementJobStore(directory: dir)
+        // runJob completes instantly — no real refine.
+        let queue = RefinementJobQueue(store: store, runJob: { _ in })
+
+        // Enqueue 110 jobs, each with a unique recordingId so dedupe lets
+        // them all in. Wait briefly between batches to let the worker pump.
+        for i in 0..<110 {
+            try await queue.enqueueManualRefine(
+                folderURL: dir,
+                recordingId: "rec_\(i)",
+                modelName: "stub",
+                modelSHA256: "stub")
+        }
+        // Give the single-worker pump time to drain. Poll snapshot until
+        // queued is empty or 5s elapses.
+        let deadline = Date().addingTimeInterval(5)
+        while await queue.snapshot().queued.isEmpty == false,
+              Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let snap = await queue.snapshot()
+        #expect(snap.queued.isEmpty, "queue did not drain in time")
+        #expect(snap.recent.count <= 100,
+                "recent should be capped at 100, got \(snap.recent.count)")
+    }
 }

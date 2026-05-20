@@ -32,6 +32,11 @@ public actor RefinementJobQueue {
     private var worker: Task<Void, Never>?
     private var inflightCancellable: RefinementCancellable?
 
+    /// Cap on the in-memory `recent` list. Older terminal jobs still exist
+    /// on disk until `pruneTerminal` reaps them; this just bounds memory
+    /// and the size of every `snapshot()` reply during a long session.
+    private static let recentMemoryCap = 100
+
     public init(
         store: RefinementJobStore,
         runJob: @escaping RunJob,
@@ -80,6 +85,7 @@ public actor RefinementJobQueue {
                 self.recent.append(job)
             }
         }
+        trimRecent()
         pumpIfIdle()
     }
 
@@ -189,6 +195,7 @@ public actor RefinementJobQueue {
         job.state = .cancelled
         try? await store.upsert(job)
         recent.append(job)
+        trimRecent()
     }
 
     private func pumpIfIdle() {
@@ -236,9 +243,20 @@ public actor RefinementJobQueue {
         inflightCancellable = nil
         try? await store.upsert(job)
         recent.append(job)
+        trimRecent()
         current = nil
         self.worker = nil        // clear BEFORE pumpIfIdle so guard passes
         pumpIfIdle()
+    }
+
+    /// Keep the in-memory `recent` list bounded. The newest entries (the
+    /// tail) are preserved; older entries are dropped from memory only —
+    /// disk-side files persist until `pruneTerminal` reaps them.
+    private func trimRecent() {
+        if recent.count > Self.recentMemoryCap {
+            let drop = recent.count - Self.recentMemoryCap
+            recent.removeFirst(drop)
+        }
     }
 }
 
