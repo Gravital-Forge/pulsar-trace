@@ -18,6 +18,20 @@ public enum RefinementJobState: Codable, Equatable, Sendable {
         case merging
         case writingFinal
         case writingMetadata
+
+        /// Human-readable label for the UI (1-3 words). The `rawValue` is for
+        /// logging/serialization — never show it to end users.
+        public var displayName: String {
+            switch self {
+            case .resolvingInput:      return "Loading audio"
+            case .transcribingSystem:  return "Transcribing system"
+            case .diarizing:           return "Diarizing"
+            case .transcribingMic:     return "Transcribing mic"
+            case .merging:             return "Merging"
+            case .writingFinal:        return "Writing transcript"
+            case .writingMetadata:     return "Writing metadata"
+            }
+        }
     }
 
     /// Why the queue paused this job.

@@ -36,6 +36,20 @@ struct RefinementsListView: View {
         }
         .task { queue.startPolling() }
         .onDisappear { queue.stopPolling() }
+        // A window toolbar so this pane's split-view chrome (corner rounding,
+        // sidebar extent) matches the Recordings and Speakers panes — those
+        // carry a toolbar; a pane without one renders different chrome.
+        // See SettingsView.swift for the same rationale.
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    Task { queue.startPolling() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .help("Refresh refinement job list")
+            }
+        }
     }
 }
 
@@ -47,7 +61,7 @@ private struct JobRow: View {
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(job.recordingId).font(.body.monospaced())
+                Text(displayId).font(.body.monospaced())
                 Text(stateText).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -61,19 +75,28 @@ private struct JobRow: View {
         }
     }
 
+    /// Strip the `rec_` storage prefix at display time. The prefix is a stable
+    /// database key and must not be removed from any non-display site.
+    private var displayId: String {
+        job.recordingId.hasPrefix("rec_")
+            ? String(job.recordingId.dropFirst(4))
+            : job.recordingId
+    }
+
     private var stateText: String {
         switch job.state {
         case .queued:
             return "Queued"
         case .running(let stage, let done, let total, let regionIndex, let regionsTotal):
             if let regionIndex, let regionsTotal {
-                return "\(stage.rawValue) · step \(done + 1)/\(total) · region \(regionIndex)/\(regionsTotal)"
+                return "\(stage.displayName) (\(done + 1)/\(total)) · region \(regionIndex)/\(regionsTotal)"
             }
-            return "\(stage.rawValue) · step \(done + 1)/\(total)"
+            return "\(stage.displayName) (\(done + 1)/\(total))"
         case .paused(let reason, let lastStage):
-            return "Paused (\(reason.rawValue)) at \(lastStage.rawValue)"
+            return "Paused (\(reason.rawValue)) at \(lastStage.displayName)"
         case .completed(let seconds, let speakerCount):
-            return String(format: "Done · %.1fs · %d speaker(s)", seconds, speakerCount)
+            let speakerWord = speakerCount == 1 ? "speaker" : "speakers"
+            return "Done · \(Int(seconds.rounded()))s · \(speakerCount) \(speakerWord)"
         case .failed(let errorClass, let retryAvailable):
             return retryAvailable ? "Failed (\(errorClass)) · retryable" : "Failed (\(errorClass))"
         case .cancelled:

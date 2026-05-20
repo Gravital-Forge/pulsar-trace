@@ -112,9 +112,9 @@ struct MenuBarMenuView: View {
         if let running = queueVM.running,
            case .running(let stage, _, _, _, _) = running.state {
             if let pct = running.state.progressFraction {
-                return String(format: "Refining %.0f%% (%@)", pct * 100, stage.rawValue)
+                return "Refining \(Int((pct * 100).rounded()))% · \(stage.displayName)"
             }
-            return "Refining (\(stage.rawValue))"
+            return "Refining · \(stage.displayName)"
         }
         if !queueVM.queued.isEmpty {
             return "\(queueVM.queued.count) queued"

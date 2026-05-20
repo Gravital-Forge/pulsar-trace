@@ -201,7 +201,17 @@ public actor RefinementJobQueue {
 
         do {
             try await _runJob(job)
-            job.state = .completed(durationSeconds: 0.0, speakerCount: 0)
+            // Read metadata.json written by the refiner to populate real stats.
+            let metadataURL = job.folderURL.appendingPathComponent("metadata.json")
+            if let data = try? Data(contentsOf: metadataURL),
+               let metadata = try? JSONDecoder().decode(RefinementMetadata.self, from: data) {
+                job.state = .completed(
+                    durationSeconds: metadata.durationSeconds,
+                    speakerCount: metadata.speakers.count)
+            } else {
+                logger.warning("could not read metadata.json after refine — completion will show 0s/0 speakers")
+                job.state = .completed(durationSeconds: 0.0, speakerCount: 0)
+            }
         } catch {
             // TODO Task C3: extract a typed error class + retry flag.
             job.state = .failed(errorClass: "io", retryAvailable: true)
@@ -241,8 +251,6 @@ extension RefinementJobQueue {
         paths: AppPaths = .standard,
         settings: @escaping @Sendable () -> (model: WhisperModel, sha256: String)
     ) async -> RefinementJobQueue {
-        // TODO C5/D-followup: consume `settings` once the queue auto-picks
-        // a model independently of the job's stored modelName field.
         let store = RefinementJobStore.standard(paths: paths)
         let gate = PauseGate(initiallyOpen: true)
 
@@ -297,12 +305,10 @@ extension RefinementJobQueue {
                     try await diarizer.diarizeSystemStream(wavPath: wav)
                 },
                 pauseGate: gate,
-                // TODO C5/D-followup: wire onStageUpdate to queue.reportStage
-                // once a forward-reference mechanism exists. Options explored:
-                // Box<RefinementJobQueue?>, 2-step init with a mutable runJob
-                // slot, or a separate ObservableStageProxy. Deferred to Phase-E
-                // stage-progress UI work (E1/E4).
-                events: events)
+                events: events,
+                onStageUpdate: { [queue] state in
+                    await queue.reportStage(state)
+                })
             try await refiner.run(job: job)
         }
 

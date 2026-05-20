@@ -61,8 +61,9 @@ struct RecordingsListView: View {
             VStack(alignment: .leading) {
                 Text(recording.displayName)
                 if recording.isRefined {
-                    Text("\(recording.speakers.count) speaker(s) · "
-                        + "\(Int(recording.durationSeconds))s")
+                    let count = recording.speakers.count
+                    let word = count == 1 ? "speaker" : "speakers"
+                    Text("\(count) \(word) · \(Int(recording.durationSeconds))s")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
