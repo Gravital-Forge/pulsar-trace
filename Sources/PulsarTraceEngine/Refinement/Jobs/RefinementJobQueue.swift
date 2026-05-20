@@ -58,7 +58,16 @@ public actor RefinementJobQueue {
     }
 
     /// Restore persisted jobs and kick the worker.
+    ///
+    /// Before reloading active jobs, prunes terminal jobs older than 30 days
+    /// (matching the events-log retention policy, R51 / Epic 1). A prune failure
+    /// is non-fatal: it logs a warning and queue startup continues normally.
     public func start() async throws {
+        do {
+            try await store.pruneTerminal(olderThanDays: 30)
+        } catch {
+            logger.warning("refinement queue: pruneTerminal failed (non-fatal): \(error)")
+        }
         let persisted = try await store.listAll()
         for job in persisted {
             switch job.state {
@@ -213,8 +222,10 @@ public actor RefinementJobQueue {
                 job.state = .completed(durationSeconds: 0.0, speakerCount: 0)
             }
         } catch {
-            // TODO Task C3: extract a typed error class + retry flag.
-            job.state = .failed(errorClass: "io", retryAvailable: true)
+            let classified = RefinementJobError.classify(error)
+            job.state = .failed(
+                errorClass: classified.errorClass,
+                retryAvailable: classified.retryAvailable)
         }
         // Clear the cancellable synchronously here — before pumpIfIdle() can
         // start the next job's runJob and register a new cancellable. This
@@ -240,16 +251,13 @@ extension RefinementJobQueue {
     /// Used by `AppEnvironment` in `pulsartrace-mac`. The CLI's
     /// `OfflineRefiner` path stays unchanged (one-shot, no queue).
     ///
-    /// The `settings` parameter is a forward hook for when the queue
-    /// auto-selects a model per-job (e.g. user preference stored in
-    /// `AppEnvironment`). It is not yet consumed in the body — the job's
-    /// `modelName` field drives model selection today. A TODO marks the
-    /// integration point so Phase-E or the AppEnvironment wiring can
-    /// fill it in without changing this signature.
+    /// Per-job model selection is determined at enqueue time: callers pass
+    /// `modelName` and `modelSHA256` to `enqueueManualRefine` /
+    /// `enqueueAutoRefine` / `enqueueCrashRecovery`. The queue reads these
+    /// fields from each `RefinementJob` at run time.
     public static func makeStandard(
         events: EventWriter,
-        paths: AppPaths = .standard,
-        settings: @escaping @Sendable () -> (model: WhisperModel, sha256: String)
+        paths: AppPaths = .standard
     ) async -> RefinementJobQueue {
         let store = RefinementJobStore.standard(paths: paths)
         let gate = PauseGate(initiallyOpen: true)
@@ -260,14 +268,14 @@ extension RefinementJobQueue {
         // `queue.setInflightCancellable(diarizer)` so the queue can cancel the
         // diarizer on pause (D-Q7 / Task D3).
         //
-        // NOTE: the queue is strongly captured inside `runJob`, which is stored
-        // on the queue itself. This creates a retain cycle. In production this
-        // is acceptable — the queue lives for the app's lifetime. (TODO D3: if
-        // a unit-level makeStandard test is added, break the cycle via a weak
-        // capture or a separate factory object.)
+        // Weak capture: `runJob` is stored on the queue itself, which would
+        // create a retain cycle with a strong capture. Using `[weak queue]`
+        // breaks the cycle. The guard-let at the top of the closure exits
+        // early if the queue is ever deallocated (safe no-op).
         let queue = RefinementJobQueue(store: store, runJob: { _ in }, pauseGate: gate)
 
-        let runJob: RunJob = { [queue] job in
+        let runJob: RunJob = { [weak queue] job in
+            guard let queue else { return }
             let modelStore = ModelStore(events: events)
             let modelURL = try await modelStore.ensureAvailable(
                 ModelCatalog.model(named: job.modelName) ?? ModelCatalog.base)
@@ -306,7 +314,8 @@ extension RefinementJobQueue {
                 },
                 pauseGate: gate,
                 events: events,
-                onStageUpdate: { [queue] state in
+                onStageUpdate: { [weak queue] state in
+                    guard let queue else { return }
                     await queue.reportStage(state)
                 })
             try await refiner.run(job: job)
@@ -316,4 +325,5 @@ extension RefinementJobQueue {
         try? await queue.start()
         return queue
     }
+
 }

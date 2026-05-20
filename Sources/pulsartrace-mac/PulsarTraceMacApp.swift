@@ -152,14 +152,14 @@ final class AppEnvironment {
         self.paths = paths
         self.events = events
 
-        // Build a lightweight placeholder queue for queueVM (E2). The VM is
-        // always non-optional so the Window scene's .environment() call is
-        // unconditional; bootstrap() swaps in the real queue via setQueue(_:)
-        // once makeStandard completes. The placeholder store and noop runJob
-        // ensure no disk writes or real work happen before bootstrap finishes.
-        let placeholderStore = RefinementJobStore(
-            directory: paths.applicationSupport
-                .appendingPathComponent("refinement-queue", isDirectory: true))
+        // Placeholder queue used only to make queueVM non-Optional before
+        // bootstrap() swaps in the real queue. Points at a unique temp dir so
+        // it can never accidentally read or write the real refinement-queue
+        // store on disk.
+        let placeholderDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulsartrace-placeholder-queue-\(ProcessInfo.processInfo.processIdentifier)",
+                                    isDirectory: true)
+        let placeholderStore = RefinementJobStore(directory: placeholderDir)
         let placeholderQueue = RefinementJobQueue(
             store: placeholderStore, runJob: { _ in })
         self.queueVM = RefinementJobQueueViewModel(queue: placeholderQueue)
@@ -226,24 +226,7 @@ final class AppEnvironment {
     /// `init()` synchronous while allowing the expensive async setup to run
     /// once the MainActor is free after initialization.
     func bootstrap() async {
-        // The `settings` closure is a @Sendable forward hook — it must not
-        // capture @MainActor-isolated state because makeStandard may call it
-        // from the queue's actor isolation. We snapshot the model name (a
-        // Sendable String) on the MainActor here and capture the value in the
-        // closure, avoiding any cross-actor access.
-        //
-        // NOTE: this closure is not yet consumed by makeStandard (it is a
-        // forward hook per the C5 TODO). We still pass a well-formed closure
-        // so Phase E can activate it without a signature change.
-        let modelNameSnapshot = settings.refineModelName
-        let q = await RefinementJobQueue.makeStandard(
-            events: events,
-            paths: paths,
-            settings: {
-                let model = ModelCatalog.model(named: modelNameSnapshot)
-                    ?? ModelCatalog.base
-                return (model, model.sha256)
-            })
+        let q = await RefinementJobQueue.makeStandard(events: events, paths: paths)
         self.queue = q
         await queueVM.setQueue(q)
     }

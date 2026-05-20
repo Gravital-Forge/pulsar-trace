@@ -243,9 +243,9 @@ struct RefinementJobQueueTests {
     /// entering `waitOpen()` — this ensures pauseForRecording() is called
     /// *after* the cancellable is registered but before the gate re-opens.
     ///
-    /// Retain-cycle note: `queue` is captured strongly in the runJob closure
-    /// stored on the queue itself. This is a known cycle acceptable per-test
-    /// (the queue is discarded at the end of the test function). TODO D3.
+    /// Capture note: `queue` is captured strongly here for test scoping
+    /// (the queue is discarded at the end of the test function). Production
+    /// `makeStandard` uses `[weak queue]` to break the cycle.
     @Test("pauseForRecording cancels the inflight diarizer")
     func pauseCancelsDiarizer() async throws {
         actor DiarizerSpy: RefinementCancellable {
@@ -283,6 +283,54 @@ struct RefinementJobQueueTests {
         // Cleanup: let runJob drain so the worker task doesn't outlive the test.
         await pauseSignaled.open()
         await queue.resumeAfterRecording()
+    }
+
+    /// `start()` prunes terminal jobs older than 30 days from the store before
+    /// restoring active jobs. Terminal jobs younger than 30 days are kept.
+    ///
+    /// Seeds the store directly (bypassing the queue) with:
+    /// - one 40-day-old `.completed` job  →  must be pruned
+    /// - one  5-day-old `.completed` job  →  must survive
+    /// Calls `start()` and asserts only the fresh job appears in `recent`.
+    @Test("start() prunes terminal jobs older than 30 days")
+    func startPrunesOldTerminalJobs() async throws {
+        let dir = tempDir()
+        let store = RefinementJobStore(directory: dir)
+        let now = Date()
+
+        let oldJob = RefinementJob(
+            id: "job_old",
+            recordingId: "rec_old",
+            folderURL: URL(fileURLWithPath: "/tmp/old"),
+            modelName: "base",
+            modelSHA256: "deadbeef",
+            trigger: .manual,
+            enqueuedAt: now.addingTimeInterval(-40 * 86400),   // 40 days ago
+            state: .completed(durationSeconds: 60, speakerCount: 2))
+        let freshJob = RefinementJob(
+            id: "job_fresh",
+            recordingId: "rec_fresh",
+            folderURL: URL(fileURLWithPath: "/tmp/fresh"),
+            modelName: "base",
+            modelSHA256: "deadbeef",
+            trigger: .manual,
+            enqueuedAt: now.addingTimeInterval(-5 * 86400),    //  5 days ago
+            state: .completed(durationSeconds: 30, speakerCount: 1))
+
+        try await store.upsert(oldJob)
+        try await store.upsert(freshJob)
+
+        // Create the queue and call start() — this triggers pruneTerminal(30).
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in /* no-op — no active jobs */ })
+        try await queue.start()
+
+        let snap = await queue.snapshot()
+        #expect(!snap.recent.contains { $0.id == "job_old" },
+                "40-day-old job should have been pruned")
+        #expect(snap.recent.contains { $0.id == "job_fresh" },
+                "5-day-old job should still be present")
     }
 
     /// Two enqueued jobs run sequentially through the single-worker queue.
