@@ -179,17 +179,37 @@ public final class DeviceCaptureSource: @unchecked Sendable {
 
     // MARK: - Engine construction
 
-    private func makeMicEngine() -> MicCaptureEngine {
+    // `internal` (not `private`) so `StallRecoveryTests` can construct the
+    // engines via the production wiring path and assert that the watchdog /
+    // stream-error callbacks are assigned. The tests don't start the engines —
+    // they just inspect the closure slots.
+    internal func makeMicEngine() -> MicCaptureEngine {
         let engine = MicCaptureEngine(deviceID: configuration.micDeviceID)
         engine.onEvent = { [weak self] event in self?.route(event, .mic) }
         engine.onStall = { [weak self] in self?.handleStall(stream: .mic) }
         return engine
     }
 
-    private func makeSystemEngine() -> SystemAudioCaptureEngine {
+    internal func makeSystemEngine() -> SystemAudioCaptureEngine {
         let engine = SystemAudioCaptureEngine(filter: .allApps)
         engine.onEvent = { [weak self] event in self?.route(event, .system) }
         engine.onStall = { [weak self] in self?.handleStall(stream: .system) }
+        // A hard `SCStream` failure (e.g. TCC revoked mid-session, display
+        // rearrangement, ScreenCaptureKit internal abort) reaches
+        // `SystemAudioCaptureEngine.stream(_:didStopWithError:)`, which fires
+        // `onStreamError`. Without this assignment the callback fires into
+        // the void and capture dies silently — observed on session
+        // 2026-05-20-113001 (~17 min in, no `recording_paused` event).
+        // Route into the same path as a silent stall: `handleStall` emits
+        // `recording_paused` (reason `stall_recovery`), stops the engine,
+        // and rebuilds a fresh one with exponential backoff. The error's
+        // type name is logged for diagnosability (its description is not
+        // logged because it can carry a filesystem path — Hard Invariant #7).
+        engine.onStreamError = { [weak self] error in
+            guard let self else { return }
+            self.log("system audio stream error (\(type(of: error)))")
+            self.handleStall(stream: .system)
+        }
         return engine
     }
 

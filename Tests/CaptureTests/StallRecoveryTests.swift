@@ -272,3 +272,37 @@ struct StallThresholdTests {
                 < SystemAudioCaptureEngine.stallThreshold)
     }
 }
+
+/// Regression coverage for the `onStreamError` wiring gap.
+///
+/// `SystemAudioCaptureEngine` declared and fired `onStreamError` from its
+/// `SCStreamDelegate.stream(_:didStopWithError:)` implementation, but
+/// `DeviceCaptureSource.makeSystemEngine` never assigned the callback —
+/// a hard `SCStream` abort was a silent no-op (no event, no restart).
+/// Session 2026-05-20-113001 stopped delivering audio at ~17 min with no
+/// observable recovery; this gap is the most plausible cause.
+@Suite("Stream-error wiring")
+struct StreamErrorWiringTests {
+
+    /// Regression for session 2026-05-20-113001 (~17-min cutoff with no
+    /// `recording_paused` event): `SystemAudioCaptureEngine.onStreamError`
+    /// was defined and fired by the delegate's `didStopWithError`, but
+    /// `DeviceCaptureSource.makeSystemEngine` never assigned it, so an
+    /// `SCStream` error was a silent no-op — no restart, no event.
+    @Test("DeviceCaptureSource wires onStreamError so SCStream errors trigger restart")
+    func systemEngineHasStreamErrorWiring() {
+        let config = DeviceCaptureSource.Configuration(
+            recordingId: "rec_wire_test",
+            outputDirBasename: "wire",
+            micDeviceID: nil,
+            systemAudioEnabled: true,
+            systemSocketPath: URL(fileURLWithPath: "/tmp/pt-wire-sys.sock"),
+            micSocketPath: URL(fileURLWithPath: "/tmp/pt-wire-mic.sock"),
+            modelLive: "base",
+            events: nil)
+        let source = DeviceCaptureSource(configuration: config)
+        let engine = source.makeSystemEngine()
+        #expect(engine.onStreamError != nil,
+                "SCStream errors must be routed into the stall-restart path")
+    }
+}
