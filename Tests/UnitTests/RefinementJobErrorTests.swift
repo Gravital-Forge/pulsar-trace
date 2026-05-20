@@ -216,6 +216,7 @@ struct RefinementJobErrorTests {
         let classified = RefinementJobError.classify(
             RefinementPipeline.RefineError.io(Boom()))
         #expect(classified.errorClass == "io")
+        #expect(classified.retryAvailable == true)
     }
 
     @Test("classify maps RefineError.input to .io (non-retryable)")
