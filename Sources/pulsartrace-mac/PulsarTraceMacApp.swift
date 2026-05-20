@@ -61,6 +61,22 @@ struct PulsarTraceMacApp: App {
     }
 }
 
+/// A mutable container for an async closure — used to break the init-time
+/// dependency cycle in `AppEnvironment`. `RecordingViewModel` calls `call(_:_:)`
+/// on the box; `AppEnvironment` wires the real implementation into `impl` once
+/// `self` is fully initialized (every stored property is set).
+///
+/// `@unchecked Sendable` because `impl` is mutated once during init on the
+/// MainActor and read-only thereafter — the mutation happens before any
+/// concurrent caller can reach it.
+private final class EnqueueBox: @unchecked Sendable {
+    var impl: (@Sendable (URL, String) async -> Void)?
+
+    func call(_ url: URL, _ recordingId: String) async {
+        await impl?(url, recordingId)
+    }
+}
+
 /// Owns the long-lived ViewModels + the global-hotkey monitor.
 @MainActor
 @Observable
@@ -82,6 +98,12 @@ final class AppEnvironment {
     /// The standard app paths — events directory, speaker library, sockets.
     let paths: AppPaths
 
+    /// The single-worker refinement queue (D2). Built asynchronously in
+    /// `bootstrap()` — `nil` until then, so `toggleRecording` uses optional
+    /// calls throughout. This matches the existing `events.bootstrap()` pattern:
+    /// async setup is deferred to an `App.task { }`, keeping `init()` sync.
+    private(set) var queue: RefinementJobQueue? = nil
+
     /// Passive global-hotkey monitor (R41). `addGlobalMonitorForEvents` needs
     /// NO Accessibility TCC grant; the keypress also reaching the frontmost
     /// app is an accepted v1 tradeoff (D27). NOT a `CGEventTap`.
@@ -96,6 +118,10 @@ final class AppEnvironment {
     /// or not it is open (FIX 1). Lives for the process lifetime.
     private var liveWatcherWiring: Task<Void, Never>?
 
+    /// Handle for the combined bootstrap task (events → queue). Stored so
+    /// it can be cancelled if `AppEnvironment` is ever torn down.
+    private var bootstrapTask: Task<Void, Never>?
+
     init() {
         let settings = MenuBarSettings()
         let paths = AppPaths.standard
@@ -103,17 +129,78 @@ final class AppEnvironment {
         self.settings = settings
         self.paths = paths
         self.events = events
+
+        // Indirection box: lets RecordingViewModel call the real enqueue
+        // closure before `self` is fully initialized (Swift forbids [weak self]
+        // captures until every stored property is set, which `recording` itself
+        // prevents). The box is created up-front, passed into RecordingViewModel
+        // as the closure payload, and filled in below once `self` is complete.
+        let enqueueBox = EnqueueBox()
+
         self.recording = RecordingViewModel(
-            settings: settings, paths: paths, events: events)
+            settings: settings, paths: paths, events: events,
+            enqueueAutoRefine: { url, recordingId in
+                await enqueueBox.call(url, recordingId)
+            })
         self.scanner = RecordingsScanner(
             settings: settings, paths: paths, events: events)
         self.liveWatcher = LiveTranscriptWatcher()
         self.onboarding = OnboardingTourViewModel()
-        // Bootstrap the events writer (creates today's events file) before any
-        // component emits — mirrors `AppLifecycle.start`.
-        Task { await events.bootstrap() }
+
+        // All stored properties are now set — `self` is fully initialized.
+        // Wire the real enqueue implementation into the box. The closure hops
+        // to MainActor to read @MainActor-isolated state (`queue`, `settings`)
+        // before crossing into the queue actor for the actual enqueue.
+        enqueueBox.impl = { [weak self] url, recordingId in
+            let pair: (RefinementJobQueue, String, String)? =
+                await MainActor.run {
+                    guard let self, let queue = self.queue else { return nil }
+                    let name = self.settings.refineModelName
+                    let model = ModelCatalog.model(named: name) ?? ModelCatalog.base
+                    return (queue, model.name, model.sha256)
+                }
+            guard let (queue, modelName, modelSHA256) = pair else { return }
+            try? await queue.enqueueAutoRefine(
+                folderURL: url, recordingId: recordingId,
+                modelName: modelName, modelSHA256: modelSHA256)
+        }
+
+        // Chain events bootstrap → queue bootstrap in a single stored Task so
+        // that `RefinementJobQueue.makeStandard` (and any `runJob` it spawns)
+        // always sees a fully bootstrapped events writer. The handle is stored
+        // so cancellation is possible if `AppEnvironment` is ever torn down.
+        self.bootstrapTask = Task { [weak self] in
+            await events.bootstrap()
+            await self?.bootstrap()
+        }
         installHotkeyMonitor()
         startLiveWatcherWiring()
+    }
+
+    /// Build the refinement queue asynchronously. Invoked from a fire-and-forget
+    /// `Task` in `init()` — the same pattern as `events.bootstrap()`. Keeps
+    /// `init()` synchronous while allowing the expensive async setup to run
+    /// once the MainActor is free after initialization.
+    func bootstrap() async {
+        // The `settings` closure is a @Sendable forward hook — it must not
+        // capture @MainActor-isolated state because makeStandard may call it
+        // from the queue's actor isolation. We snapshot the model name (a
+        // Sendable String) on the MainActor here and capture the value in the
+        // closure, avoiding any cross-actor access.
+        //
+        // NOTE: this closure is not yet consumed by makeStandard (it is a
+        // forward hook per the C5 TODO). We still pass a well-formed closure
+        // so Phase E can activate it without a signature change.
+        let modelNameSnapshot = settings.refineModelName
+        let q = await RefinementJobQueue.makeStandard(
+            events: events,
+            paths: paths,
+            settings: {
+                let model = ModelCatalog.model(named: modelNameSnapshot)
+                    ?? ModelCatalog.base
+                return (model, model.sha256)
+            })
+        self.queue = q
     }
 
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).
@@ -177,12 +264,28 @@ final class AppEnvironment {
     }
 
     /// Start or stop recording — the hotkey's effect (R41).
+    ///
+    /// Pauses the refinement queue before starting a recording (so the refiner
+    /// yields CPU + I/O to the live pass) and resumes it after stopping. If the
+    /// start fails and the status returns to `.idle`, the pause is undone
+    /// immediately so the queue continues working on pending jobs.
     func toggleRecording() async {
         switch recording.status {
         case .idle:
+            await queue?.pauseForRecording()
             await recording.startRecording()
+            // If the start failed (status returned to .idle or .error), undo
+            // the pause so the queue is not stuck indefinitely.
+            if case .idle = recording.status {
+                await queue?.resumeAfterRecording()
+            } else if case .error = recording.status {
+                await queue?.resumeAfterRecording()
+            }
         case .recording:
             await recording.stopRecording()
+            // Resume unconditionally: even if stopRecording left the VM in
+            // .crashed/.error, we don't want to strand the queue paused.
+            await queue?.resumeAfterRecording()
         default:
             break
         }
