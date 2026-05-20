@@ -10,7 +10,11 @@ import Foundation
 /// - `OfflineRefiner.makeDiarizer` → `Diarizer.DiarizeError` (.pythonNotFound,
 ///   .launchFailed)
 /// - `ResumableRefiner.run` → `Diarizer.DiarizeError` (non-.cancelled variants),
-///   `RefinementPipeline.RefineError`, I/O errors from `WAVReader` / `AtomicFile`.
+///   raw `WhisperTranscriber.TranscribeError`, I/O errors from `WAVReader` /
+///   `AtomicFile`.
+/// - `RefinementPipeline.assembleAndWrite` → `RefinementPipeline.RefineError`
+///   (when the assemble step's reconciler / file writes wrap into the typed
+///   RefineError). Each `RefineError` branch maps to a queue bucket.
 ///
 /// CancellationError note: `ResumableRefiner.run` does NOT propagate
 /// `CancellationError` through Swift structured concurrency. The pause gate
@@ -103,6 +107,20 @@ public enum RefinementJobError: Error {
                 // Should not reach here (ResumableRefiner retries internally),
                 // but classify defensively as transient.
                 return .diarizeCrashed
+            }
+        }
+
+        // RefinementPipeline.RefineError wraps the underlying cause and
+        // carries a coarse category. Map each branch to the closest queue
+        // bucket. `.input` collapses to `.io` (no dedicated bucket); the
+        // queue surfaces it as retryable because that matches the queue's
+        // retry contract — the CLI's `RefineError.retryAvailable: false`
+        // for `.input` is the CLI's own decision.
+        if let re = error as? RefinementPipeline.RefineError {
+            switch re {
+            case .transcription: return .transcribeFailed
+            case .diarization:   return .diarizeCrashed
+            case .io, .input:    return .io
             }
         }
 

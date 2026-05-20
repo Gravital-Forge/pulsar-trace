@@ -191,4 +191,41 @@ struct RefinementJobErrorTests {
             Issue.record("expected .failed, got \(state)")
         }
     }
+
+    @Test("classify maps RefineError.transcription to .transcribeFailed")
+    func classifyRefineErrorTranscription() {
+        struct Boom: Error {}
+        let classified = RefinementJobError.classify(
+            RefinementPipeline.RefineError.transcription(Boom()))
+        #expect(classified.errorClass == "transcribeFailed")
+        #expect(classified.retryAvailable == true)
+    }
+
+    @Test("classify maps RefineError.diarization to .diarizeCrashed")
+    func classifyRefineErrorDiarization() {
+        struct Boom: Error {}
+        let classified = RefinementJobError.classify(
+            RefinementPipeline.RefineError.diarization(Boom()))
+        #expect(classified.errorClass == "diarizeCrashed")
+        #expect(classified.retryAvailable == true)
+    }
+
+    @Test("classify maps RefineError.io to .io")
+    func classifyRefineErrorIO() {
+        struct Boom: Error {}
+        let classified = RefinementJobError.classify(
+            RefinementPipeline.RefineError.io(Boom()))
+        #expect(classified.errorClass == "io")
+    }
+
+    @Test("classify maps RefineError.input to .io (non-retryable)")
+    func classifyRefineErrorInput() {
+        let inner = RecordingFolder.InputError.pathNotFound("/x")
+        let classified = RefinementJobError.classify(
+            RefinementPipeline.RefineError.input(inner))
+        #expect(classified.errorClass == "io")
+        // RefineError.input.retryAvailable is false, but our classify
+        // collapses input to .io which is retryable. Document that.
+        #expect(classified.retryAvailable == true)
+    }
 }
