@@ -105,6 +105,13 @@ public actor EventWriter {
         }
         defer { _ = flock(fd, LOCK_UN) }
 
+        // Re-anchor to end-of-file every write. Two processes share this
+        // file: A's writes advance A's handle position but NOT B's, so
+        // without re-seeking each writer would clobber bytes added by the
+        // other since this writer's last write. flock guarantees no other
+        // writer holds the lock right now, so the seek-then-write pair is
+        // atomic w.r.t. other EventWriters.
+        try handle.seekToEnd()
         try handle.write(contentsOf: data)
         return id
     }

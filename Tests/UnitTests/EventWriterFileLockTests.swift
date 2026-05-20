@@ -57,4 +57,37 @@ struct EventWriterFileLockTests {
         #expect(elapsed >= 0.2,
                 "writer must have actually waited; only \(elapsed)s elapsed")
     }
+
+    /// Regression for position-drift across multiple EventWriters on the same
+    /// file. Even with flock, each FileHandle holds its own cached position
+    /// from the initial seekToEnd at open — so the second writer's write lands
+    /// at the position recorded at open time, overwriting bytes the first
+    /// writer just added.
+    @Test("two EventWriters on the same dir do not clobber each other's writes")
+    func twoWritersDoNotClobber() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let a = EventWriter(directory: dir)
+        let b = EventWriter(directory: dir)
+        await a.bootstrap()
+        await b.bootstrap()
+        let url = await a.currentFileURL()
+
+        // 10 alternating writes. With position drift, b's writes overwrite a's.
+        for _ in 0..<10 {
+            _ = try await a.append(AppStoppedEvent(version: "A", macosVersion: "test"))
+            _ = try await b.append(AppStoppedEvent(version: "B", macosVersion: "test"))
+        }
+
+        let data = try Data(contentsOf: url)
+        let text = String(decoding: data, as: UTF8.self)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        #expect(lines.count == 20,
+                "expected 20 lines (10 each from A and B), got \(lines.count)")
+        for line in lines {
+            // Each line must be valid JSON — no partial / clobbered bytes.
+            #expect(line.first == "{" && line.last == "}",
+                    "line is not a complete JSON object: \(line)")
+        }
+    }
 }
