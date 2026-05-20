@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 /// Append-only JSONL writer for the events log (§8.13, R78–R86).
 ///
@@ -20,11 +25,14 @@ public actor EventWriter {
         case noOpenFile
         /// The encoded line could not be converted to UTF-8 bytes.
         case encodingFailed
+        /// `flock(LOCK_EX)` returned non-zero; the raw errno is embedded.
+        case lockFailed(errno: Int32)
 
         public var description: String {
             switch self {
             case .noOpenFile: return "events file is not open; event not persisted"
             case .encodingFailed: return "event line could not be UTF-8 encoded"
+            case .lockFailed(let e): return "events file flock failed: errno \(e)"
             }
         }
     }
@@ -81,6 +89,22 @@ public actor EventWriter {
         guard let data = (line + "\n").data(using: .utf8) else {
             throw WriteError.encodingFailed
         }
+
+        // Cross-process exclusion. Both `pulsartrace-mac` and
+        // `pulsartrace-capture` append to the same daily file; the actor only
+        // serialises within one process. Without flock, the two processes
+        // can interleave bytes mid-line — observed in
+        // events/2026-05-20.jsonl where a `recording_paused` was clobbered by
+        // an `app_stopped`. `flock(LOCK_EX)` is advisory: it only guards
+        // against other callers that also `flock` the file, which every
+        // EventWriter does. Released in `defer` so a thrown `write` still
+        // unlocks.
+        let fd = handle.fileDescriptor
+        guard flock(fd, LOCK_EX) == 0 else {
+            throw WriteError.lockFailed(errno: errno)
+        }
+        defer { _ = flock(fd, LOCK_UN) }
+
         try handle.write(contentsOf: data)
         return id
     }
