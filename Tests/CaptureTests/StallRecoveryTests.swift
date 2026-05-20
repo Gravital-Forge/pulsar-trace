@@ -305,4 +305,40 @@ struct StreamErrorWiringTests {
         #expect(engine.onStreamError != nil,
                 "SCStream errors must be routed into the stall-restart path")
     }
+
+    /// A stream-error from SCStream is authoritative — the stream is dead
+    /// regardless of how recently the engine was installed. The recency
+    /// guard that legitimately filters stale watchdog callbacks must NOT
+    /// suppress a streamError callback. Otherwise a TCC permission
+    /// inconsistency or ScreenCaptureKit abort that fires within
+    /// stallThreshold of start() leaves capture dead with no restart.
+    @Test("a stream-error within stallThreshold still triggers restart")
+    func streamErrorBypassesRecencyGuard() async {
+        // Build a minimal DeviceCaptureSource (no engines started — we just
+        // need a target for handleStall). Use the same Configuration shape
+        // as systemEngineHasStreamErrorWiring.
+        let config = DeviceCaptureSource.Configuration(
+            recordingId: "rec_recency_test",
+            outputDirBasename: "rec",
+            micDeviceID: nil,
+            systemAudioEnabled: true,
+            systemSocketPath: URL(fileURLWithPath: "/tmp/pt-rec-sys.sock"),
+            micSocketPath: URL(fileURLWithPath: "/tmp/pt-rec-mic.sock"),
+            modelLive: "base",
+            events: nil)
+        let source = DeviceCaptureSource(configuration: config)
+
+        // Mark the system engine as freshly installed (< 6s ago).
+        source.markEngineInstalled(stream: .system, at: Date())
+
+        // streamError path must NOT be blocked by the recency guard.
+        // (If the recency guard blocks it, restartingStreams stays empty
+        //  and no restart attempt is scheduled.)
+        source.handleStall(stream: .system, cause: .streamError)
+
+        // Give the restartQueue.async one tick to enqueue.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(source.restartingStreamsForTest.contains(.system),
+                "streamError should bypass recency guard and schedule restart")
+    }
 }
