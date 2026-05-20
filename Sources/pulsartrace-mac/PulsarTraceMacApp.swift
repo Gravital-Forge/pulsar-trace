@@ -161,8 +161,7 @@ final class AppEnvironment {
             enqueueAutoRefine: { url, recordingId in
                 await enqueueBox.call(url, recordingId)
             })
-        self.scanner = RecordingsScanner(
-            settings: settings, paths: paths, events: events)
+        self.scanner = RecordingsScanner(settings: settings)
         self.liveWatcher = LiveTranscriptWatcher()
         self.onboarding = OnboardingTourViewModel()
 
