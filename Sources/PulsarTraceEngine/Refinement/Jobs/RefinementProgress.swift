@@ -72,6 +72,12 @@ public struct RefinementProgress: Codable, Equatable, Sendable {
 
     public var lastCheckpointAt: Date
 
+    /// Description of the most recent error that caused this job to fail or
+    /// abort, with filesystem paths redacted. `nil` on a healthy job. Persists
+    /// across a retry so the next user / debugger has something concrete to
+    /// look at — `RefinementJobState.failed.errorClass` is a coarse bucket.
+    public var lastError: String?
+
     public init(
         schemaVersion: Int,
         jobId: String,
@@ -84,7 +90,8 @@ public struct RefinementProgress: Codable, Equatable, Sendable {
         completedMicRegionIndices: [Int],
         micSegments: [PartialSegment],
         language: String?,
-        lastCheckpointAt: Date
+        lastCheckpointAt: Date,
+        lastError: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.jobId = jobId
@@ -98,6 +105,7 @@ public struct RefinementProgress: Codable, Equatable, Sendable {
         self.micSegments = micSegments
         self.language = language
         self.lastCheckpointAt = lastCheckpointAt
+        self.lastError = lastError
     }
 
     public static func empty(jobId: String, recordingId: String) -> RefinementProgress {
@@ -144,6 +152,7 @@ public struct RefinementProgress: Codable, Equatable, Sendable {
         case micSegments = "mic_segments"
         case language
         case lastCheckpointAt = "last_checkpoint_at"
+        case lastError = "last_error"
     }
 
     public func encoded() throws -> Data {

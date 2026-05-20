@@ -43,4 +43,26 @@ struct RefinementProgressTests {
         p.completedSystemRegionIndices = [0, 1, 2, 3, 4]
         #expect(p.nextSystemRegionIndex == nil)
     }
+
+    @Test("lastError round-trips through JSON when set")
+    func lastErrorRoundTrips() throws {
+        var p = RefinementProgress.empty(jobId: "j", recordingId: "r")
+        p.lastError = "DiarizeError.timedOut after 600s"
+        let data = try p.encoded()
+        let back = try RefinementProgress.decode(data)
+        #expect(back.lastError == "DiarizeError.timedOut after 600s")
+    }
+
+    @Test("lastError is omitted from JSON when nil; old files still decode")
+    func lastErrorOptional() throws {
+        let p = RefinementProgress.empty(jobId: "j", recordingId: "r")
+        let data = try p.encoded()
+        // The key must not be present when the value is nil.
+        let json = String(decoding: data, as: UTF8.self)
+        #expect(!json.contains("last_error"))
+        // Decoding a payload without the key (mimicking a pre-existing file)
+        // succeeds with lastError == nil.
+        let back = try RefinementProgress.decode(data)
+        #expect(back.lastError == nil)
+    }
 }
