@@ -199,6 +199,67 @@ struct ResumableRefinerTests {
         let finalCount = counter.withLock { $0 }
         #expect(finalCount == 2)
     }
+
+    @Test("a cancelled diarize retries when the gate reopens")
+    func diarizeCancelRetries() async throws {
+        let folder = tempDir()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FixtureRecording.minimal(at: folder)
+
+        let gate = PauseGate(initiallyOpen: true)
+        actor Calls { var n = 0; func incr() -> Int { n += 1; return n } }
+        let calls = Calls()
+
+        let refiner = ResumableRefiner(
+            transcribe: { _, region, _ in
+                TranscriptionResult(
+                    segments: [TranscriptSegment(
+                        start: region.start, end: region.end, text: "x")],
+                    language: "en")
+            },
+            detectRegions: { _ in
+                [SpeechRegion(start: .seconds(0), end: .seconds(1))]
+            },
+            diarize: { _ in
+                let n = await calls.incr()
+                if n == 1 {
+                    await gate.close()
+                    throw Diarizer.DiarizeError.cancelled
+                }
+                return DiarizationResult(
+                    model: "stub",
+                    modelVersion: "stub",
+                    audioDuration: .seconds(1),
+                    speakers: ["speaker_0"],
+                    spans: [SpeakerSpan(
+                        speaker: "speaker_0",
+                        start: .seconds(0),
+                        end: .seconds(1))],
+                    exclusiveSpans: [SpeakerSpan(
+                        speaker: "speaker_0",
+                        start: .seconds(0),
+                        end: .seconds(1))],
+                    embeddings: [])
+            },
+            pauseGate: gate,
+            events: nil)
+
+        let job = RefinementJob(
+            id: "j", recordingId: "r", folderURL: folder,
+            modelName: "stub", modelSHA256: "stub",
+            trigger: .manual, enqueuedAt: Date(), state: .queued)
+
+        let runTask = Task { try await refiner.run(job: job) }
+
+        try await Task.sleep(for: .milliseconds(200))
+        let stalled = await calls.n
+        #expect(stalled == 1)
+
+        await gate.open()
+        try await runTask.value
+        let total = await calls.n
+        #expect(total == 2)
+    }
 }
 
 enum FixtureRecording {
