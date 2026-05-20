@@ -119,6 +119,15 @@ public actor RefinementJobQueue {
         pumpIfIdle()
     }
 
+    /// Update the running job's `state` from inside the refiner. A no-op when
+    /// no job is currently running.
+    public func reportStage(_ state: RefinementJobState) {
+        guard var job = current else { return }
+        job.state = state
+        current = job
+        Task { try? await self.store.upsert(job) }
+    }
+
     /// Read-only state snapshot for the UI.
     public func snapshot() -> Snapshot {
         Snapshot(

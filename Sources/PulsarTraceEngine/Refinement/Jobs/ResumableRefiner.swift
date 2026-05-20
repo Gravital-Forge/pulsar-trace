@@ -23,12 +23,19 @@ public actor ResumableRefiner {
         @Sendable ([Float]) throws -> [SpeechRegion]
     public typealias Diarize =
         @Sendable (URL) async throws -> DiarizationResult
+    public typealias StageReporter = @Sendable (RefinementJobState) async -> Void
+
+    private static let stageIndex: [RefinementJobState.Stage: Int] = {
+        Dictionary(uniqueKeysWithValues:
+            RefinementJobState.Stage.allCases.enumerated().map { ($1, $0) })
+    }()
 
     private let transcribe: TranscribeRegion
     private let detectRegions: DetectRegions
     private let diarize: Diarize
     private let pauseGate: PauseGate
     private let events: EventWriter?
+    private let reportState: StageReporter?
     private let logger: Logger
 
     public init(
@@ -37,6 +44,7 @@ public actor ResumableRefiner {
         diarize: @escaping Diarize,
         pauseGate: PauseGate,
         events: EventWriter?,
+        onStageUpdate: StageReporter? = nil,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
         self.transcribe = transcribe
@@ -44,6 +52,7 @@ public actor ResumableRefiner {
         self.diarize = diarize
         self.pauseGate = pauseGate
         self.events = events
+        self.reportState = onStageUpdate
         self.logger = logger
     }
 
@@ -91,6 +100,11 @@ public actor ResumableRefiner {
         progress.stage = stage
         progress.lastCheckpointAt = Date()
         try persist(progress, folder: folder)
+        let totalStages = RefinementJobState.Stage.allCases.count
+        let stepIndex = Self.stageIndex[stage]!
+        await reportState?(.running(
+            stage: stage, stepsCompleted: stepIndex, stepsTotal: totalStages,
+            regionIndex: nil, regionsTotal: nil))
     }
 
     private func persist(_ progress: RefinementProgress, folder: RecordingFolder) throws {
@@ -170,6 +184,17 @@ public actor ResumableRefiner {
             }
             progress.lastCheckpointAt = Date()
             try persist(progress, folder: folder)
+            let total = isMic ? progress.micRegions.count : progress.systemRegions.count
+            let baseStage: RefinementJobState.Stage = isMic ? .transcribingMic : .transcribingSystem
+            let stepIndex = Self.stageIndex[baseStage]!
+            let completed = isMic ? progress.completedMicRegionIndices.count
+                                  : progress.completedSystemRegionIndices.count
+            await reportState?(.running(
+                stage: baseStage,
+                stepsCompleted: stepIndex,
+                stepsTotal: RefinementJobState.Stage.allCases.count,
+                regionIndex: completed,
+                regionsTotal: total))
         }
     }
 

@@ -188,6 +188,52 @@ struct RefinementJobQueueTests {
         await neverFinishes.open()
     }
 
+    /// `reportStage` updates `snapshot().running.state` so the UI can track
+    /// which stage the refiner is in without polling the store.
+    ///
+    /// Design: the `runJob` closure blocks on a `PauseGate(initiallyOpen: false)`
+    /// so the job stays in-flight for the whole test. We drive `reportStage`
+    /// directly (simulating what the refiner will do in C5) and check the
+    /// snapshot reflects the new stage. Bounded polling replaces any sleep
+    /// for the "job is running" assertion.
+    @Test("a running job's snapshot reflects the latest stage update")
+    func runningStageUpdates() async throws {
+        let store = RefinementJobStore(directory: tempDir())
+        let gate = PauseGate(initiallyOpen: false)
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in await gate.waitOpen() })  // blocks for the whole test
+        try await queue.start()
+
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/x"), recordingId: "rec_x",
+            modelName: "base", modelSHA256: "deadbeef")
+
+        // Bounded polling: wait until the queue claims the job as running.
+        var snap = await queue.snapshot()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline, snap.running?.recordingId != "rec_x" {
+            try await Task.sleep(for: .milliseconds(5))
+            snap = await queue.snapshot()
+        }
+        #expect(snap.running?.recordingId == "rec_x")
+
+        // The refiner would normally call reportStage; here we drive it directly.
+        await queue.reportStage(.running(
+            stage: .transcribingSystem,
+            stepsCompleted: 1, stepsTotal: 7,
+            regionIndex: 3, regionsTotal: 10))
+        let running = await queue.snapshot().running
+        if case .running(let stage, _, _, let r, let rt) = running?.state {
+            #expect(stage == .transcribingSystem)
+            #expect(r == 3 && rt == 10)
+        } else {
+            Issue.record("expected running state")
+        }
+
+        await gate.open()
+    }
+
     /// Two enqueued jobs run sequentially through the single-worker queue.
     /// Regression: the worker used to clear itself in a `defer` that ran
     /// *after* the tail `pumpIfIdle()`, leaving job 2 stranded.
