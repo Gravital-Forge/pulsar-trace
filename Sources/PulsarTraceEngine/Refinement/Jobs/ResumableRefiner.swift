@@ -94,11 +94,19 @@ public actor ResumableRefiner {
         }
     }
 
-    /// Replace any occurrence of `folder`'s path in `s` with `<folder>` so the
-    /// redacted text is safe to put in the progress file even if the underlying
-    /// error rendered a filesystem path (Hard Invariant #7).
+    /// Replace any occurrence of `folder`'s path in `s` with `<folder>` and any
+    /// occurrence of the user's home directory with `~`, so the redacted text is
+    /// safe to put in the progress file even if the underlying error rendered a
+    /// filesystem path (Hard Invariant #7).
+    ///
+    /// Order matters: `folder.path` is replaced first because it is a longer,
+    /// more-specific prefix than `NSHomeDirectory()` on a typical layout.
+    /// Replacing the home directory second is still correct because `<folder>`
+    /// doesn't contain `/Users/…`, so the second replacement never double-rewrites.
     static func redactPath(_ s: String, folder: URL) -> String {
-        s.replacingOccurrences(of: folder.path, with: "<folder>")
+        var out = s.replacingOccurrences(of: folder.path, with: "<folder>")
+        out = out.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        return out
     }
 
     // MARK: - Stage helpers

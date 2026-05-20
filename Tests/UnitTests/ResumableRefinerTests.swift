@@ -224,11 +224,14 @@ struct ResumableRefinerTests {
         try FixtureRecording.minimal(at: folder)
 
         struct Boom: Error, CustomStringConvertible {
-            var description: String { "synthetic transcribe failure" }
+            let folder: URL
+            var description: String {
+                "synthetic transcribe failure for \(folder.path)"
+            }
         }
 
         let refiner = ResumableRefiner(
-            transcribe: { _, _, _ in throw Boom() },
+            transcribe: { _, _, _ in throw Boom(folder: folder) },
             detectRegions: { _ in
                 [SpeechRegion(start: .seconds(0), end: .seconds(1))]
             },
@@ -255,6 +258,16 @@ struct ResumableRefinerTests {
                 "lastError should carry the underlying description")
         #expect(!recorded.contains(folder.path),
                 "filesystem path must be redacted")
+    }
+
+    @Test("redactPath strips the recording folder path and the user home dir")
+    func redactPathStripsBothFolderAndHomeDir() {
+        let folder = URL(fileURLWithPath: "/Users/alice/recordings/rec_x")
+        let realHome = NSHomeDirectory()
+        let input = "ModelError: \(realHome)/Library/Application Support/PulsarTrace/models/large-v3.gguf"
+        let out = ResumableRefiner.redactPath(input, folder: folder)
+        #expect(!out.contains(realHome), "home directory must be redacted: \(out)")
+        #expect(out.contains("~/Library/Application Support"), "redaction should leave ~/... visible: \(out)")
     }
 
     @Test("a cancelled diarize retries when the gate reopens")
