@@ -208,8 +208,9 @@ final class AppEnvironment {
                     folderURL: url, recordingId: recordingId,
                     modelName: modelName, modelSHA256: modelSHA256)
             } catch {
-                FileHandle.standardError.write(
-                    Data("pulsartrace-mac: auto-refine enqueue failed: \(error)\n".utf8))
+                let msg = "pulsartrace-mac: auto-refine enqueue failed: \(error)\n"
+                    .replacingOccurrences(of: NSHomeDirectory(), with: "~")
+                FileHandle.standardError.write(Data(msg.utf8))
             }
         }
         pauseBox.impl = { [weak self] in

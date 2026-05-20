@@ -69,6 +69,13 @@ public final class RefinementJobQueueViewModel {
         poller = nil
     }
 
+    /// Replace any occurrence of the user's home directory with `~`, so a
+    /// rendered error string doesn't leak `/Users/<name>/...` into the UI.
+    /// The redaction matches the convention in `ResumableRefiner.redactPath`.
+    static func redactHome(_ s: String) -> String {
+        s.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    }
+
     /// Forward a "Refine" button press.
     public func enqueueManual(folderURL: URL, recordingId: String,
                               modelName: String, modelSHA256: String) async {
@@ -78,7 +85,7 @@ public final class RefinementJobQueueViewModel {
                 modelName: modelName, modelSHA256: modelSHA256)
             lastEnqueueError = nil
         } catch {
-            lastEnqueueError = "Could not enqueue refinement: \(error)"
+            lastEnqueueError = Self.redactHome("Could not enqueue refinement: \(error)")
         }
         await refresh()
     }

@@ -23,6 +23,8 @@ struct RecordingsListView: View {
                 Text(err)
                     .font(.caption)
                     .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.orange)
