@@ -42,3 +42,41 @@ skip mechanism, or escalate to the user. Do not move on with a red suite.
 
 "My new tests pass" is not enough. The full relevant suite must be green
 or explicitly-gated after your change.
+
+### Known limitation: `--filter PipelineTests` is broadly flaky
+
+Running everything under `Tests/PipelineTests/` together in one command —
+e.g. `swift test --filter PipelineTests` — is **known-flaky** under
+cross-suite races. POSIX file descriptors, Unix domain sockets, and
+subprocess slots are process-wide resources; Swift Testing's `.serialized`
+trait only serializes *within* a suite, so when `Pipeline IPC integration`,
+`Capture IPC integration`, `RecordOrchestrator (record, R47)`, and
+`LiveRunner resilience` all run in parallel with each other, one suite's
+fd churn can race another's `socket()`/`close()` and surface as `EBADF` or
+a subprocess that exits non-zero because its socket disappeared. The set
+of failures shifts run-to-run, which is the signature of a parallelism
+race, not a deterministic regression.
+
+This is not caused by any single change — verified pre-existing on
+multiple commits. A correct fix needs a non-reentrant cross-suite async
+mutex (CheckedContinuation + waiter queue, not a plain actor — actors are
+reentrant across `await` suspensions and won't actually serialize).
+
+**Until that mutex is built, verify with the narrow filters instead:**
+
+- `swift test --filter UnitTests` — pure logic, deterministic, fast
+- `swift test --filter Refinement` — covers refinement pipeline + queue
+- `swift test --filter IPC` — IPC suites in isolation
+- `swift test --filter RecordOrchestrator`
+- `swift test --filter LiveRunner`
+- `swift test --filter Streaming`
+- `swift test --filter Transcription`
+- `swift test --filter Speaker` — speaker library + reconciler
+- `swift test --filter DiarizationE2E`
+- `swift test --filter Source`
+- `swift test --filter Lifecycle`
+- `swift test --filter FinalMarkdownRewriter`
+
+Each of these is green on its own. If you observe a failure inside any
+of them, treat it per the rule above. The broad `--filter PipelineTests`
+should not block forward progress until the cross-suite mutex lands.
