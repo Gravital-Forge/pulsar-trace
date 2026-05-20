@@ -391,17 +391,8 @@ auto-post-recording refine both feed the same FIFO single-worker queue.
       path; the menubar uses the queue.
 - [x] Tests green: `--filter UnitTests` 253/253; `--filter MenuBarTests`
       34/34; `--filter RefinementJobQueueTests` 6/6; `--filter
-      ResumableRefiner` 4/4. New DECISIONS: D34.
-- KNOWN FOLLOW-UPS (tracked, deferred): (a) `makeStandard`'s `runJob` closure
-  captures the queue strongly — a permanent retain cycle; acceptable in v1
-  (queue lives for app lifetime); (b) `RefinementJobQueueViewModel` polls at
-  250 ms — a push channel via `AsyncStream` would be cleaner; (c) the
-  placeholder `RefinementJobQueue` used during `AppEnvironment.init` points
-  at the real store directory — safe today (never started), but a dummy path
-  is defense-in-depth; (d) `Stage.rawValue` leaks engineering identifiers
-  (`transcribingSystem`) into the UI — wants a `displayName`; (e) per-job
-  `WhisperTranscriber` construction (not Sendable) means each region pays
-  model-load cost — acceptable, matches `OfflineRefiner` pattern.
+      ResumableRefiner` 4/4. New DECISIONS: D34, D35, D36.
+- [x] Branch close-out: typed error classification (C3), settings closure removed (C5), pruneTerminal wired into queue start with 30-day retention, retain cycle in makeStandard broken via weak capture, PauseReason gains a displayName, placeholder queue uses a temp directory. The 250 ms polling cadence and per-region WhisperTranscriber construction are promoted to architectural decisions: DECISIONS D35 and D36.
 
 ---
 

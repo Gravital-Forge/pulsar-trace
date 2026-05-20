@@ -791,3 +791,15 @@ snapshot, on-disk JSONL persistence — matches the existing
 deliberate: the CLI's bare-WAV path has no recording-vs-refine
 interleaving to coordinate, and one-shot CLI semantics ("run once, exit")
 are awkward with a long-lived queue actor and store.
+
+## D35 — Refinement-queue UI polls at 250 ms; no `AsyncStream` push channel
+
+**Decision:** `RefinementJobQueueViewModel` (the `@MainActor @Observable` façade in `Sources/PulsarTraceMenuBar/RefinementJobQueueViewModel.swift`) refreshes by polling `RefinementJobQueue.snapshot()` every 250 ms via a `Task` loop. We are not threading an `AsyncStream<Snapshot>` from inside the queue actor to the view model.
+
+**Why:** Three reasons. (1) The pattern matches `LiveTranscriptWatcher` and `RecordingsScanner`, which both poll — consistency reduces the number of distinct UI-update shapes a future contributor has to learn. (2) `RefinementJobQueue.Snapshot` is `Equatable` and small (typically ≤ a few jobs); the VM mutates `@Observable` properties only on real change, so SwiftUI's diffing keeps steady-state work tiny — one actor hop and one struct comparison per tick, four times a second. (3) Push channels across an actor boundary into the MainActor introduce buffering and back-pressure questions (drop-oldest? coalesce? cancel?) that aren't justified by the workload — a refine emits at most one stage update every few seconds. Polling is the simpler design at this throughput.
+
+## D36 — `WhisperTranscriber` is constructed per region inside the refiner
+
+**Decision:** `ResumableRefiner` constructs a fresh `WhisperTranscriber` for each VAD region it transcribes (see the `transcribe:` closure built in `RefinementJobQueue.makeStandard`), rather than holding one instance across the job.
+
+**Why:** `WhisperTranscriber` wraps `whisper_context`, which is non-Sendable and not thread-safe. Holding one across `await` suspensions inside the refiner's stage loop would require carrying non-Sendable state through Swift Concurrency, which is awkward and would force the refiner into the actor model purely to satisfy the type system. The model file is mmapped by whisper.cpp, so the OS page cache amortises the per-region construction cost — the actual overhead is whisper's per-context init (~tens of ms), which is negligible next to per-region transcribe time (seconds). This matches the pattern `OfflineRefiner` already uses for the CLI path, so both refine paths look the same from a reviewer's perspective.
