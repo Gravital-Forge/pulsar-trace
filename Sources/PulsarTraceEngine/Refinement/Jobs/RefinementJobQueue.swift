@@ -22,6 +22,7 @@ public actor RefinementJobQueue {
 
     private let store: RefinementJobStore
     private let runJob: RunJob
+    private let pauseGate: PauseGate
     private let logger: Logger
 
     private var current: RefinementJob?
@@ -33,10 +34,12 @@ public actor RefinementJobQueue {
     public init(
         store: RefinementJobStore,
         runJob: @escaping RunJob,
+        pauseGate: PauseGate = PauseGate(initiallyOpen: true),
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
         self.store = store
         self.runJob = runJob
+        self.pauseGate = pauseGate
         self.logger = logger
     }
 
@@ -123,6 +126,22 @@ public actor RefinementJobQueue {
             queued: queued,
             recent: Array(recent.reversed()),
             pausedForRecording: pausedForRecording)
+    }
+
+    /// Pause the queue: stops new jobs from starting and closes the pause gate
+    /// so the in-flight refiner stalls at its next checkpoint. Also signals
+    /// the diarizer to SIGSTOP its subprocess (Task D1 wires that in).
+    public func pauseForRecording() async {
+        pausedForRecording = true
+        await pauseGate.close()
+    }
+
+    /// Resume the queue: opens the gate (the in-flight refiner picks up at its
+    /// next checkpoint) and lets the worker pump again.
+    public func resumeAfterRecording() async {
+        pausedForRecording = false
+        await pauseGate.open()
+        pumpIfIdle()
     }
 
     private func pumpIfIdle() {
