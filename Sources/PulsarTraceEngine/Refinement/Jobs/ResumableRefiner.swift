@@ -17,7 +17,7 @@ import Logging
 public actor ResumableRefiner {
 
     public typealias TranscribeRegion =
-        @Sendable ([Float], SpeechRegion, WhisperTranscriber.Options) throws
+        @Sendable ([Float], SpeechRegion, WhisperTranscriber.Options) async throws
         -> TranscriptionResult
     public typealias DetectRegions =
         @Sendable ([Float]) throws -> [SpeechRegion]
@@ -149,7 +149,7 @@ public actor ResumableRefiner {
                        : progress.nextSystemRegionIndex) {
             await pauseGate.waitOpen()
             let region = allRegions[i]
-            let result = try transcribe(samples, region, .init())
+            let result = try await transcribe(samples, region, .init())
             for seg in result.segments {
                 let partial = RefinementProgress.PartialSegment(
                     startMillis: Int(seg.start.seconds * 1000),

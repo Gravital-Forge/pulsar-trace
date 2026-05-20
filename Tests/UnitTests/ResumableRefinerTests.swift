@@ -135,6 +135,70 @@ struct ResumableRefinerTests {
         let indices = callLog.withLock { $0 }
         #expect(indices == [2])    // only region 2 decoded; 0+1 skipped by checkpoint
     }
+
+    /// Closing the pause gate between regions stalls the refiner. Opening it
+    /// again resumes the loop and the rest of the regions decode.
+    @Test("a closed pause gate suspends the region loop")
+    func pauseStallsLoop() async throws {
+        let folder = tempDir()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FixtureRecording.minimal(at: folder)
+
+        let gate = PauseGate(initiallyOpen: true)
+        let counter = OSAllocatedUnfairLock(initialState: 0)
+
+        let refiner = ResumableRefiner(
+            transcribe: { _, region, _ in
+                counter.withLock { $0 += 1 }
+                // After region 0, close the gate so region 1 cannot start.
+                // Awaiting directly here is safe because TranscribeRegion is async;
+                // the close happens-before the closure returns, which happens-before
+                // the loop advances to waitOpen() for region 1.
+                if region.start == .seconds(0) {
+                    await gate.close()
+                }
+                return TranscriptionResult(
+                    segments: [TranscriptSegment(
+                        start: region.start, end: region.end, text: "x")],
+                    language: "en")
+            },
+            detectRegions: { _ in
+                [
+                    SpeechRegion(start: .seconds(0), end: .seconds(1)),
+                    SpeechRegion(start: .seconds(1), end: .seconds(2)),
+                ]
+            },
+            diarize: { _ in
+                DiarizationResult(
+                    model: "stub",
+                    modelVersion: "stub",
+                    audioDuration: .seconds(2),
+                    speakers: [],
+                    spans: [],
+                    exclusiveSpans: [],
+                    embeddings: [])
+            },
+            pauseGate: gate,
+            events: nil)
+
+        let job = RefinementJob(
+            id: "j", recordingId: "r", folderURL: folder,
+            modelName: "stub", modelSHA256: "stub",
+            trigger: .manual, enqueuedAt: Date(), state: .queued)
+
+        let runTask = Task { try await refiner.run(job: job) }
+
+        // Give the refiner time to process region 0 and stall on region 1.
+        try await Task.sleep(for: .milliseconds(200))
+        let stalled = counter.withLock { $0 }
+        #expect(stalled == 1)    // only region 0 decoded so far
+
+        await gate.open()
+        try await runTask.value
+
+        let finalCount = counter.withLock { $0 }
+        #expect(finalCount == 2)
+    }
 }
 
 enum FixtureRecording {
