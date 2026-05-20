@@ -33,6 +33,7 @@ struct PulsarTraceMacApp: App {
         MenuBarExtra {
             MenuBarMenuView()
                 .environment(environment.recording)
+                .environment(environment.queueVM)
                 .environment(environment.navigation)
         } label: {
             Image(systemName: environment.recording.status.menuBarSymbol)
