@@ -294,14 +294,22 @@ extension RefinementJobQueue {
             // would have introduced.
             await queue.setInflightCancellable(diarizer)
 
-            // WhisperTranscriber is NOT Sendable (whisper_context is not
-            // thread-safe). Creating a new instance per-region is the accepted
-            // project pattern — OfflineRefiner uses a transcriberFactory for
-            // the same reason. The model file is mmapped by whisper.cpp so the
-            // OS page-cache amortises the cost across calls.
+            // One WhisperTranscriber per *job*, not per region. `whisper_init_
+            // from_file_with_params` rebuilds the Metal pipeline state object
+            // on every call — multi-second on Apple Silicon for `large-v3` —
+            // so per-region construction was the dominant cost of a refinement
+            // pass (DECISIONS.md D36, reopened). The transcriber is non-
+            // `Sendable` (it wraps `whisper_context`, which is not thread-safe),
+            // so the `SharedTranscriberBox` lock + the `metalLock` inside
+            // `WhisperTranscriber` together serialise every touch; the queue's
+            // single-worker invariant means there is never more than one job's
+            // box alive at once.
+            let sharedTranscriber = SharedTranscriberBox {
+                try WhisperTranscriber(modelURL: modelURL)
+            }
             let refiner = ResumableRefiner(
                 transcribe: { samples, region, options in
-                    let t = try WhisperTranscriber(modelURL: modelURL)
+                    let t = try sharedTranscriber.get()
                     return try t.transcribeRegion(samples, region: region, options: options)
                 },
                 detectRegions: { samples in
