@@ -234,6 +234,57 @@ struct RefinementJobQueueTests {
         await gate.open()
     }
 
+    /// `pauseForRecording()` calls `cancel()` on the registered inflight
+    /// cancellable (D-Q7 / Task D3). A spy actor records whether it was hit.
+    ///
+    /// Design: a `setRunJob` setter lets us capture `queue` inside `runJob`
+    /// after construction, breaking the chicken-and-egg. The runJob registers
+    /// the spy, signals `started`, then parks on `pauseSignaled` before
+    /// entering `waitOpen()` — this ensures pauseForRecording() is called
+    /// *after* the cancellable is registered but before the gate re-opens.
+    ///
+    /// Retain-cycle note: `queue` is captured strongly in the runJob closure
+    /// stored on the queue itself. This is a known cycle acceptable per-test
+    /// (the queue is discarded at the end of the test function). TODO D3.
+    @Test("pauseForRecording cancels the inflight diarizer")
+    func pauseCancelsDiarizer() async throws {
+        actor DiarizerSpy: RefinementCancellable {
+            var cancelled = false
+            func cancel() { cancelled = true }
+        }
+        let spy = DiarizerSpy()
+        let store = RefinementJobStore(directory: tempDir())
+        let gate = PauseGate(initiallyOpen: true)
+        let started = Gate()
+        let pauseSignaled = Gate()    // test → runJob: "ok to proceed to waitOpen"
+
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in /* placeholder, replaced below */ },
+            pauseGate: gate)
+        await queue.setRunJob({ [queue] _ in
+            await queue.setInflightCancellable(spy)
+            await started.open()
+            await pauseSignaled.wait()
+            await gate.waitOpen()   // blocks until resume (won't happen in this test)
+        })
+        try await queue.start()
+
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/x"), recordingId: "rec_x",
+            modelName: "base", modelSHA256: "deadbeef")
+        await started.wait()
+
+        // pauseForRecording must call cancel() on the registered spy.
+        await queue.pauseForRecording()
+        let wasCancelled = await spy.cancelled
+        #expect(wasCancelled)
+
+        // Cleanup: let runJob drain so the worker task doesn't outlive the test.
+        await pauseSignaled.open()
+        await queue.resumeAfterRecording()
+    }
+
     /// Two enqueued jobs run sequentially through the single-worker queue.
     /// Regression: the worker used to clear itself in a `defer` that ran
     /// *after* the tail `pumpIfIdle()`, leaving job 2 stranded.

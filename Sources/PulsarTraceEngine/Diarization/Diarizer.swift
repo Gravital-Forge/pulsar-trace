@@ -377,3 +377,9 @@ public actor Diarizer {
         }
     }
 }
+
+// MARK: - RefinementCancellable
+
+extension Diarizer: RefinementCancellable {}
+// `cancel()` is sync on `Diarizer`; async protocol methods accept sync
+// implementations, so no wrapper is needed.

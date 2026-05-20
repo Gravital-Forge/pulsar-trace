@@ -21,7 +21,7 @@ public actor RefinementJobQueue {
     public typealias RunJob = @Sendable (RefinementJob) async throws -> Void
 
     private let store: RefinementJobStore
-    private let runJob: RunJob
+    private var _runJob: RunJob
     private let pauseGate: PauseGate
     private let logger: Logger
 
@@ -30,6 +30,7 @@ public actor RefinementJobQueue {
     private var recent: [RefinementJob] = []
     private var pausedForRecording = false
     private var worker: Task<Void, Never>?
+    private var inflightCancellable: RefinementCancellable?
 
     public init(
         store: RefinementJobStore,
@@ -38,9 +39,22 @@ public actor RefinementJobQueue {
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
         self.store = store
-        self.runJob = runJob
+        self._runJob = runJob
         self.pauseGate = pauseGate
         self.logger = logger
+    }
+
+    /// Replace the run-job closure after construction. Used in `makeStandard`
+    /// to break the chicken-and-egg between queue construction and the closure
+    /// that needs to capture the queue (to call `setInflightCancellable`).
+    func setRunJob(_ runJob: @escaping RunJob) {
+        self._runJob = runJob
+    }
+
+    /// Register the cancellable for the in-flight job. Production `runJob`
+    /// passes a `Diarizer`; tests pass a spy. Pass `nil` to clear.
+    func setInflightCancellable(_ cancellable: RefinementCancellable?) {
+        inflightCancellable = cancellable
     }
 
     /// Restore persisted jobs and kick the worker.
@@ -139,10 +153,12 @@ public actor RefinementJobQueue {
 
     /// Pause the queue: stops new jobs from starting and closes the pause gate
     /// so the in-flight refiner stalls at its next checkpoint. Also signals
-    /// the diarizer to SIGSTOP its subprocess (Task D1 wires that in).
+    /// the diarizer to terminate its subprocess if one is currently running
+    /// (D-Q7 / Task D3).
     public func pauseForRecording() async {
         pausedForRecording = true
         await pauseGate.close()
+        if let c = inflightCancellable { await c.cancel() }
     }
 
     /// Resume the queue: opens the gate (the in-flight refiner picks up at its
@@ -184,12 +200,19 @@ public actor RefinementJobQueue {
         current = job
 
         do {
-            try await runJob(job)
+            try await _runJob(job)
             job.state = .completed(durationSeconds: 0.0, speakerCount: 0)
         } catch {
             // TODO Task C3: extract a typed error class + retry flag.
             job.state = .failed(errorClass: "io", retryAvailable: true)
         }
+        // Clear the cancellable synchronously here — before pumpIfIdle() can
+        // start the next job's runJob and register a new cancellable. This
+        // guarantees happens-before ordering: a pauseForRecording() called
+        // between jobs sees nil (correct: no job is running) rather than
+        // potentially seeing the *previous* job's cancellable if the
+        // fire-and-forget cleanup Task lost the race (D-Q7 lost-cancel fix).
+        inflightCancellable = nil
         try? await store.upsert(job)
         recent.append(job)
         current = nil
@@ -223,8 +246,20 @@ extension RefinementJobQueue {
         let store = RefinementJobStore.standard(paths: paths)
         let gate = PauseGate(initiallyOpen: true)
 
-        // The closure captures `gate` so the queue and the refiner share it.
-        let runJob: RunJob = { job in
+        // Two-step init: queue is constructed first with a placeholder closure,
+        // then `setRunJob` replaces it with the real one that captures the queue.
+        // This breaks the chicken-and-egg: the real runJob needs to call
+        // `queue.setInflightCancellable(diarizer)` so the queue can cancel the
+        // diarizer on pause (D-Q7 / Task D3).
+        //
+        // NOTE: the queue is strongly captured inside `runJob`, which is stored
+        // on the queue itself. This creates a retain cycle. In production this
+        // is acceptable — the queue lives for the app's lifetime. (TODO D3: if
+        // a unit-level makeStandard test is added, break the cycle via a weak
+        // capture or a separate factory object.)
+        let queue = RefinementJobQueue(store: store, runJob: { _ in }, pauseGate: gate)
+
+        let runJob: RunJob = { [queue] job in
             let modelStore = ModelStore(events: events)
             let modelURL = try await modelStore.ensureAvailable(
                 ModelCatalog.model(named: job.modelName) ?? ModelCatalog.base)
@@ -234,6 +269,14 @@ extension RefinementJobQueue {
             let vadURL = try? await modelStore.ensureAvailable(ModelCatalog.sileroVAD)
 
             let diarizer = try OfflineRefiner.makeDiarizer()
+
+            // Register the diarizer so pauseForRecording() can cancel it mid-run
+            // (D-Q7). Clearing the slot is the queue's responsibility (done
+            // synchronously in runNext() after _runJob returns), which guarantees
+            // the cancellable is nil before the next job can register its own —
+            // eliminating the lost-cancel race that a fire-and-forget Task cleanup
+            // would have introduced.
+            await queue.setInflightCancellable(diarizer)
 
             // WhisperTranscriber is NOT Sendable (whisper_context is not
             // thread-safe). Creating a new instance per-region is the accepted
@@ -255,17 +298,15 @@ extension RefinementJobQueue {
                 },
                 pauseGate: gate,
                 // TODO C5/D-followup: wire onStageUpdate to queue.reportStage
-                // once a forward-reference mechanism exists. The queue actor
-                // does not exist yet when `runJob` is constructed, so we cannot
-                // capture it here. Options explored: Box<RefinementJobQueue?>,
-                // 2-step init with a mutable runJob slot, or a separate
-                // ObservableStageProxy. Deferred to Phase-E stage-progress UI
-                // work (E1/E4). The plan's literal code also omits this wiring.
+                // once a forward-reference mechanism exists. Options explored:
+                // Box<RefinementJobQueue?>, 2-step init with a mutable runJob
+                // slot, or a separate ObservableStageProxy. Deferred to Phase-E
+                // stage-progress UI work (E1/E4).
                 events: events)
             try await refiner.run(job: job)
         }
 
-        let queue = RefinementJobQueue(store: store, runJob: runJob, pauseGate: gate)
+        await queue.setRunJob(runJob)
         try? await queue.start()
         return queue
     }
