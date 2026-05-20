@@ -149,12 +149,18 @@ public actor RefinementJobQueue {
     }
 
     /// Update the running job's `state` from inside the refiner. A no-op when
-    /// no job is currently running.
-    public func reportStage(_ state: RefinementJobState) {
+    /// no job is currently running. Awaits the on-disk persist so callers see
+    /// the new state durable before returning — a fire-and-forget upsert lost
+    /// ordering on bursty updates and dropped errors via `try?`.
+    public func reportStage(_ state: RefinementJobState) async {
         guard var job = current else { return }
         job.state = state
         current = job
-        Task { try? await self.store.upsert(job) }
+        do {
+            try await store.upsert(job)
+        } catch {
+            logger.warning("reportStage upsert failed: \(error)")
+        }
     }
 
     /// Read-only state snapshot for the UI.

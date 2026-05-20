@@ -378,6 +378,59 @@ struct RefinementJobQueueTests {
         #expect(total == 2)
     }
 
+    @Test("reportStage awaits the disk upsert before returning")
+    func reportStageAwaitsUpsert() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-rs-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = RefinementJobStore(directory: dir)
+
+        // Hold the job in `running` indefinitely by parking the runJob
+        // closure on a forever-closed gate. The actor stays reentrant
+        // across the await, so external `reportStage` / `snapshot` calls
+        // still process while the worker is parked.
+        let holdOpen = PauseGate(initiallyOpen: false)
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { @Sendable _ in
+                await holdOpen.waitOpen()  // suspends until the test ends
+            },
+            pauseGate: PauseGate(initiallyOpen: true))
+
+        try await queue.enqueueAutoRefine(
+            folderURL: dir, recordingId: "rec_rs",
+            modelName: "stub", modelSHA256: "stub")
+
+        // Wait for the worker to pick up the job (snapshot().running != nil).
+        let deadline = Date().addingTimeInterval(1)
+        while await queue.snapshot().running == nil, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard let running = await queue.snapshot().running else {
+            Issue.record("worker never picked up the job"); return
+        }
+
+        let newState = RefinementJobState.running(
+            stage: .diarizing, stepsCompleted: 2, stepsTotal: 7,
+            regionIndex: nil, regionsTotal: nil)
+        await queue.reportStage(newState)
+
+        // Immediately read the on-disk job file — must reflect the new
+        // state by the time reportStage returns.
+        let jobFile = dir.appendingPathComponent("\(running.id).json")
+        let data = try Data(contentsOf: jobFile)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let onDisk = try decoder.decode(RefinementJob.self, from: data)
+        if case .running(let stage, _, _, _, _) = onDisk.state {
+            #expect(stage == .diarizing,
+                    "reportStage must have awaited the upsert — on-disk stage was \(stage)")
+        } else {
+            Issue.record("on-disk state was not .running")
+        }
+    }
+
     @Test("recent list is capped at 100 entries")
     func recentListCapped() async throws {
         let dir = FileManager.default.temporaryDirectory
