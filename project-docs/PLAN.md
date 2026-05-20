@@ -392,7 +392,8 @@ auto-post-recording refine both feed the same FIFO single-worker queue.
 - [x] Tests green: `--filter UnitTests` 253/253; `--filter MenuBarTests`
       34/34; `--filter RefinementJobQueueTests` 6/6; `--filter
       ResumableRefiner` 4/4. New DECISIONS: D34, D35, D36.
-- [x] Branch close-out: typed error classification (C3), settings closure removed (C5), pruneTerminal wired into queue start with 30-day retention, retain cycle in makeStandard broken via weak capture, PauseReason gains a displayName, placeholder queue uses a temp directory. The 250 ms polling cadence and per-region WhisperTranscriber construction are promoted to architectural decisions: DECISIONS D35 and D36.
+- [x] Branch close-out: typed error classification (C3), settings closure removed (C5), pruneTerminal wired into queue start with 30-day retention, retain cycle in makeStandard broken via weak capture, PauseReason gains a displayName, placeholder queue uses a temp directory. The 250 ms polling cadence is promoted to D35.
+- [x] **Follow-up landed in a separate change** (see `docs/specs/2026-05-20-refine-perf-and-capture-resilience-plan.md`): D36 reopened — `WhisperTranscriber` is reused across regions within a job via `SharedTranscriberBox`; `RefinementProgress` gains an optional `lastError` field that `ResumableRefiner.run` populates on failure; `DeviceCaptureSource.makeSystemEngine` now wires `onStreamError` into the stall-restart path (gap that surfaced on session 2026-05-20-113001); `EventWriter.append` acquires `flock(LOCK_EX)` (D37) so cross-process appends can no longer interleave.
 
 ---
 
