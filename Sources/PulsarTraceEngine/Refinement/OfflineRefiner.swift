@@ -1,16 +1,21 @@
 import Foundation
 import Logging
 
-/// Runs one offline refine pass in-process — the reusable orchestration shared
-/// by the `pulsartrace refine` CLI and the menubar (D23: the menubar
-/// must NOT shell out to the `pulsartrace` CLI; both are sibling front-ends
-/// over `PulsarTraceEngine`).
+/// One-shot, no-queue refine — the entry point for the `pulsartrace refine`
+/// CLI. The menubar app no longer calls this; it uses
+/// `RefinementJobQueue` + `ResumableRefiner` so a refine is pause-resumable
+/// and back-to-back recordings don't block each other.
+///
+/// This path stays so the CLI can take a bare WAV (or a folder) without
+/// touching the queue: bare-WAV runs are typically one-shot scripts where
+/// pause/resume is not useful. The shared merge + write step is in
+/// `RefinementPipeline.assembleAndWrite`.
 ///
 /// `OfflineRefiner` owns everything `RefinementPipeline` needs but does not
 /// build itself: ensuring the whisper + VAD models are available, wiring the
 /// dev-environment `Diarizer` (venv interpreter, repo root, `.env`), opening
 /// the persistent speaker library, and constructing the `WhisperTranscriber`
-/// factory. It is the single in-process refine entry point.
+/// factory.
 ///
 /// Robustness overrides (D3): the repo root is otherwise the `#filePath`
 /// dev-tree path baked into the binary at build time.
