@@ -301,6 +301,70 @@ struct RecordingViewModelTests {
         #expect(await enqueued.entries.count == 1)
     }
 
+    // MARK: - Pause / resume hooks (Bug 1)
+
+    @Test("pause is called on successful start, resume is NOT called")
+    func pauseCalledOnStart() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+        let counter = CallCounter()
+
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            pauseRefinement: { await counter.incrementPause() },
+            resumeRefinement: { await counter.incrementResume() })
+
+        await vm.startRecording()
+        if case .recording = vm.status {} else { Issue.record("expected .recording") }
+        #expect(await counter.pauseCount == 1)
+        #expect(await counter.resumeCount == 0)
+    }
+
+    @Test("resume is called exactly once after stop")
+    func resumeCalledOnStop() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+        let counter = CallCounter()
+
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            pauseRefinement: { await counter.incrementPause() },
+            resumeRefinement: { await counter.incrementResume() })
+
+        await vm.startRecording()
+        await vm.stopRecording()
+        #expect(vm.status == .idle)
+        #expect(await counter.pauseCount == 1)
+        #expect(await counter.resumeCount == 1)
+    }
+
+    @Test("pause and resume both called on start failure, status is .error")
+    func pauseAndResumeOnStartFailure() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator(
+            startError: RecordOrchestrator.StartError.readyTimedOut)
+        let counter = CallCounter()
+
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            pauseRefinement: { await counter.incrementPause() },
+            resumeRefinement: { await counter.incrementResume() })
+
+        await vm.startRecording()
+        guard case .error = vm.status else {
+            Issue.record("expected .error, got \(vm.status)")
+            return
+        }
+        #expect(await counter.pauseCount == 1)
+        #expect(await counter.resumeCount == 1)
+    }
+
     private actor PlanMailbox {
         private var plan: RecordPlan?
         func set(_ p: RecordPlan) { plan = p }
@@ -312,4 +376,13 @@ struct RecordingViewModelTests {
 actor EnqueueMailbox {
     var entries: [(url: URL, recordingId: String)] = []
     func record(url: URL, recordingId: String) { entries.append((url, recordingId)) }
+}
+
+/// Counts `pauseRefinement` / `resumeRefinement` invocations from tests.
+/// Actor-based for safe cross-isolation reads.
+actor CallCounter {
+    private(set) var pauseCount = 0
+    private(set) var resumeCount = 0
+    func incrementPause() { pauseCount += 1 }
+    func incrementResume() { resumeCount += 1 }
 }

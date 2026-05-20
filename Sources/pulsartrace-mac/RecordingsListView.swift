@@ -56,6 +56,17 @@ struct RecordingsListView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// True when this recording has any queue-state representation
+    /// (running, queued, or recent). When true, RefineBadge already
+    /// surfaces the relevant state and the "Not yet refined" fallback
+    /// must not be rendered alongside it.
+    private func hasQueueSignal(_ recordingId: String) -> Bool {
+        if queueVM.running?.recordingId == recordingId { return true }
+        if queueVM.queued.contains(where: { $0.recordingId == recordingId }) { return true }
+        if queueVM.recent.contains(where: { $0.recordingId == recordingId }) { return true }
+        return false
+    }
+
     private func row(_ recording: RecordingEntry) -> some View {
         HStack {
             VStack(alignment: .leading) {
@@ -66,9 +77,9 @@ struct RecordingsListView: View {
                     Text("\(count) \(word) · \(Int(recording.durationSeconds))s")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
-                    // FIX 3 — a just-recorded / failed-to-refine folder: no
-                    // metadata.json yet. Show the state explicitly.
+                } else if !hasQueueSignal(recording.id) {
+                    // Shows only when there is no queue signal — RefineBadge
+                    // handles running/queued/recent states.
                     Label("Not yet refined", systemImage: "clock.badge")
                         .font(.caption)
                         .foregroundStyle(.orange)

@@ -146,6 +146,22 @@ struct ResumableRefinerTests {
 
         let gate = PauseGate(initiallyOpen: true)
         let counter = OSAllocatedUnfairLock(initialState: 0)
+        // Signal the test when region 0 has been transcribed and the gate
+        // has been closed — so we can assert the stall without a sleep.
+        actor Region0Signal {
+            private var cont: CheckedContinuation<Void, Never>?
+            private var done = false
+            func signal() {
+                done = true
+                cont?.resume()
+                cont = nil
+            }
+            func wait() async {
+                if done { return }
+                await withCheckedContinuation { cont = $0 }
+            }
+        }
+        let region0Done = Region0Signal()
 
         let refiner = ResumableRefiner(
             transcribe: { _, region, _ in
@@ -156,6 +172,7 @@ struct ResumableRefinerTests {
                 // the loop advances to waitOpen() for region 1.
                 if region.start == .seconds(0) {
                     await gate.close()
+                    await region0Done.signal()
                 }
                 return TranscriptionResult(
                     segments: [TranscriptSegment(
@@ -188,8 +205,8 @@ struct ResumableRefinerTests {
 
         let runTask = Task { try await refiner.run(job: job) }
 
-        // Give the refiner time to process region 0 and stall on region 1.
-        try await Task.sleep(for: .milliseconds(200))
+        // Wait for region 0 to finish (deterministic — no sleep).
+        await region0Done.wait()
         let stalled = counter.withLock { $0 }
         #expect(stalled == 1)    // only region 0 decoded so far
 
@@ -207,8 +224,26 @@ struct ResumableRefinerTests {
         try FixtureRecording.minimal(at: folder)
 
         let gate = PauseGate(initiallyOpen: true)
-        actor Calls { var n = 0; func incr() -> Int { n += 1; return n } }
+        actor Calls {
+            var n = 0
+            func incr() -> Int { n += 1; return n }
+        }
         let calls = Calls()
+        // Signal when the first diarize call has been made and the gate closed.
+        actor FirstDiarizeSignal {
+            private var cont: CheckedContinuation<Void, Never>?
+            private var done = false
+            func signal() {
+                done = true
+                cont?.resume()
+                cont = nil
+            }
+            func wait() async {
+                if done { return }
+                await withCheckedContinuation { cont = $0 }
+            }
+        }
+        let firstDiarize = FirstDiarizeSignal()
 
         let refiner = ResumableRefiner(
             transcribe: { _, region, _ in
@@ -224,6 +259,7 @@ struct ResumableRefinerTests {
                 let n = await calls.incr()
                 if n == 1 {
                     await gate.close()
+                    await firstDiarize.signal()
                     throw Diarizer.DiarizeError.cancelled
                 }
                 return DiarizationResult(
@@ -251,7 +287,8 @@ struct ResumableRefinerTests {
 
         let runTask = Task { try await refiner.run(job: job) }
 
-        try await Task.sleep(for: .milliseconds(200))
+        // Wait for the first diarize call (deterministic — no sleep).
+        await firstDiarize.wait()
         let stalled = await calls.n
         #expect(stalled == 1)
 

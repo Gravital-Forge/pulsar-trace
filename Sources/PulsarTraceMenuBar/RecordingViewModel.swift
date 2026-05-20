@@ -34,6 +34,10 @@ extension RecordOrchestrator: RecordingOrchestrating {
 /// asynchronously — the recording state machine returns to `.idle` immediately,
 /// enabling back-to-back meetings without blocking on refine.
 ///
+/// Pause/resume of the refinement queue is owned by this VM (via the injected
+/// `pauseRefinement` / `resumeRefinement` hooks) so every start/stop path
+/// (menubar dropdown, hotkey, future) is correct by construction.
+///
 /// `@MainActor @Observable` so the menubar binds to `status` / `progressMessage`
 /// directly. Orchestration (process spawning) is behind the
 /// `RecordingOrchestrating` seam and `enqueueAutoRefine` so the whole status
@@ -77,6 +81,15 @@ public final class RecordingViewModel {
     /// inject a capturing closure or pass `nil` for a no-op default.
     private let enqueueAutoRefine: @Sendable (URL, String) async -> Void
 
+    /// Called immediately before the recording subprocess is started — asks the
+    /// `RefinementJobQueue` to yield CPU/I/O to the live pass. Default is a
+    /// no-op so unit tests and CLI usage stay simple.
+    private let pauseRefinement: @Sendable () async -> Void
+
+    /// Called after the recording stops (or after a start failure) — resumes
+    /// the `RefinementJobQueue`. Default is a no-op.
+    private let resumeRefinement: @Sendable () async -> Void
+
     /// The orchestrator for the in-flight session, if any.
     private var orchestrator: RecordingOrchestrating?
     /// The crash-watch task started after a successful `start()`.
@@ -99,6 +112,10 @@ public final class RecordingViewModel {
     ///   - enqueueAutoRefine: called with `(folderURL, recordingId)` after a
     ///     successful stop or crash recovery. Default is a no-op; D2 injects the
     ///     real `RefinementJobQueue.enqueue` closure.
+    ///   - pauseRefinement: called before the recording subprocess starts to
+    ///     ask the queue to yield resources to the live pass. Default is a no-op.
+    ///   - resumeRefinement: called after recording stops or on a start failure.
+    ///     Default is a no-op so unit tests and CLI usage stay simple.
     public init(
         settings: MenuBarSettings,
         paths: AppPaths = .standard,
@@ -107,7 +124,9 @@ public final class RecordingViewModel {
         binaryURLResolver: (@Sendable (String) -> URL)? = nil,
         orchestratorFactory: (@Sendable (RecordPlan, @escaping @Sendable (String) -> URL)
             -> RecordingOrchestrating)? = nil,
-        enqueueAutoRefine: (@Sendable (URL, String) async -> Void)? = nil
+        enqueueAutoRefine: (@Sendable (URL, String) async -> Void)? = nil,
+        pauseRefinement: (@Sendable () async -> Void)? = nil,
+        resumeRefinement: (@Sendable () async -> Void)? = nil
     ) {
         self.settings = settings
         self.paths = paths
@@ -117,6 +136,8 @@ public final class RecordingViewModel {
         self.orchestratorFactory = orchestratorFactory
             ?? RecordingViewModel.defaultOrchestratorFactory
         self.enqueueAutoRefine = enqueueAutoRefine ?? { _, _ in }
+        self.pauseRefinement = pauseRefinement ?? {}
+        self.resumeRefinement = resumeRefinement ?? {}
     }
 
     // MARK: - Start
@@ -164,10 +185,12 @@ public final class RecordingViewModel {
         // not granted" error before the user has finished responding to the
         // prompt. Deliberately left as-is; the first-run wizard will
         // request and confirm grants up front, before the first start.
+        await pauseRefinement()
         do {
             try await orchestrator.start(readyTimeout: .seconds(20))
         } catch {
             self.orchestrator = nil
+            await resumeRefinement()
             status = .error(message: "Could not start recording: \(error)")
             progressMessage = ""
             return
@@ -224,6 +247,7 @@ public final class RecordingViewModel {
         currentRecordingFolder = nil
         status = .idle
         progressMessage = ""
+        await resumeRefinement()
     }
 
     // MARK: - Crash handling
@@ -231,7 +255,7 @@ public final class RecordingViewModel {
     /// Move to `.crashed` when the engine exits while still recording (R45).
     /// On the happy path the crash watch is cancelled before the engine exits,
     /// so reaching here genuinely means an unexpected death.
-    private func handleEngineExit(recordingId: String, partialFolder: URL) {
+    private func handleEngineExit(recordingId: String, partialFolder: URL) async {
         guard case .recording(let id, _) = status, id == recordingId else {
             return
         }
@@ -241,6 +265,7 @@ public final class RecordingViewModel {
         liveMarkdownURL = nil
         status = .crashed(id: recordingId, partialFolderURL: partialFolder)
         progressMessage = "Recording stopped unexpectedly."
+        await resumeRefinement()
     }
 
     /// Enqueue the partial recording for refine and return to `.idle` (R45 recovery).

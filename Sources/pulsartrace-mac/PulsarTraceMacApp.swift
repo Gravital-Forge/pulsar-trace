@@ -79,6 +79,20 @@ private final class EnqueueBox: @unchecked Sendable {
     }
 }
 
+/// A mutable container for a no-argument async closure — same init-time
+/// dependency-cycle break as `EnqueueBox`, used for `pauseRefinement` and
+/// `resumeRefinement`.
+///
+/// `@unchecked Sendable`: mutated once during init on the MainActor, then
+/// read-only from `RecordingViewModel` closures.
+private final class AsyncCallBox: @unchecked Sendable {
+    var impl: (@Sendable () async -> Void)?
+
+    func call() async {
+        await impl?()
+    }
+}
+
 /// Owns the long-lived ViewModels + the global-hotkey monitor.
 @MainActor
 @Observable
@@ -150,26 +164,29 @@ final class AppEnvironment {
             store: placeholderStore, runJob: { _ in })
         self.queueVM = RefinementJobQueueViewModel(queue: placeholderQueue)
 
-        // Indirection box: lets RecordingViewModel call the real enqueue
-        // closure before `self` is fully initialized (Swift forbids [weak self]
-        // captures until every stored property is set, which `recording` itself
-        // prevents). The box is created up-front, passed into RecordingViewModel
-        // as the closure payload, and filled in below once `self` is complete.
+        // Indirection boxes: let RecordingViewModel call real closures before
+        // `self` is fully initialized (Swift forbids [weak self] captures until
+        // every stored property is set, which `recording` itself prevents). Each
+        // box is created up-front, passed into RecordingViewModel as the closure
+        // payload, and filled in below once `self` is complete.
         let enqueueBox = EnqueueBox()
+        let pauseBox = AsyncCallBox()
+        let resumeBox = AsyncCallBox()
 
         self.recording = RecordingViewModel(
             settings: settings, paths: paths, events: events,
             enqueueAutoRefine: { url, recordingId in
                 await enqueueBox.call(url, recordingId)
-            })
+            },
+            pauseRefinement: { await pauseBox.call() },
+            resumeRefinement: { await resumeBox.call() })
         self.scanner = RecordingsScanner(settings: settings)
         self.liveWatcher = LiveTranscriptWatcher()
         self.onboarding = OnboardingTourViewModel()
 
         // All stored properties are now set — `self` is fully initialized.
-        // Wire the real enqueue implementation into the box. The closure hops
-        // to MainActor to read @MainActor-isolated state (`queue`, `settings`)
-        // before crossing into the queue actor for the actual enqueue.
+        // Wire the real implementations into the boxes. Closures hop to MainActor
+        // to read @MainActor-isolated state before crossing into the queue actor.
         enqueueBox.impl = { [weak self] url, recordingId in
             let pair: (RefinementJobQueue, String, String)? =
                 await MainActor.run {
@@ -182,6 +199,14 @@ final class AppEnvironment {
             try? await queue.enqueueAutoRefine(
                 folderURL: url, recordingId: recordingId,
                 modelName: modelName, modelSHA256: modelSHA256)
+        }
+        pauseBox.impl = { [weak self] in
+            let q: RefinementJobQueue? = await MainActor.run { self?.queue }
+            await q?.pauseForRecording()
+        }
+        resumeBox.impl = { [weak self] in
+            let q: RefinementJobQueue? = await MainActor.run { self?.queue }
+            await q?.resumeAfterRecording()
         }
 
         // Chain events bootstrap → queue bootstrap in a single stored Task so
@@ -285,27 +310,15 @@ final class AppEnvironment {
 
     /// Start or stop recording — the hotkey's effect (R41).
     ///
-    /// Pauses the refinement queue before starting a recording (so the refiner
-    /// yields CPU + I/O to the live pass) and resumes it after stopping. If the
-    /// start fails and the status returns to `.idle`, the pause is undone
-    /// immediately so the queue continues working on pending jobs.
+    /// Pause/resume of the refinement queue is now owned by `RecordingViewModel`
+    /// via the injected hooks, so every path (hotkey, menubar dropdown) is
+    /// correct by construction.
     func toggleRecording() async {
         switch recording.status {
         case .idle:
-            await queue?.pauseForRecording()
             await recording.startRecording()
-            // If the start failed (status returned to .idle or .error), undo
-            // the pause so the queue is not stuck indefinitely.
-            if case .idle = recording.status {
-                await queue?.resumeAfterRecording()
-            } else if case .error = recording.status {
-                await queue?.resumeAfterRecording()
-            }
         case .recording:
             await recording.stopRecording()
-            // Resume unconditionally: even if stopRecording left the VM in
-            // .crashed/.error, we don't want to strand the queue paused.
-            await queue?.resumeAfterRecording()
         default:
             break
         }
