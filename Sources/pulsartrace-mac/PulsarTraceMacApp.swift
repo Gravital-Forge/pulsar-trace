@@ -195,10 +195,22 @@ final class AppEnvironment {
                     let model = ModelCatalog.model(named: name) ?? ModelCatalog.base
                     return (queue, model.name, model.sha256)
                 }
-            guard let (queue, modelName, modelSHA256) = pair else { return }
-            try? await queue.enqueueAutoRefine(
-                folderURL: url, recordingId: recordingId,
-                modelName: modelName, modelSHA256: modelSHA256)
+            guard let (queue, modelName, modelSHA256) = pair else {
+                // Bootstrap race window — covered properly by Task 9. For
+                // now: explicit log instead of a silent drop so the gap is
+                // visible until Task 9 closes it.
+                FileHandle.standardError.write(
+                    Data("pulsartrace-mac: auto-refine dropped — queue not yet ready\n".utf8))
+                return
+            }
+            do {
+                try await queue.enqueueAutoRefine(
+                    folderURL: url, recordingId: recordingId,
+                    modelName: modelName, modelSHA256: modelSHA256)
+            } catch {
+                FileHandle.standardError.write(
+                    Data("pulsartrace-mac: auto-refine enqueue failed: \(error)\n".utf8))
+            }
         }
         pauseBox.impl = { [weak self] in
             let q: RefinementJobQueue? = await MainActor.run { self?.queue }

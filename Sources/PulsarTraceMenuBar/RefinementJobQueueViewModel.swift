@@ -18,6 +18,10 @@ public final class RefinementJobQueueViewModel {
     public private(set) var recent: [RefinementJob] = []
     public private(set) var pausedForRecording = false
 
+    /// Last enqueue error, if any. The recordings list surfaces this as a
+    /// short alert string; it is cleared by the next successful enqueue.
+    public var lastEnqueueError: String?
+
     private var queue: RefinementJobQueue
     private var poller: Task<Void, Never>?
 
@@ -68,9 +72,14 @@ public final class RefinementJobQueueViewModel {
     /// Forward a "Refine" button press.
     public func enqueueManual(folderURL: URL, recordingId: String,
                               modelName: String, modelSHA256: String) async {
-        try? await queue.enqueueManualRefine(
-            folderURL: folderURL, recordingId: recordingId,
-            modelName: modelName, modelSHA256: modelSHA256)
+        do {
+            try await queue.enqueueManualRefine(
+                folderURL: folderURL, recordingId: recordingId,
+                modelName: modelName, modelSHA256: modelSHA256)
+            lastEnqueueError = nil
+        } catch {
+            lastEnqueueError = "Could not enqueue refinement: \(error)"
+        }
         await refresh()
     }
 

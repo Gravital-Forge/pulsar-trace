@@ -18,12 +18,22 @@ struct RecordingsListView: View {
     @State private var viewing: RecordingEntry?
 
     var body: some View {
-        Group {
-            if scanner.recordings.isEmpty {
-                emptyState
-            } else {
-                List(scanner.recordings) { recording in
-                    row(recording)
+        VStack(spacing: 0) {
+            if let err = queueVM.lastEnqueueError {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange)
+            }
+            Group {
+                if scanner.recordings.isEmpty {
+                    emptyState
+                } else {
+                    List(scanner.recordings) { recording in
+                        row(recording)
+                    }
                 }
             }
         }
