@@ -329,6 +329,82 @@ audio. Not new epic scope.
 
 ---
 
+## Refinement job queue & resumable pipeline  ✅ committed 1276a7d … 295edd2
+
+A queue-based refactor of refinement state so back-to-back recordings stop
+blocking on a still-running refine. Driven by a real user issue: the finished
+recording auto-triggered refinement, and that blocked starting the next
+meeting. Now: a recording stops, the auto-refine is enqueued, and the menubar
+state machine goes idle immediately — the next recording can start. If a
+recording does start while a refine is in flight, the queue pauses the refiner
+(closing a pause gate + killing the inflight pyannote subprocess) so capture
+gets the resources it needs; the refine resumes from its on-disk checkpoint
+when the recording stops. Manual "Refine" from the recordings list and
+auto-post-recording refine both feed the same FIFO single-worker queue.
+
+- [x] `RefinementJob` + `RefinementJobState` value types (jobId/recordingId/
+      trigger/state machine across queued/running/paused/completed/failed/
+      cancelled).
+- [x] `RefinementJobStore`: atomic-file JSONL persistence, `listAll`/`upsert`/
+      `pruneTerminal` (older than N days).
+- [x] `RefinementProgress` checkpoint schema written to
+      `<folder>/refine-progress.json`: VAD regions, completed-region indices
+      per stream, partial segments, language, last stage.
+- [x] `PauseGate` actor (open/close/waitOpen) — async checkpoint primitive
+      shared between the queue and the refiner.
+- [x] `WhisperTranscriber.transcribeRegion(_:region:options:)` exposed so the
+      refiner can decode one VAD region at a time and checkpoint between them.
+- [x] `Diarizer.cancel()` — SIGTERM + 500ms SIGKILL escalation of the inflight
+      pyannote subprocess, surfacing as `DiarizeError.cancelled`.
+- [x] `ResumableRefiner` actor: 8-stage refine loop with per-region whisper
+      checkpointing, per-region pause-gate wait, and a diarize cancel-retry
+      loop (cancelled diarize is not a failure — refiner waits for the gate to
+      reopen and re-runs from scratch, per D-Q7).
+- [x] `RefinementJobQueue` actor: single-worker FIFO; `enqueueManualRefine` /
+      `enqueueAutoRefine` / `enqueueCrashRecovery`; `pauseForRecording` /
+      `resumeAfterRecording`; `cancel(recordingId:)` for queued jobs;
+      `reportStage(_:)` hook the refiner uses to update running-job state for
+      the UI; `setInflightCancellable(_:)` so pause additionally terminates
+      the inflight diarizer.
+- [x] `RefinementJobQueue.makeStandard` production factory wires real
+      `WhisperTranscriber` + `Diarizer` + `EventWriter` + shared `PauseGate`
+      with the standard `paths` store.
+- [x] `RecordingStatus.refining` removed; `RecordingViewModel.stopRecording`
+      and `recoverFromCrash` now enqueue via an injected `enqueueAutoRefine`
+      closure and return to `.idle` immediately.
+- [x] `AppEnvironment` wires the queue: `RefinementJobQueue.makeStandard` in
+      a deferred `bootstrap()` task chained after `events.bootstrap()`;
+      `toggleRecording` calls `pauseForRecording` before start, resumes after
+      stop or on failed start. `RefinementJobQueueViewModel` (`@MainActor
+      @Observable` façade) injected into the unified window environment.
+- [x] Refinements sidebar pane (`RefinementsListView`): Running / Queued /
+      Recent sections with per-job progress (% + stage + region) and a Cancel
+      button on queued rows; empty state. 250 ms snapshot poll for v1.
+- [x] Recordings list: Refine button enqueues via the queue (no longer
+      in-process). Per-row `RefineBadge` shows Refining/Queued/Refined/Failed.
+      `RecordingsScanner`'s `reRefiner` / `reRefine` / `ReRefineError` /
+      `makeDefaultReRefiner` deleted; only folder reading remains.
+- [x] Menubar dropdown status reflects the queue: "Recording since … ·
+      Refining 42% (transcribingSystem)" when both, "<N> queued" when idle
+      with a backlog.
+- [x] `OfflineRefiner` doc-comment updated — it is now the CLI-only one-shot
+      path; the menubar uses the queue.
+- [x] Tests green: `--filter UnitTests` 253/253; `--filter MenuBarTests`
+      34/34; `--filter RefinementJobQueueTests` 6/6; `--filter
+      ResumableRefiner` 4/4. New DECISIONS: D34.
+- KNOWN FOLLOW-UPS (tracked, deferred): (a) `makeStandard`'s `runJob` closure
+  captures the queue strongly — a permanent retain cycle; acceptable in v1
+  (queue lives for app lifetime); (b) `RefinementJobQueueViewModel` polls at
+  250 ms — a push channel via `AsyncStream` would be cleaner; (c) the
+  placeholder `RefinementJobQueue` used during `AppEnvironment.init` points
+  at the real store directory — safe today (never started), but a dummy path
+  is defense-in-depth; (d) `Stage.rawValue` leaks engineering identifiers
+  (`transcribingSystem`) into the UI — wants a `displayName`; (e) per-job
+  `WhisperTranscriber` construction (not Sendable) means each region pays
+  model-load cost — acceptable, matches `OfflineRefiner` pattern.
+
+---
+
 ## Cross-cutting (every epic)
 - Tests ship with code. Determinism: seeded RNG, whisper temp 0, pinned hashes.
 - `docs/file-format.md` and `docs/events-schema.md` kept current.

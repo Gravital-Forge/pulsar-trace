@@ -749,3 +749,45 @@ restarts its own stream fast; the engine tolerates a longer outage without
 wedging) means a recording continues through a transient capture failure
 and, combined with D32's incremental WAV, survives even a total
 capture-daemon loss.
+
+## D34 — Refinement runs through a single-worker async queue; recording no longer blocks on refine
+
+**Decision:** Refinement work for the menubar app — auto-post-recording,
+manual "Refine" from the recordings list, and crash recovery — now runs
+through a single `RefinementJobQueue` actor instead of inline within
+`RecordingViewModel`. The queue is FIFO, single-worker (one refine at a
+time), persisted to JSONL via `RefinementJobStore`, and exposed through a
+`@MainActor @Observable` view model. The refiner inside the queue
+(`ResumableRefiner`) writes a `refine-progress.json` checkpoint in the
+recording folder between every VAD region and every stage transition, so a
+mid-run pause loses at most one in-flight region. The `RecordingStatus`
+enum loses its `.refining` case: `stopRecording` enqueues the auto-refine
+and returns to `.idle` immediately. Starting a recording pauses the queue
+(closes a shared `PauseGate` *and* terminates the inflight pyannote
+subprocess via a `Cancellable` seam); stopping resumes it. The `pulsartrace
+refine` CLI continues to use `OfflineRefiner` directly (one-shot, no
+queue) — its bare-WAV runs don't benefit from pause/resume.
+
+**Why:** A real user issue: the prior design ran refinement inline in
+`RecordingViewModel`, blocking new recordings until refine completed. For
+back-to-back meetings — the common case — that was a deal-breaker. The
+queue resolves three problems at once: (a) recording is exclusive and
+prioritised (a refine pauses to give capture its CPU/RAM/Metal), (b)
+refines survive across recording starts (resume from the on-disk
+checkpoint), and (c) auto and manual refinement paths share the same
+observable orchestrator, so the new Refinements sidebar pane shows a
+single source of truth for both. The pyannote cancel-and-retry strategy
+(D-Q7 internal) accepts up to one pyannote re-run per pause cycle —
+~10–30s of model reload plus re-inference of the cancelled diarize —
+which is well inside the user's "5 minutes of duplicated effort"
+tolerance. The 8-stage refiner reports stage and region progress through
+a `StageReporter` async closure, so the UI can show a fraction without
+the queue and refiner sharing more surface than the `PauseGate`.
+
+The architectural shape — actor + `@Observable` façade, polling 250 ms
+snapshot, on-disk JSONL persistence — matches the existing
+`RecordingsScanner`/`LiveTranscriptWatcher` patterns. The decision to keep
+`OfflineRefiner` rather than fold the CLI onto the queue too is
+deliberate: the CLI's bare-WAV path has no recording-vs-refine
+interleaving to coordinate, and one-shot CLI semantics ("run once, exit")
+are awkward with a long-lived queue actor and store.
