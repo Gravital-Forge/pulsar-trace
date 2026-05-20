@@ -54,6 +54,8 @@ struct MainWindowView: View {
         switch navigation.section {
         case .recordings:
             RecordingsListView()
+        case .refinements:
+            RefinementsListView()
         case .speakers:
             SpeakerEditorView(events: events)
         case .settings:

@@ -18,11 +18,21 @@ public final class RefinementJobQueueViewModel {
     public private(set) var recent: [RefinementJob] = []
     public private(set) var pausedForRecording = false
 
-    private let queue: RefinementJobQueue
+    private var queue: RefinementJobQueue
     private var poller: Task<Void, Never>?
 
     public init(queue: RefinementJobQueue) {
         self.queue = queue
+    }
+
+    /// Swap in the real queue once it has been built asynchronously (E2).
+    ///
+    /// `AppEnvironment` initialises `queueVM` with a placeholder queue and
+    /// calls this from `bootstrap()` once `makeStandard` completes, so the
+    /// environment object is always non-optional.
+    public func setQueue(_ queue: RefinementJobQueue) async {
+        self.queue = queue
+        await refresh()
     }
 
     /// Re-read the queue once.

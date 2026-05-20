@@ -48,6 +48,7 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.recording)
                 .environment(environment.scanner)
                 .environment(environment.navigation)
+                .environment(environment.queueVM)
         }
         .defaultSize(width: 760, height: 480)
 
@@ -104,6 +105,12 @@ final class AppEnvironment {
     /// async setup is deferred to an `App.task { }`, keeping `init()` sync.
     private(set) var queue: RefinementJobQueue? = nil
 
+    /// Main-actor façade over `queue` — always non-optional (E2). Initialised
+    /// with a placeholder (noop) queue in `init()`; `bootstrap()` swaps in the
+    /// real queue via `setQueue(_:)` once `makeStandard` completes. Non-optional
+    /// so it can be passed directly to `.environment(...)` without extra wrappers.
+    let queueVM: RefinementJobQueueViewModel
+
     /// Passive global-hotkey monitor (R41). `addGlobalMonitorForEvents` needs
     /// NO Accessibility TCC grant; the keypress also reaching the frontmost
     /// app is an accepted v1 tradeoff (D27). NOT a `CGEventTap`.
@@ -129,6 +136,18 @@ final class AppEnvironment {
         self.settings = settings
         self.paths = paths
         self.events = events
+
+        // Build a lightweight placeholder queue for queueVM (E2). The VM is
+        // always non-optional so the Window scene's .environment() call is
+        // unconditional; bootstrap() swaps in the real queue via setQueue(_:)
+        // once makeStandard completes. The placeholder store and noop runJob
+        // ensure no disk writes or real work happen before bootstrap finishes.
+        let placeholderStore = RefinementJobStore(
+            directory: paths.applicationSupport
+                .appendingPathComponent("refinement-queue", isDirectory: true))
+        let placeholderQueue = RefinementJobQueue(
+            store: placeholderStore, runJob: { _ in })
+        self.queueVM = RefinementJobQueueViewModel(queue: placeholderQueue)
 
         // Indirection box: lets RecordingViewModel call the real enqueue
         // closure before `self` is fully initialized (Swift forbids [weak self]
@@ -201,6 +220,7 @@ final class AppEnvironment {
                 return (model, model.sha256)
             })
         self.queue = q
+        await queueVM.setQueue(q)
     }
 
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).
