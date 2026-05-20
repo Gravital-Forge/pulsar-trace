@@ -59,24 +59,46 @@ public actor ResumableRefiner {
     public func run(job: RefinementJob) async throws {
         let folder = try RecordingFolder.resolve(inputPath: job.folderURL)
         var progress = loadOrInitProgress(folder: folder, job: job)
-
-        try await advance(&progress, to: .resolvingInput, folder: folder)
-
-        try await advance(&progress, to: .transcribingSystem, folder: folder)
-        try await transcribeSystemStream(folder: folder, progress: &progress)
-
-        try await advance(&progress, to: .diarizing, folder: folder)
-        let diarization = try await runDiarization(folder: folder, progress: &progress)
-
-        try await advance(&progress, to: .transcribingMic, folder: folder)
-        if folder.micStream != nil {
-            try await transcribeMicStream(folder: folder, progress: &progress)
+        // Clear any prior lastError on a fresh start — a healthy completion
+        // should not leave the previous failure's text behind.
+        if progress.lastError != nil {
+            progress.lastError = nil
+            try? persist(progress, folder: folder)
         }
 
-        try await advance(&progress, to: .merging, folder: folder)
-        try await advance(&progress, to: .writingFinal, folder: folder)
-        try await advance(&progress, to: .writingMetadata, folder: folder)
-        try mergeAndWrite(folder: folder, progress: progress, diarization: diarization, job: job)
+        do {
+            try await advance(&progress, to: .resolvingInput, folder: folder)
+
+            try await advance(&progress, to: .transcribingSystem, folder: folder)
+            try await transcribeSystemStream(folder: folder, progress: &progress)
+
+            try await advance(&progress, to: .diarizing, folder: folder)
+            let diarization = try await runDiarization(folder: folder, progress: &progress)
+
+            try await advance(&progress, to: .transcribingMic, folder: folder)
+            if folder.micStream != nil {
+                try await transcribeMicStream(folder: folder, progress: &progress)
+            }
+
+            try await advance(&progress, to: .merging, folder: folder)
+            try await advance(&progress, to: .writingFinal, folder: folder)
+            try await advance(&progress, to: .writingMetadata, folder: folder)
+            try mergeAndWrite(folder: folder, progress: progress, diarization: diarization, job: job)
+        } catch {
+            progress.lastError = Self.redactPath(
+                "\(type(of: error)): \(error)",
+                folder: folder.directory)
+            try? persist(progress, folder: folder)
+            logger.warning("refinement job \(job.id) failed: \(progress.lastError ?? "?")")
+            throw error
+        }
+    }
+
+    /// Replace any occurrence of `folder`'s path in `s` with `<folder>` so the
+    /// redacted text is safe to put in the progress file even if the underlying
+    /// error rendered a filesystem path (Hard Invariant #7).
+    static func redactPath(_ s: String, folder: URL) -> String {
+        s.replacingOccurrences(of: folder.path, with: "<folder>")
     }
 
     // MARK: - Stage helpers

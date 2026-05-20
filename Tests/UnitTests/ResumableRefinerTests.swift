@@ -217,6 +217,46 @@ struct ResumableRefinerTests {
         #expect(finalCount == 2)
     }
 
+    @Test("a thrown error is recorded in refine-progress.json as lastError")
+    func failureWritesLastError() async throws {
+        let folder = tempDir()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FixtureRecording.minimal(at: folder)
+
+        struct Boom: Error, CustomStringConvertible {
+            var description: String { "synthetic transcribe failure" }
+        }
+
+        let refiner = ResumableRefiner(
+            transcribe: { _, _, _ in throw Boom() },
+            detectRegions: { _ in
+                [SpeechRegion(start: .seconds(0), end: .seconds(1))]
+            },
+            diarize: { _ in
+                fatalError("diarize should not be reached when transcribe throws")
+            },
+            pauseGate: PauseGate(initiallyOpen: true),
+            events: nil)
+
+        let job = RefinementJob(
+            id: "job_e", recordingId: "rec_e", folderURL: folder,
+            modelName: "stub", modelSHA256: "stub",
+            trigger: .manual, enqueuedAt: Date(), state: .queued)
+
+        await #expect(throws: Boom.self) {
+            try await refiner.run(job: job)
+        }
+
+        let progressURL = folder.appendingPathComponent("refine-progress.json")
+        let data = try Data(contentsOf: progressURL)
+        let progress = try RefinementProgress.decode(data)
+        let recorded = try #require(progress.lastError)
+        #expect(recorded.contains("synthetic transcribe failure"),
+                "lastError should carry the underlying description")
+        #expect(!recorded.contains(folder.path),
+                "filesystem path must be redacted")
+    }
+
     @Test("a cancelled diarize retries when the gate reopens")
     func diarizeCancelRetries() async throws {
         let folder = tempDir()
