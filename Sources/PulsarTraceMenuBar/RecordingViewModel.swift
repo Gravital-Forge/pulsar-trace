@@ -28,12 +28,15 @@ extension RecordOrchestrator: RecordingOrchestrating {
     }
 }
 
-/// Drives one menubar recording session: start → record → refine → idle, with
-/// crash detection (R40, R45).
+/// Drives one menubar recording session: start → record → idle, with crash
+/// detection (R40, R45). Post-recording refinement is enqueued onto the
+/// `RefinementJobQueue` via the injected `enqueueAutoRefine` closure and runs
+/// asynchronously — the recording state machine returns to `.idle` immediately,
+/// enabling back-to-back meetings without blocking on refine.
 ///
 /// `@MainActor @Observable` so the menubar binds to `status` / `progressMessage`
 /// directly. Orchestration (process spawning) is behind the
-/// `RecordingOrchestrating` seam and a `reRefiner` closure so the whole status
+/// `RecordingOrchestrating` seam and `enqueueAutoRefine` so the whole status
 /// machine is unit-testable without real audio or subprocesses.
 @MainActor
 @Observable
@@ -68,8 +71,11 @@ public final class RecordingViewModel {
     /// `#filePath`; a future change swaps this to `Bundle.main`.
     private let binaryURLResolver: @Sendable (String) -> URL
 
-    /// Drives the post-recording refine pass.
-    private let reRefiner: @Sendable (URL) async throws -> Void
+    /// Enqueues a finished (or partial) recording folder onto the async refine
+    /// queue. Receives the folder URL and the `rec_<short>` id. The production
+    /// implementation enqueues onto `RefinementJobQueue` (wired in D2); tests
+    /// inject a capturing closure or pass `nil` for a no-op default.
+    private let enqueueAutoRefine: @Sendable (URL, String) async -> Void
 
     /// The orchestrator for the in-flight session, if any.
     private var orchestrator: RecordingOrchestrating?
@@ -84,15 +90,15 @@ public final class RecordingViewModel {
     /// - Parameters:
     ///   - settings: source of the mic, model, output folder, system-audio flag.
     ///   - paths: resolves socket locations (default `.standard`).
-    ///   - events: the process-wide events writer the in-process re-refine
-    ///     emits through; `nil` only in tests that inject their own `reRefiner`.
+    ///   - events: unused — retained for API compatibility; will be removed
+    ///     once D2 wires `AppEnvironment` to pass an `enqueueAutoRefine` closure.
     ///   - clock: injectable wall clock (deterministic tests).
     ///   - binaryURLResolver: name → binary URL (default `.build/debug/<name>`).
     ///   - orchestratorFactory: builds the orchestration seam — default builds a
     ///     real `RecordOrchestrator`; tests inject a stub factory.
-    ///   - reRefiner: drives the offline refine pass after the live pass ends.
-    ///     The default runs `OfflineRefiner` **in-process** (D23 — the menubar
-    ///     never shells out to the `pulsartrace` CLI); tests inject a stub.
+    ///   - enqueueAutoRefine: called with `(folderURL, recordingId)` after a
+    ///     successful stop or crash recovery. Default is a no-op; D2 injects the
+    ///     real `RefinementJobQueue.enqueue` closure.
     public init(
         settings: MenuBarSettings,
         paths: AppPaths = .standard,
@@ -101,7 +107,7 @@ public final class RecordingViewModel {
         binaryURLResolver: (@Sendable (String) -> URL)? = nil,
         orchestratorFactory: (@Sendable (RecordPlan, @escaping @Sendable (String) -> URL)
             -> RecordingOrchestrating)? = nil,
-        reRefiner: (@Sendable (URL) async throws -> Void)? = nil
+        enqueueAutoRefine: (@Sendable (URL, String) async -> Void)? = nil
     ) {
         self.settings = settings
         self.paths = paths
@@ -110,9 +116,7 @@ public final class RecordingViewModel {
             ?? RecordingViewModel.defaultBinaryURLResolver
         self.orchestratorFactory = orchestratorFactory
             ?? RecordingViewModel.defaultOrchestratorFactory
-        self.reRefiner = reRefiner
-            ?? RecordingViewModel.makeDefaultReRefiner(
-                settings: settings, paths: paths, events: events)
+        self.enqueueAutoRefine = enqueueAutoRefine ?? { _, _ in }
     }
 
     // MARK: - Start
@@ -195,7 +199,11 @@ public final class RecordingViewModel {
 
     // MARK: - Stop
 
-    /// Stop the in-flight recording and run the refine pass (R40, R41).
+    /// Stop the in-flight recording and enqueue an auto-refine job (R40).
+    ///
+    /// Returns to `.idle` immediately after stopping the subprocess pair —
+    /// the offline refine pass runs asynchronously on the `RefinementJobQueue`,
+    /// so a new recording can be started right away (back-to-back meetings).
     public func stopRecording() async {
         guard case .recording(let id, _) = status,
               let orchestrator else { return }
@@ -210,7 +218,12 @@ public final class RecordingViewModel {
         // The live pass has ended — stop advertising its `live.md` (FIX 1).
         liveMarkdownURL = nil
 
-        await runRefine(recordingId: id, folderOverride: currentRecordingFolder)
+        if let folder = currentRecordingFolder {
+            await enqueueAutoRefine(folder, id)
+        }
+        currentRecordingFolder = nil
+        status = .idle
+        progressMessage = ""
     }
 
     // MARK: - Crash handling
@@ -230,7 +243,7 @@ public final class RecordingViewModel {
         progressMessage = "Recording stopped unexpectedly."
     }
 
-    /// Refine the partial recording captured before a crash (R45 recovery).
+    /// Enqueue the partial recording for refine and return to `.idle` (R45 recovery).
     public func recoverFromCrash() async {
         guard case .crashed(let id, let partialFolder) = status,
               let partialFolder else {
@@ -238,7 +251,9 @@ public final class RecordingViewModel {
             dismissCrash()
             return
         }
-        await runRefine(recordingId: id, folderOverride: partialFolder)
+        await enqueueAutoRefine(partialFolder, id)
+        status = .idle
+        progressMessage = ""
     }
 
     /// Dismiss a crash banner without recovering — returns to `.idle`.
@@ -250,43 +265,6 @@ public final class RecordingViewModel {
             status = .idle
             progressMessage = ""
         }
-    }
-
-    // MARK: - Refine
-
-    /// Run the offline refine pass, then return to `.idle`.
-    private func runRefine(recordingId: String, folderOverride: URL? = nil) async {
-        status = .refining(id: recordingId)
-        progressMessage = "Refining transcript…"
-
-        let folder: URL?
-        if let folderOverride {
-            folder = folderOverride
-        } else {
-            // The recording folder is the most recent under the output root.
-            folder = settings.outputFolderURL.flatMap { root in
-                RecordingsScanner.scanRoot(root)
-                    .first { $0.id == recordingId }?.folderURL
-            }
-        }
-
-        if let folder {
-            do {
-                try await reRefiner(folder)
-                // Clear the progress line on success: the menu shows a single
-                // status line (#1), and an idle "Ready" is the confirmation —
-                // a lingering "Done." stacked under "Ready" was the duplication
-                // the menu used to show. A failure message below is kept so it
-                // is not lost.
-                progressMessage = ""
-            } catch {
-                progressMessage = "Refine failed: \(error)"
-            }
-        } else {
-            progressMessage = "Recording saved (refine skipped — folder not found)."
-        }
-        currentRecordingFolder = nil
-        status = .idle
     }
 
     // MARK: - Defaults
@@ -319,36 +297,5 @@ public final class RecordingViewModel {
             captureArguments: plan.captureArguments,
             engineBinary: resolve("pulsartrace-engine"),
             engineArguments: plan.engineArguments))
-    }
-
-    /// Production re-refiner: runs `OfflineRefiner` **in-process** (D23 — the
-    /// menubar must not shell out to the `pulsartrace` CLI). A refine failure
-    /// is propagated, never swallowed.
-    ///
-    /// Requires an `EventWriter` so the refine emits the same events the CLI
-    /// path does; when `events` is `nil` (a test path that did not inject a
-    /// `reRefiner`) the closure throws rather than silently no-op. Called from
-    /// the `@MainActor` init, so `settings.refineModelName` is read here.
-    static func makeDefaultReRefiner(
-        settings: MenuBarSettings,
-        paths: AppPaths,
-        events: EventWriter?
-    ) -> @Sendable (URL) async throws -> Void {
-        let modelName = settings.refineModelName
-        return { folderURL in
-            guard let events else { throw RefineUnavailableError.noEventWriter }
-            let model = ModelCatalog.model(named: modelName) ?? ModelCatalog.base
-            let refiner = OfflineRefiner(events: events, paths: paths)
-            _ = try await refiner.refine(inputPath: folderURL, model: model)
-        }
-    }
-
-    /// Raised when an in-process re-refine cannot run because no `EventWriter`
-    /// was provided (a misconfigured non-test caller).
-    enum RefineUnavailableError: Error, CustomStringConvertible {
-        case noEventWriter
-        var description: String {
-            "re-refine unavailable: no events writer configured"
-        }
     }
 }

@@ -59,8 +59,6 @@ struct MenuBarMenuView: View {
             menuButton("Show Live Transcript…") {
                 open(WindowID.liveTranscript)
             }
-        case .refining:
-            menuButton("Refining…", enabled: false) {}
         case .crashed:
             menuButton("Recover Transcript") {
                 Task { await recording.recoverFromCrash() }
@@ -101,8 +99,6 @@ struct MenuBarMenuView: View {
         case .recording(_, let startedAt):
             let started = startedAt.formatted(date: .omitted, time: .shortened)
             return "Recording since \(started)"
-        case .refining:
-            return "Refining transcript…"
         case .crashed:
             return "Recording stopped unexpectedly"
         case .error(let message):

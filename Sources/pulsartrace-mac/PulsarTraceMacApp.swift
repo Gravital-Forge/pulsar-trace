@@ -196,7 +196,6 @@ extension RecordingStatus {
         case .idle: return "waveform"
         case .launching: return "waveform.badge.plus"
         case .recording: return "waveform.badge.microphone"
-        case .refining: return "waveform.badge.exclamationmark"
         case .crashed: return "exclamationmark.triangle"
         case .error: return "exclamationmark.triangle"
         }
