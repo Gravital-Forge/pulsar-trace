@@ -7,7 +7,7 @@ import Foundation
 /// fully torn down. `Diarizer.cancel()` sends SIGTERM and schedules a 500 ms
 /// SIGKILL escalation, but returns immediately — the subprocess may still be
 /// alive on return. The queue does not wait for the subprocess to die; the
-/// refiner's cancel-retry loop (B7) handles the eventual
+/// refiner's cancel-retry loop handles the eventual
 /// `DiarizeError.cancelled` thrown by the next `diarizeSystemStream` call.
 public protocol RefinementCancellable: Sendable {
     func cancel() async

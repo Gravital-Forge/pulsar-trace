@@ -10,10 +10,6 @@ import Logging
 /// after every completed VAD region and at every stage transition. On a fresh
 /// run the file is created; on a resumed run it is read and the completed
 /// work is skipped.
-///
-/// B4 — happy-path stage iteration only. Pause/resume (gate-closing) is wired
-/// in B5; `PauseGate` is already threaded through here so B5 can activate it
-/// without changing the call sites.
 public actor ResumableRefiner {
 
     public typealias TranscribeRegion =
