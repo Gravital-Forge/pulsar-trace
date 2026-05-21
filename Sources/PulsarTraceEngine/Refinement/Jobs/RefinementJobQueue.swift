@@ -173,19 +173,43 @@ public actor RefinementJobQueue {
     }
 
     /// Pause the queue: stops new jobs from starting and closes the pause gate
-    /// so the in-flight refiner stalls at its next checkpoint. Also signals
-    /// the diarizer to terminate its subprocess if one is currently running
-    /// (D-Q7 / Task D3).
+    /// so the in-flight refiner stalls at its next checkpoint. Transforms the
+    /// running job's `.running(stage:, …)` into `.paused(reason: .recordingInProgress,
+    /// lastStage:)` so the UI reflects the suspension rather than showing
+    /// stale "Diarizing 2/7" text. Also signals the diarizer to terminate its
+    /// subprocess if one is currently running (D-Q7 / Task D3).
     public func pauseForRecording() async {
         pausedForRecording = true
         await pauseGate.close()
+        if var job = current,
+           case .running(let stage, _, _, _, _) = job.state {
+            job.state = .paused(reason: .recordingInProgress, lastStage: stage)
+            current = job
+            do { try await store.upsert(job) }
+            catch { logger.warning("pause upsert failed: \(error)") }
+        }
         if let c = inflightCancellable { await c.cancel() }
     }
 
-    /// Resume the queue: opens the gate (the in-flight refiner picks up at its
-    /// next checkpoint) and lets the worker pump again.
+    /// Resume the queue: opens the gate so the in-flight refiner picks up at
+    /// its next checkpoint. Transforms the running job's `.paused` back into
+    /// `.running` so the UI reports forward progress again. The actual step
+    /// counts will be overwritten by the refiner's next `reportStage` call;
+    /// here we restore a sensible baseline derived from `lastStage`.
     public func resumeAfterRecording() async {
         pausedForRecording = false
+        if var job = current,
+           case .paused(_, let lastStage) = job.state {
+            let stepIndex = RefinementJobState.Stage.allCases.firstIndex(of: lastStage) ?? 0
+            job.state = .running(
+                stage: lastStage,
+                stepsCompleted: stepIndex,
+                stepsTotal: RefinementJobState.Stage.allCases.count,
+                regionIndex: nil, regionsTotal: nil)
+            current = job
+            do { try await store.upsert(job) }
+            catch { logger.warning("resume upsert failed: \(error)") }
+        }
         await pauseGate.open()
         pumpIfIdle()
     }

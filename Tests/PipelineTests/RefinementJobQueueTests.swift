@@ -431,6 +431,57 @@ struct RefinementJobQueueTests {
         }
     }
 
+    @Test("pauseForRecording transforms a running job to .paused with lastStage")
+    func pauseSetsPausedState() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-pause-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = RefinementJobStore(directory: dir)
+        let gate = PauseGate(initiallyOpen: true)
+
+        // A runJob that reports a stage then suspends on the gate forever so
+        // we can observe pauseForRecording while running.
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { @Sendable [gate] _ in
+                await gate.waitOpen()
+                // After the gate reopens, suspend forever (test cleanup
+                // tears the actor down).
+                try? await Task.sleep(for: .seconds(60))
+            },
+            pauseGate: gate)
+        try await queue.enqueueAutoRefine(
+            folderURL: dir, recordingId: "rec_pause",
+            modelName: "stub", modelSHA256: "stub")
+        // Manually mark the job's running state via reportStage so the
+        // queue has a `lastStage` to capture.
+        let deadline = Date().addingTimeInterval(1)
+        while await queue.snapshot().running == nil, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await queue.reportStage(.running(
+            stage: .diarizing, stepsCompleted: 2, stepsTotal: 7,
+            regionIndex: nil, regionsTotal: nil))
+
+        await queue.pauseForRecording()
+        let paused = await queue.snapshot().running
+        guard case .paused(let reason, let lastStage) = paused?.state else {
+            Issue.record("expected .paused, got \(String(describing: paused?.state))")
+            return
+        }
+        #expect(reason == .recordingInProgress)
+        #expect(lastStage == .diarizing)
+
+        await queue.resumeAfterRecording()
+        let resumed = await queue.snapshot().running
+        guard case .running(let stage, _, _, _, _) = resumed?.state else {
+            Issue.record("expected .running after resume, got \(String(describing: resumed?.state))")
+            return
+        }
+        #expect(stage == .diarizing, "lastStage should round-trip through resume")
+    }
+
     @Test("recent list is capped at 100 entries")
     func recentListCapped() async throws {
         let dir = FileManager.default.temporaryDirectory
