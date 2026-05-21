@@ -270,6 +270,107 @@ struct ResumableRefinerTests {
         #expect(out.contains("~/Library/Application Support"), "redaction should leave ~/... visible: \(out)")
     }
 
+    /// Helper: build an in-memory EventWriter and read every event line back.
+    private func makeEvents() -> (EventWriter, () async throws -> [String]) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-rr-evt-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let writer = EventWriter(directory: dir)
+        return (writer, {
+            await writer.bootstrap()
+            // Wait for any pending appends — the actor is FIFO, so a fresh
+            // append+flush serializes after every earlier append.
+            await writer.flush()
+            let url = await writer.currentFileURL()
+            let data = (try? Data(contentsOf: url)) ?? Data()
+            let text = String(decoding: data, as: UTF8.self)
+            return text.split(separator: "\n", omittingEmptySubsequences: true)
+                .map(String.init)
+        })
+    }
+
+    @Test("run emits refinement_started and refinement_completed on success")
+    func emitsStartCompleteEvents() async throws {
+        let folder = tempDir()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FixtureRecording.minimal(at: folder)
+
+        let (events, readback) = makeEvents()
+        await events.bootstrap()
+
+        let refiner = ResumableRefiner(
+            transcribe: { _, _, _ in
+                TranscriptionResult(segments: [], language: "en")
+            },
+            detectRegions: { _ in [] },
+            diarize: { _ in
+                DiarizationResult(
+                    model: "stub",
+                    modelVersion: "stub",
+                    audioDuration: .seconds(1),
+                    speakers: [],
+                    spans: [],
+                    exclusiveSpans: [],
+                    embeddings: [])
+            },
+            pauseGate: PauseGate(initiallyOpen: true),
+            events: events)
+
+        let job = RefinementJob(
+            id: "job_evt", recordingId: "rec_evt", folderURL: folder,
+            modelName: "stub", modelSHA256: "stub",
+            trigger: .manual, enqueuedAt: Date(), state: .queued)
+        try await refiner.run(job: job)
+
+        let lines = try await readback()
+        let types = lines.compactMap { line -> String? in
+            guard let data = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            return obj["type"] as? String
+        }
+        #expect(types.contains("refinement_started"))
+        #expect(types.contains("refinement_completed"))
+    }
+
+    @Test("run emits refinement_failed when the body throws")
+    func emitsFailedEvent() async throws {
+        let folder = tempDir()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FixtureRecording.minimal(at: folder)
+
+        let (events, readback) = makeEvents()
+        await events.bootstrap()
+
+        struct Boom: Error {}
+        let refiner = ResumableRefiner(
+            transcribe: { _, _, _ in throw Boom() },
+            detectRegions: { _ in
+                [SpeechRegion(start: .seconds(0), end: .seconds(1))]
+            },
+            diarize: { _ in
+                fatalError("not reached")
+            },
+            pauseGate: PauseGate(initiallyOpen: true),
+            events: events)
+
+        let job = RefinementJob(
+            id: "job_fail", recordingId: "rec_fail", folderURL: folder,
+            modelName: "stub", modelSHA256: "stub",
+            trigger: .manual, enqueuedAt: Date(), state: .queued)
+        await #expect(throws: Boom.self) { try await refiner.run(job: job) }
+        let lines = try await readback()
+        let types = lines.compactMap { line -> String? in
+            guard let data = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            return obj["type"] as? String
+        }
+        #expect(types.contains("refinement_started"))
+        #expect(types.contains("refinement_failed"))
+        #expect(!types.contains("refinement_completed"))
+    }
+
     @Test("a cancelled diarize retries when the gate reopens")
     func diarizeCancelRetries() async throws {
         let folder = tempDir()

@@ -62,6 +62,12 @@ public actor ResumableRefiner {
             try? persist(progress, folder: folder)
         }
 
+        // refinement_started — emitted before any work, matching the
+        // CLI's RefinementPipeline.run contract (Hard Invariant #8).
+        _ = try? await events?.append(RefinementStartedEvent(
+            recordingId: job.recordingId, modelRefine: job.modelName))
+
+        let startedAt = Date()
         do {
             try await advance(&progress, to: .resolvingInput, folder: folder)
 
@@ -80,12 +86,31 @@ public actor ResumableRefiner {
             try await advance(&progress, to: .writingFinal, folder: folder)
             try await advance(&progress, to: .writingMetadata, folder: folder)
             try mergeAndWrite(folder: folder, progress: progress, diarization: diarization, job: job)
+
+            // refinement_completed — emitted after mergeAndWrite returns,
+            // so by the time the event lands every output file is durable.
+            let wallSeconds = Date().timeIntervalSince(startedAt)
+            // Speaker count from the in-memory diarization, since this path
+            // does not yet reconcile against the library (Task 11). The
+            // speakers_new / speakers_matched fields land in Task 11.
+            let speakerCount = diarization?.speakers.count ?? 0
+            _ = try? await events?.append(RefinementCompletedEvent(
+                recordingId: job.recordingId,
+                durationSeconds: wallSeconds,
+                speakersIdentified: speakerCount,
+                speakersNew: speakerCount,
+                speakersMatched: 0))
         } catch {
             progress.lastError = Self.redactPath(
                 "\(type(of: error)): \(error)",
                 folder: folder.directory)
             try? persist(progress, folder: folder)
             logger.warning("refinement job \(job.id) failed: \(progress.lastError ?? "?")")
+            let classified = RefinementJobError.classify(error)
+            _ = try? await events?.append(RefinementFailedEvent(
+                recordingId: job.recordingId,
+                errorClass: classified.errorClass,
+                retryAvailable: classified.retryAvailable))
             throw error
         }
     }
