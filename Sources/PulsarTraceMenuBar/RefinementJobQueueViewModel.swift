@@ -107,9 +107,12 @@ public final class RefinementJobQueueViewModel {
 
     /// Replace any occurrence of the user's home directory with `~`, so a
     /// rendered error string doesn't leak `/Users/<name>/...` into the UI.
-    /// The redaction matches the convention in `ResumableRefiner.redactPath`.
+    ///
+    /// Thin wrapper over `PathRedactor.redactHome(_:)` — kept so the existing
+    /// unit test in `RefinementJobQueueViewModelTests` keeps working and so
+    /// the call site in `enqueueManual` stays succinct.
     static func redactHome(_ s: String) -> String {
-        s.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        PathRedactor.redactHome(s)
     }
 
     /// Forward a "Refine" button press.

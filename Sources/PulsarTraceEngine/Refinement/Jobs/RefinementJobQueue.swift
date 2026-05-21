@@ -71,7 +71,7 @@ public actor RefinementJobQueue {
         do {
             try await store.pruneTerminal(olderThanDays: 30)
         } catch {
-            logger.warning("refinement queue: pruneTerminal failed (non-fatal): \(error)")
+            logger.warning("refinement queue: pruneTerminal failed (non-fatal): \(PathRedactor.redactHome("\(error)"))")
         }
         let persisted = try await store.listAll()
         for job in persisted {
@@ -159,7 +159,7 @@ public actor RefinementJobQueue {
         do {
             try await store.upsert(job)
         } catch {
-            logger.warning("reportStage upsert failed: \(error)")
+            logger.warning("reportStage upsert failed: \(PathRedactor.redactHome("\(error)"))")
         }
     }
 
@@ -186,7 +186,7 @@ public actor RefinementJobQueue {
             job.state = .paused(reason: .recordingInProgress, lastStage: stage)
             current = job
             do { try await store.upsert(job) }
-            catch { logger.warning("pause upsert failed: \(error)") }
+            catch { logger.warning("pause upsert failed: \(PathRedactor.redactHome("\(error)"))") }
         }
         if let c = inflightCancellable { await c.cancel() }
     }
@@ -208,7 +208,7 @@ public actor RefinementJobQueue {
                 regionIndex: nil, regionsTotal: nil)
             current = job
             do { try await store.upsert(job) }
-            catch { logger.warning("resume upsert failed: \(error)") }
+            catch { logger.warning("resume upsert failed: \(PathRedactor.redactHome("\(error)"))") }
         }
         await pauseGate.open()
         pumpIfIdle()

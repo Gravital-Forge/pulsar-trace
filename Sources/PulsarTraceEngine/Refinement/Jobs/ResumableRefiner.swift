@@ -121,14 +121,10 @@ public actor ResumableRefiner {
     /// safe to put in the progress file even if the underlying error rendered a
     /// filesystem path (Hard Invariant #7).
     ///
-    /// Order matters: `folder.path` is replaced first because it is a longer,
-    /// more-specific prefix than `NSHomeDirectory()` on a typical layout.
-    /// Replacing the home directory second is still correct because `<folder>`
-    /// doesn't contain `/Users/…`, so the second replacement never double-rewrites.
+    /// Thin wrapper over `PathRedactor.redact(_:folder:)` — kept so existing
+    /// callers (and the unit test in `ResumableRefinerTests`) keep working.
     static func redactPath(_ s: String, folder: URL) -> String {
-        var out = s.replacingOccurrences(of: folder.path, with: "<folder>")
-        out = out.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-        return out
+        PathRedactor.redact(s, folder: folder)
     }
 
     // MARK: - Stage helpers

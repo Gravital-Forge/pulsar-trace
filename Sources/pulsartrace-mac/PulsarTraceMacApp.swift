@@ -258,8 +258,8 @@ final class AppEnvironment {
                     folderURL: url, recordingId: recordingId,
                     modelName: modelName, modelSHA256: modelSHA256)
             } catch {
-                let msg = "pulsartrace-mac: auto-refine enqueue failed: \(error)\n"
-                    .replacingOccurrences(of: NSHomeDirectory(), with: "~")
+                let raw = "pulsartrace-mac: auto-refine enqueue failed: \(error)\n"
+                let msg = PathRedactor.redactHome(raw)
                 FileHandle.standardError.write(Data(msg.utf8))
             }
         }
