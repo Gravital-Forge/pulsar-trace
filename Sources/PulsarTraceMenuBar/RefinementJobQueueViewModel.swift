@@ -22,6 +22,15 @@ public final class RefinementJobQueueViewModel {
     /// short alert string; it is cleared by the next successful enqueue.
     public var lastEnqueueError: String?
 
+    /// Called once for each refinement job that transitions into a terminal
+    /// state (completed / failed / cancelled). Set by `AppEnvironment` to a
+    /// closure that re-scans the recordings list so a freshly-refined
+    /// recording flips from "Not yet refined" to the speaker/duration line
+    /// without a manual Refresh.
+    public var onJobTerminated: (@MainActor @Sendable (RefinementJob) -> Void)?
+
+    private var seenRecentIDs: Set<String> = []
+
     private var queue: RefinementJobQueue
     private var poller: Task<Void, Never>?
 
@@ -44,8 +53,13 @@ public final class RefinementJobQueueViewModel {
         let s = await queue.snapshot()
         running = s.running
         queued = s.queued
+        let newlyTerminated = s.recent.filter { !seenRecentIDs.contains($0.id) }
         recent = s.recent
+        seenRecentIDs = Set(s.recent.map { $0.id })
         pausedForRecording = s.pausedForRecording
+        if let cb = onJobTerminated {
+            for job in newlyTerminated { cb(job) }
+        }
     }
 
     deinit {

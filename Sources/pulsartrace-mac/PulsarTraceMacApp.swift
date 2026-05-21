@@ -242,6 +242,10 @@ final class AppEnvironment {
         let q = await RefinementJobQueue.makeStandard(events: events, paths: paths)
         self.queue = q
         await queueVM.setQueue(q)
+        queueVM.onJobTerminated = { [weak self] _ in
+            guard let self else { return }
+            Task { await self.scanner.refresh() }
+        }
     }
 
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).

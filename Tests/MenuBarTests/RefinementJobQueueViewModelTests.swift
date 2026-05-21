@@ -70,4 +70,39 @@ struct RefinementJobQueueViewModelTests {
                 "redactHome must strip the user's home directory from rendered errors")
         #expect(redacted.contains("~/Library/Foo"))
     }
+
+    @Test("onJobTerminated fires for every newly-completed job")
+    func onJobTerminatedFires() async throws {
+        let queue = RefinementJobQueue(store: tempStore(), runJob: { _ in })
+        let vm = RefinementJobQueueViewModel(queue: queue)
+        let fired = MainActorBox<[String]>(value: [])
+        vm.onJobTerminated = { @MainActor job in
+            fired.value.append(job.recordingId)
+        }
+        // Enqueue + let the worker drain (runJob is a no-op).
+        try await queue.enqueueAutoRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/a"),
+            recordingId: "rec_a", modelName: "stub", modelSHA256: "stub")
+        try await queue.enqueueAutoRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/b"),
+            recordingId: "rec_b", modelName: "stub", modelSHA256: "stub")
+        let deadline = Date().addingTimeInterval(2)
+        while await queue.snapshot().recent.count < 2, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        await vm.refresh()
+        // Both terminations observed exactly once.
+        #expect(fired.value.sorted() == ["rec_a", "rec_b"])
+
+        // A second refresh with no new terminal jobs must NOT re-fire.
+        fired.value.removeAll()
+        await vm.refresh()
+        #expect(fired.value.isEmpty)
+    }
+
+    /// Captures values across `@MainActor` boundaries in a test.
+    @MainActor private final class MainActorBox<T> {
+        var value: T
+        init(value: T) { self.value = value }
+    }
 }
