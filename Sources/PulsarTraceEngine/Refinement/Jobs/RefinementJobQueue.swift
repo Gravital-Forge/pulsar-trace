@@ -322,6 +322,13 @@ extension RefinementJobQueue {
         // early if the queue is ever deallocated (safe no-op).
         let queue = RefinementJobQueue(store: store, runJob: { _ in }, pauseGate: gate)
 
+        // Persistent speaker library — same path OfflineRefiner uses. A
+        // failure to open it is non-fatal: each job falls back to raw
+        // Speaker_N labels rather than the library names (R22/R23). The
+        // library actor is opened once and shared across jobs.
+        let library: SpeakerLibrary? = try? await SpeakerLibrary(
+            databaseURL: paths.speakersDatabaseURL, events: events)
+
         let runJob: RunJob = { [weak queue] job in
             guard let queue else { return }
             let modelStore = ModelStore(events: events)
@@ -370,6 +377,7 @@ extension RefinementJobQueue {
                 },
                 pauseGate: gate,
                 events: events,
+                library: library,
                 onStageUpdate: { [weak queue] state in
                     guard let queue else { return }
                     await queue.reportStage(state)

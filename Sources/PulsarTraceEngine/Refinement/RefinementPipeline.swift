@@ -750,13 +750,27 @@ public struct RefinementPipeline: Sendable {
 
     // MARK: - assembleAndWrite (public static entry point for ResumableRefiner)
 
+    /// Outcome of `assembleAndWrite`. Returned so the queue's
+    /// `ResumableRefiner.run` can include real speaker counts in its
+    /// `refinement_completed` event.
+    public struct AssembleResult: Sendable {
+        public let speakerCount: Int
+        public let speakersNew: Int
+        public let speakersMatched: Int
+        public let durationSeconds: Double
+    }
+
     /// The merge + write half of `run(_:)`, exposed so `ResumableRefiner` can
-    /// reuse it after assembling segments incrementally from a checkpoint file.
+    /// reuse it after assembling segments incrementally from a checkpoint
+    /// file.
     ///
-    /// Merges the system and mic segment arrays, applies diarization labels
-    /// (no speaker-library reconciliation — `ResumableRefiner` does not carry
-    /// a library reference), atomically writes `final.md`, and writes
-    /// `metadata.json`.
+    /// Now mirrors `RefinementPipeline.refine`'s tail: runs `SpeakerReconciler`
+    /// when a library is supplied (so queue-driven refines get real speaker
+    /// names instead of Speaker_N), writes `final.md` + `metadata.json`
+    /// atomically, and emits `final_md_written` / `final_md_rewritten` /
+    /// `live_md_replaced_by_final` events in causal order with on-disk effects
+    /// (Hard Invariant #8). Returns an `AssembleResult` carrying the counts
+    /// the caller needs for `refinement_completed`.
     ///
     /// This method is NOT a stable public API — it exists for the in-process
     /// queue worker. The `pulsartrace refine` CLI continues to call `run(_:)`.
@@ -769,26 +783,67 @@ public struct RefinementPipeline: Sendable {
         whisperModelName: String,
         whisperModelSHA256: String,
         recordingStart: Date,
-        sourceBasename: String
-    ) throws {
-        // 1. Merge system + mic segments; apply diarization (no library reconciliation).
+        sourceBasename: String,
+        library: SpeakerLibrary? = nil,
+        refinedAt: Date = Date(),
+        events: EventWriter? = nil
+    ) async throws -> AssembleResult {
+        // 1. Reconcile against the speaker library when one is supplied.
+        //    A reconciler failure must not lose a refine — fall back to
+        //    raw Speaker_N labels (matches RefinementPipeline.refine).
+        var reconciliation: SpeakerReconciler.Outcome?
+        if let library, let diarization {
+            do {
+                reconciliation = try await SpeakerReconciler(library: library)
+                    .reconcile(
+                        diarization: diarization,
+                        recordingId: folder.recordingId,
+                        recordingFolderName: folder.directory.lastPathComponent)
+            } catch {
+                reconciliation = nil
+            }
+        }
+
+        // 2. Merge system + mic segments; apply diarization + reconciliation.
         let merged = mergeStreams(
             systemSegments: systemSegments,
             diarization: diarization,
-            reconciliation: nil,
+            reconciliation: reconciliation,
             micSegments: micSegments.isEmpty ? nil : micSegments,
             recordingStart: recordingStart)
 
-        // 2. Write final.md atomically.
+        // 3. Write final.md atomically, recording whether a prior final.md
+        //    existed (so the right event variant is emitted below) and
+        //    whether a live.md was renamed.
+        let finalExistedBefore = FileManager.default.fileExists(
+            atPath: folder.finalURL.path)
         let markdown = merged.document.render()
-        _ = try writeFinalMarkdown(markdown, folder: folder)
+        let writeResult = try writeFinalMarkdown(markdown, folder: folder)
 
-        // 3. Compute audio duration from the segments (best-effort: last end timestamp).
+        // 4. File events — emit in disk-effect order (Hard Invariant #8).
+        if finalExistedBefore {
+            _ = try? await events?.append(FinalMDRewrittenEvent(
+                recordingId: folder.recordingId,
+                pathBasename: RecordingFolder.FileName.final,
+                sha256: writeResult.sha256,
+                reason: "re_refine"))
+        } else {
+            _ = try? await events?.append(FinalMDWrittenEvent(
+                recordingId: folder.recordingId,
+                pathBasename: RecordingFolder.FileName.final,
+                sha256: writeResult.sha256))
+        }
+        if writeResult.replacedLiveMD {
+            _ = try? await events?.append(
+                LiveMDReplacedByFinalEvent(recordingId: folder.recordingId))
+        }
+
+        // 5. Compute duration from the segments (best-effort: last end ts).
         let systemEnd = systemSegments.last?.end.seconds ?? 0.0
         let micEnd = micSegments.last?.end.seconds ?? 0.0
         let audioDurationSeconds = max(systemEnd, micEnd)
 
-        // 4. Write metadata.json.
+        // 6. Write metadata.json.
         let metadata = buildMetadata(
             folder: folder,
             speakers: merged.speakers,
@@ -796,11 +851,17 @@ public struct RefinementPipeline: Sendable {
             language: language,
             diarization: diarization,
             recordingStart: recordingStart,
-            refinedAt: Date(),
+            refinedAt: refinedAt,
             whisperModelName: whisperModelName,
             whisperModelSHA256: whisperModelSHA256,
             sourceBasename: sourceBasename,
             audioDurationSeconds: audioDurationSeconds)
         try AtomicFile.write(try metadata.encoded(), to: folder.metadataURL)
+
+        return AssembleResult(
+            speakerCount: merged.speakers.count,
+            speakersNew: reconciliation?.newCount ?? merged.speakers.count,
+            speakersMatched: reconciliation?.matchedCount ?? 0,
+            durationSeconds: audioDurationSeconds)
     }
 }

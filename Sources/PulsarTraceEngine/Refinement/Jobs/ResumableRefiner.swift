@@ -31,6 +31,10 @@ public actor ResumableRefiner {
     private let diarize: Diarize
     private let pauseGate: PauseGate
     private let events: EventWriter?
+    /// Persistent speaker library used by `mergeAndWrite` for reconciliation
+    /// (R22, R23). `nil` keeps the raw `Speaker_N` labels — the queue's
+    /// `makeStandard` opens a real library and passes it in for production.
+    private let library: SpeakerLibrary?
     private let reportState: StageReporter?
     private let logger: Logger
 
@@ -40,6 +44,7 @@ public actor ResumableRefiner {
         diarize: @escaping Diarize,
         pauseGate: PauseGate,
         events: EventWriter?,
+        library: SpeakerLibrary? = nil,
         onStageUpdate: StageReporter? = nil,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
@@ -48,6 +53,7 @@ public actor ResumableRefiner {
         self.diarize = diarize
         self.pauseGate = pauseGate
         self.events = events
+        self.library = library
         self.reportState = onStageUpdate
         self.logger = logger
     }
@@ -85,21 +91,16 @@ public actor ResumableRefiner {
             try await advance(&progress, to: .merging, folder: folder)
             try await advance(&progress, to: .writingFinal, folder: folder)
             try await advance(&progress, to: .writingMetadata, folder: folder)
-            try mergeAndWrite(folder: folder, progress: progress, diarization: diarization, job: job)
+            let assembled = try await mergeAndWrite(
+                folder: folder, progress: progress, diarization: diarization, job: job)
 
-            // refinement_completed — emitted after mergeAndWrite returns,
-            // so by the time the event lands every output file is durable.
             let wallSeconds = Date().timeIntervalSince(startedAt)
-            // Speaker count from the in-memory diarization, since this path
-            // does not yet reconcile against the library (Task 11). The
-            // speakers_new / speakers_matched fields land in Task 11.
-            let speakerCount = diarization?.speakers.count ?? 0
             _ = try? await events?.append(RefinementCompletedEvent(
                 recordingId: job.recordingId,
                 durationSeconds: wallSeconds,
-                speakersIdentified: speakerCount,
-                speakersNew: speakerCount,
-                speakersMatched: 0))
+                speakersIdentified: assembled.speakerCount,
+                speakersNew: assembled.speakersNew,
+                speakersMatched: assembled.speakersMatched))
         } catch {
             progress.lastError = Self.redactPath(
                 "\(type(of: error)): \(error)",
@@ -268,12 +269,13 @@ public actor ResumableRefiner {
 
     // MARK: - Final assembly
 
+    @discardableResult
     private func mergeAndWrite(
         folder: RecordingFolder,
         progress: RefinementProgress,
         diarization: DiarizationResult?,
         job: RefinementJob
-    ) throws {
+    ) async throws -> RefinementPipeline.AssembleResult {
         let system = progress.systemSegments.map {
             TranscriptSegment(
                 start: .milliseconds($0.startMillis),
@@ -288,7 +290,7 @@ public actor ResumableRefiner {
         }
         let folderName = folder.directory.lastPathComponent
         let recordingStart = RecordingFolderTimestamp.parse(folderName) ?? Date()
-        try RefinementPipeline.assembleAndWrite(
+        return try await RefinementPipeline.assembleAndWrite(
             folder: folder,
             systemSegments: system,
             micSegments: mic,
@@ -297,7 +299,10 @@ public actor ResumableRefiner {
             whisperModelName: job.modelName,
             whisperModelSHA256: job.modelSHA256,
             recordingStart: recordingStart,
-            sourceBasename: folder.systemStream.url.lastPathComponent)
+            sourceBasename: folder.systemStream.url.lastPathComponent,
+            library: library,
+            refinedAt: Date(),
+            events: events)
     }
 
     // MARK: - Conversions

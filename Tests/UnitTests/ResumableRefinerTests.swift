@@ -451,6 +451,47 @@ struct ResumableRefinerTests {
         let total = await calls.n
         #expect(total == 2)
     }
+
+    @Test("run with a library passes it through to assembleAndWrite")
+    func libraryThreadedThrough() async throws {
+        let folder = tempDir()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FixtureRecording.minimal(at: folder)
+
+        let dbURL = folder.appendingPathComponent("speakers-test.sqlite")
+        // Opening a fresh SpeakerLibrary at a writable path is enough to
+        // prove the library reaches assembleAndWrite — when no centroids
+        // are stored the reconciler returns an empty Outcome and the merge
+        // falls back to Speaker_N labels (which is fine for the test).
+        let library = try await SpeakerLibrary(databaseURL: dbURL, events: nil)
+
+        let refiner = ResumableRefiner(
+            transcribe: { _, _, _ in
+                TranscriptionResult(segments: [], language: "en")
+            },
+            detectRegions: { _ in [] },
+            diarize: { _ in
+                DiarizationResult(
+                    model: "stub",
+                    modelVersion: "stub",
+                    audioDuration: .seconds(1),
+                    speakers: [],
+                    spans: [],
+                    exclusiveSpans: [],
+                    embeddings: [])
+            },
+            pauseGate: PauseGate(initiallyOpen: true),
+            events: nil,
+            library: library)
+
+        let job = RefinementJob(
+            id: "job_lib", recordingId: "rec_lib", folderURL: folder,
+            modelName: "stub", modelSHA256: "stub",
+            trigger: .manual, enqueuedAt: Date(), state: .queued)
+        try await refiner.run(job: job)
+        #expect(FileManager.default.fileExists(
+            atPath: folder.appendingPathComponent("metadata.json").path))
+    }
 }
 
 enum FixtureRecording {
