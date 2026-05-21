@@ -40,100 +40,223 @@ struct TranscriptView: View {
     }
 }
 
-/// Smart-auto-scrolling variant used by the live-transcript window.
+/// Smart-auto-scrolling variant used by the live-transcript window (R45).
 ///
-/// Layout:
-/// - Outer `GeometryReader` → viewport height.
-/// - `ScrollViewReader` → programmatic scroll to the bottom anchor.
-/// - `ScrollView` with a named coordinate space → inner `GeometryReader`
-///   measures content `maxY` in that space.
-/// - A 1pt-tall `Color.clear` anchor at the end of the content is the
-///   `scrollTo` target.
-/// - Distance from bottom = `inner.maxY - outerHeight`; this is fed to
-///   the controller on every preference change.
-/// - On `lines.count` growth the controller decides whether to scroll.
-/// - When `controller.shouldFollow == false && controller.pendingNewLines > 0`,
-///   a "Jump to latest ↓ N" pill is shown bottom-trailing in the scroll area.
+/// Wraps the live-transcript ScrollView and the "Jump to latest" pill. The
+/// scroll view itself is `LiveScrollableTranscript` — an NSScrollView-backed
+/// `NSViewRepresentable` so we can read the user's scroll position
+/// *synchronously, before the new text lays out*. That's the algorithm the
+/// user asked for: "before the new line is scheduled to render, is the user
+/// at the bottom? If yes, keep them at the bottom."
 private struct SmartScrollingTranscript: View {
     let lines: [String]
     let controller: AutoScrollController
 
-    /// Tracks the line count we already reacted to so we can compute deltas.
-    @State private var lastSeenLineCount: Int = 0
-
-    private static let bottomAnchorID = "pulsartrace.transcript.bottom"
-    private static let coordSpace = "pulsartrace.transcript.scroll"
-
     var body: some View {
-        GeometryReader { outerGeo in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(lines.joined(separator: "\n"))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                        Color.clear
-                            .frame(height: 1)
-                            .id(Self.bottomAnchorID)
-                    }
-                    .background(
-                        GeometryReader { innerGeo in
-                            let maxY = innerGeo
-                                .frame(in: .named(Self.coordSpace))
-                                .maxY
-                            Color.clear.preference(
-                                key: DistanceFromBottomKey.self,
-                                value: maxY - outerGeo.size.height
-                            )
-                        }
-                    )
-                }
-                .coordinateSpace(name: Self.coordSpace)
-                .onPreferenceChange(DistanceFromBottomKey.self) { distance in
-                    controller.updateDistanceFromBottom(distance)
-                }
-                .onChange(of: lines.count) { _, newCount in
-                    let delta = newCount - lastSeenLineCount
-                    lastSeenLineCount = newCount
-                    if controller.linesDidGrow(by: delta) {
-                        // Snap, don't animate: each new line is a small move
-                        // and an animation here fights the transient distance
-                        // bump (animations cascade through SwiftUI transactions
-                        // and can produce a visible scroll snap-back).
-                        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                    }
-                }
-                .onAppear {
-                    lastSeenLineCount = lines.count
-                    if lines.count > 0 {
-                        // The user's intent on opening the window is "show me
-                        // the latest" — reset to follow-mode in case an early
-                        // preference-update flipped shouldFollow before this
-                        // ran, then jump to bottom without animation.
+        ZStack(alignment: .bottomTrailing) {
+            LiveScrollableTranscript(lines: lines, controller: controller)
+
+            // Pill is overlaid on the scroll area. Animation modifiers are
+            // scoped to this Group so they can't cascade into the scroll
+            // view's content (which would animate the scroll position).
+            Group {
+                if !controller.isAtBottom, controller.pendingNewLines > 0 {
+                    JumpToLatestPill(count: controller.pendingNewLines) {
                         controller.jumpToLatest()
-                        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                     }
+                    .padding(12)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                .overlay(alignment: .bottomTrailing) {
-                    // Animations are scoped to this overlay so they cannot
-                    // cascade into the ScrollView's content (where they would
-                    // animate the scroll position itself).
-                    Group {
-                        if !controller.shouldFollow, controller.pendingNewLines > 0 {
-                            JumpToLatestPill(count: controller.pendingNewLines) {
-                                controller.jumpToLatest()
-                                withAnimation(.easeOut(duration: 0.15)) {
-                                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                                }
-                            }
-                            .padding(12)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        }
-                    }
-                    .animation(.easeOut(duration: 0.15), value: controller.shouldFollow)
-                    .animation(.easeOut(duration: 0.15), value: controller.pendingNewLines)
+            }
+            .animation(.easeOut(duration: 0.15), value: controller.isAtBottom)
+            .animation(.easeOut(duration: 0.15), value: controller.pendingNewLines)
+        }
+    }
+}
+
+/// NSScrollView-backed transcript view. Owns the "before-render" check: each
+/// time `updateNSView` runs (called with the new `lines` but *before* the
+/// underlying NSTextView's string has been replaced), we sample the
+/// `NSScrollView`'s current scroll offset to see if the user was at the
+/// bottom. If yes, we set the new text and scroll to the new bottom. If no,
+/// we set the new text and leave the scroll position alone, telling the
+/// controller to bump `pendingNewLines` so the pill appears.
+///
+/// Why NSScrollView and not pure SwiftUI: in SwiftUI, `GeometryReader` and
+/// `PreferenceKey` fire *after* layout. By the time we'd get the new
+/// distance-from-bottom, the new line has already been laid out, and the
+/// transient content-growth bump makes the "is user at bottom?" question
+/// unanswerable from geometry alone. NSScrollView gives us a synchronous
+/// read of the *current* scroll position, sampled at exactly the right
+/// moment.
+private struct LiveScrollableTranscript: NSViewRepresentable {
+    let lines: [String]
+    let controller: AutoScrollController
+
+    /// "Essentially at the bottom" — within ~half a line-height (body font is
+    /// ~18pt by default, so 8pt is well under a line). Strict on purpose:
+    /// the user only wants follow-mode when they are at the bottom.
+    private static let bottomThreshold: CGFloat = 8
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(controller: controller)
+    }
+
+    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        coordinator.stopObserving()
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        textView.string = lines.joined(separator: "\n")
+
+        scrollView.documentView = textView
+
+        // Subscribe to live scroll notifications so we can keep the
+        // controller's `isAtBottom` in sync with the user's actual position.
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        context.coordinator.observe(scrollView: scrollView, threshold: Self.bottomThreshold)
+        context.coordinator.lastSeenLineCount = lines.count
+
+        // Open at the bottom — user's intent is "show me the latest." We
+        // need to wait one runloop turn so the text view has finished
+        // laying out before we can compute the bottom.
+        DispatchQueue.main.async {
+            Self.scrollToBottom(in: scrollView, animated: false)
+            controller.setIsAtBottom(true)
+        }
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+
+        let newText = lines.joined(separator: "\n")
+        let textChanged = textView.string != newText
+
+        // ---- The before-render check the user asked for ----
+        // Sample NOW, with the OLD text still in place.
+        let wasAtBottom = Self.isAtBottom(in: scrollView, threshold: Self.bottomThreshold)
+        // -----------------------------------------------------
+
+        if textChanged {
+            let oldLineCount = context.coordinator.lastSeenLineCount
+            textView.string = newText
+            // Force layout so the document view's frame reflects the new
+            // text before we measure or scroll.
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            context.coordinator.lastSeenLineCount = lines.count
+
+            if wasAtBottom {
+                // Keep the user at the bottom.
+                Self.scrollToBottom(in: scrollView, animated: false)
+                controller.setIsAtBottom(true)
+            } else {
+                let delta = lines.count - oldLineCount
+                controller.notePendingNewLines(delta)
+            }
+        }
+
+        // Process explicit "Jump to latest" requests from the controller.
+        // The controller bumps `jumpToLatestGeneration` each time; we
+        // animate a scroll-to-bottom the first time we see a new value.
+        if context.coordinator.lastSeenJumpGeneration != controller.jumpToLatestGeneration {
+            context.coordinator.lastSeenJumpGeneration = controller.jumpToLatestGeneration
+            Self.scrollToBottom(in: scrollView, animated: true)
+            controller.setIsAtBottom(true)
+        }
+    }
+
+    /// Distance from content bottom to viewport bottom (in points) is
+    /// `docHeight - (scrollOffset + viewportHeight)`. Within
+    /// `threshold` ⇒ at the bottom.
+    static func isAtBottom(in scrollView: NSScrollView, threshold: CGFloat) -> Bool {
+        guard let documentView = scrollView.documentView else { return true }
+        let docHeight = documentView.frame.height
+        let viewportHeight = scrollView.contentView.bounds.height
+        let offset = scrollView.contentView.bounds.origin.y
+        let distance = docHeight - (offset + viewportHeight)
+        return distance <= threshold
+    }
+
+    static func scrollToBottom(in scrollView: NSScrollView, animated: Bool) {
+        guard let documentView = scrollView.documentView else { return }
+        let maxY = max(0, documentView.frame.height - scrollView.contentView.bounds.height)
+        let target = NSPoint(x: 0, y: maxY)
+        if animated {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                ctx.allowsImplicitAnimation = true
+                scrollView.contentView.animator().setBoundsOrigin(target)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        } else {
+            scrollView.contentView.setBoundsOrigin(target)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
+    @MainActor
+    final class Coordinator {
+        private let controller: AutoScrollController
+        private var scrollObserver: NSObjectProtocol?
+        var lastSeenLineCount: Int = 0
+        var lastSeenJumpGeneration: Int = 0
+
+        init(controller: AutoScrollController) {
+            self.controller = controller
+        }
+
+        func observe(scrollView: NSScrollView, threshold: CGFloat) {
+            let controller = controller
+            scrollObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak scrollView] _ in
+                guard let scrollView else { return }
+                MainActor.assumeIsolated {
+                    let atBottom = LiveScrollableTranscript.isAtBottom(
+                        in: scrollView,
+                        threshold: threshold)
+                    controller.setIsAtBottom(atBottom)
                 }
+            }
+        }
+
+        /// Called from `dismantleNSView` — runs on the main actor so we can
+        /// safely touch `scrollObserver` (Swift 6.2 strict concurrency rules
+        /// out doing this from `deinit`, which is nonisolated).
+        func stopObserving() {
+            if let token = scrollObserver {
+                NotificationCenter.default.removeObserver(token)
+                scrollObserver = nil
             }
         }
     }
@@ -162,16 +285,6 @@ private struct JumpToLatestPill: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Jump to latest, \(count) new lines")
-    }
-}
-
-/// SwiftUI `PreferenceKey` carrying distance from content bottom to viewport
-/// bottom (in points). Positive = content extends below visible area; zero or
-/// negative = content fits or is fully scrolled.
-private struct DistanceFromBottomKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 
