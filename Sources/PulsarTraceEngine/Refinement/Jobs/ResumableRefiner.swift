@@ -261,6 +261,8 @@ public actor ResumableRefiner {
                 end: .milliseconds($0.endMillis),
                 text: $0.text)
         }
+        let folderName = folder.directory.lastPathComponent
+        let recordingStart = RecordingFolderTimestamp.parse(folderName) ?? Date()
         try RefinementPipeline.assembleAndWrite(
             folder: folder,
             systemSegments: system,
@@ -269,7 +271,7 @@ public actor ResumableRefiner {
             language: progress.language ?? "unknown",
             whisperModelName: job.modelName,
             whisperModelSHA256: job.modelSHA256,
-            recordingStart: Date(),
+            recordingStart: recordingStart,
             sourceBasename: folder.systemStream.url.lastPathComponent)
     }
 
