@@ -22,12 +22,17 @@ public final class RefinementJobQueueViewModel {
     /// short alert string; it is cleared by the next successful enqueue.
     public var lastEnqueueError: String?
 
-    /// Called once for each refinement job that transitions into a terminal
-    /// state (completed / failed / cancelled). Set by `AppEnvironment` to a
-    /// closure that re-scans the recordings list so a freshly-refined
-    /// recording flips from "Not yet refined" to the speaker/duration line
-    /// without a manual Refresh.
-    public var onJobTerminated: (@MainActor @Sendable (RefinementJob) -> Void)?
+    /// Called once per `refresh()` tick with every refinement job that
+    /// transitioned into a terminal state (completed / failed / cancelled)
+    /// since the previous tick. Set by `AppEnvironment` to a closure that
+    /// re-scans the recordings list so a freshly-refined recording flips
+    /// from "Not yet refined" to the speaker/duration line without a manual
+    /// Refresh.
+    ///
+    /// Batched (per-tick, not per-job) so a burst drain — N terminations in
+    /// one 250 ms poll — triggers exactly one consumer-side reaction rather
+    /// than N parallel ones.
+    public var onJobsTerminated: (@MainActor @Sendable ([RefinementJob]) -> Void)?
 
     private var seenRecentIDs: Set<String> = []
 
@@ -43,22 +48,39 @@ public final class RefinementJobQueueViewModel {
     /// `AppEnvironment` initialises `queueVM` with a placeholder queue and
     /// calls this from `bootstrap()` once `makeStandard` completes, so the
     /// environment object is always non-optional.
-    public func setQueue(_ queue: RefinementJobQueue) async {
-        self.queue = queue
-        await refresh()
+    ///
+    /// Primes `seenRecentIDs` from the queue's persisted terminal jobs
+    /// before any callback could possibly fire, so `onJobsTerminated` is
+    /// NOT invoked for jobs that completed before this VM was wired up.
+    /// Doing this inside `setQueue` (instead of relying on `onJobsTerminated`
+    /// happening to still be `nil` at the call site) makes the invariant
+    /// structural — a future refactor that hoists callback assignment above
+    /// `setQueue` in `bootstrap()` cannot regress it.
+    public func setQueue(_ newQueue: RefinementJobQueue) async {
+        self.queue = newQueue
+        let s = await newQueue.snapshot()
+        running = s.running
+        queued = s.queued
+        recent = s.recent
+        seenRecentIDs = Set(s.recent.map { $0.id })
+        pausedForRecording = s.pausedForRecording
     }
 
-    /// Re-read the queue once.
+    /// Re-read the queue once. Fires `onJobsTerminated` at most once per
+    /// tick, with every job that became terminal since the previous tick.
     public func refresh() async {
         let s = await queue.snapshot()
         running = s.running
         queued = s.queued
+        // Diff against the prior tick's terminal-id set so each completion
+        // surfaces exactly once. `seenRecentIDs` is reseeded from `s.recent`
+        // (capped at 100 by the queue), so it cannot grow unbounded.
         let newlyTerminated = s.recent.filter { !seenRecentIDs.contains($0.id) }
         recent = s.recent
         seenRecentIDs = Set(s.recent.map { $0.id })
         pausedForRecording = s.pausedForRecording
-        if let cb = onJobTerminated {
-            for job in newlyTerminated { cb(job) }
+        if !newlyTerminated.isEmpty {
+            onJobsTerminated?(newlyTerminated)
         }
     }
 
