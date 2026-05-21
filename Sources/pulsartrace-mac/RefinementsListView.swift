@@ -34,8 +34,12 @@ struct RefinementsListView: View {
                 EmptyStateRow()
             }
         }
-        .task { queue.startPolling() }
-        .onDisappear { queue.stopPolling() }
+        // Polling is started once by AppEnvironment.bootstrap for the whole
+        // process lifetime — the menubar dropdown and the recordings list
+        // both bind to this VM, so they need fresh data even when this pane
+        // is not visible. The Refresh button forces an immediate refresh
+        // instead of waiting for the next 250 ms tick.
+        //
         // A window toolbar so this pane's split-view chrome (corner rounding,
         // sidebar extent) matches the Recordings and Speakers panes — those
         // carry a toolbar; a pane without one renders different chrome.
@@ -43,7 +47,7 @@ struct RefinementsListView: View {
         .toolbar {
             ToolbarItem {
                 Button {
-                    Task { queue.startPolling() }
+                    Task { await queue.refresh() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }

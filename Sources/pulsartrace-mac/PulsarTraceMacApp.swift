@@ -246,6 +246,11 @@ final class AppEnvironment {
             guard let self else { return }
             Task { await self.scanner.refresh() }
         }
+        // Single process-wide poller. The menubar dropdown and the
+        // recordings-list RefineBadge both read from queueVM; before this
+        // change polling only ran while RefinementsListView was visible,
+        // so those two surfaces were stale.
+        queueVM.startPolling()
     }
 
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).
