@@ -93,6 +93,46 @@ private final class AsyncCallBox: @unchecked Sendable {
     }
 }
 
+/// One-shot async gate. `wait()` suspends until `signal()` is called; once
+/// signalled, every later `wait()` returns immediately. Used by
+/// AppEnvironment to block auto-refine enqueues until `bootstrap` has
+/// installed the real `RefinementJobQueue`.
+///
+/// `@unchecked Sendable`: the lock protects `signalled` and `waiters` from
+/// concurrent access; everything mutates inside `lock.withLock`.
+private final class QueueReadyGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var signalled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func signal() {
+        let toResume: [CheckedContinuation<Void, Never>] = lock.withLock {
+            guard !signalled else { return [] }
+            signalled = true
+            let w = waiters
+            waiters.removeAll()
+            return w
+        }
+        for c in toResume { c.resume() }
+    }
+
+    func wait() async {
+        let alreadySignalled: Bool = lock.withLock {
+            if signalled { return true }
+            return false
+        }
+        if alreadySignalled { return }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let resumeImmediately: Bool = lock.withLock {
+                if signalled { return true }
+                waiters.append(c)
+                return false
+            }
+            if resumeImmediately { c.resume() }
+        }
+    }
+}
+
 /// Owns the long-lived ViewModels + the global-hotkey monitor.
 @MainActor
 @Observable
@@ -119,6 +159,12 @@ final class AppEnvironment {
     /// calls throughout. This matches the existing `events.bootstrap()` pattern:
     /// async setup is deferred to an `App.task { }`, keeping `init()` sync.
     private(set) var queue: RefinementJobQueue? = nil
+
+    /// Gate that opens once `bootstrap()` has installed the real queue. The
+    /// `enqueueBox.impl` closure awaits this before reading `self.queue`, so
+    /// a stop-recording that lands during bootstrap still gets its auto-
+    /// refine enqueued instead of silently dropping (race fix).
+    private let queueReady = QueueReadyGate()
 
     /// Main-actor façade over `queue` — always non-optional (E2). Initialised
     /// with a placeholder (noop) queue in `init()`; `bootstrap()` swaps in the
@@ -188,6 +234,13 @@ final class AppEnvironment {
         // Wire the real implementations into the boxes. Closures hop to MainActor
         // to read @MainActor-isolated state before crossing into the queue actor.
         enqueueBox.impl = { [weak self] url, recordingId in
+            // Wait for bootstrap() to install the real queue. If
+            // AppEnvironment is torn down before bootstrap completes, the
+            // weak self below evaluates to nil and the closure exits.
+            let gateOpt: QueueReadyGate? = await MainActor.run { self?.queueReady }
+            guard let gate = gateOpt else { return }
+            await gate.wait()
+
             let pair: (RefinementJobQueue, String, String)? =
                 await MainActor.run {
                     guard let self, let queue = self.queue else { return nil }
@@ -196,11 +249,8 @@ final class AppEnvironment {
                     return (queue, model.name, model.sha256)
                 }
             guard let (queue, modelName, modelSHA256) = pair else {
-                // Bootstrap race window — covered properly by Task 9. For
-                // now: explicit log instead of a silent drop so the gap is
-                // visible until Task 9 closes it.
                 FileHandle.standardError.write(
-                    Data("pulsartrace-mac: auto-refine dropped — queue not yet ready\n".utf8))
+                    Data("pulsartrace-mac: auto-refine dropped — queue gone after bootstrap\n".utf8))
                 return
             }
             do {
@@ -251,6 +301,7 @@ final class AppEnvironment {
         // change polling only ran while RefinementsListView was visible,
         // so those two surfaces were stale.
         queueVM.startPolling()
+        queueReady.signal()
     }
 
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).
