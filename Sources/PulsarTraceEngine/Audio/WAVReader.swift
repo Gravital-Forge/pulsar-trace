@@ -143,4 +143,61 @@ public struct WAVReader {
         self.sampleRate = rate
         self.samples = mono
     }
+
+    /// Read just enough of `url`'s header to derive audio duration in seconds
+    /// without decoding any samples. Returns `nil` if the file is missing, the
+    /// header cannot be parsed, or the format is too unusual to size from
+    /// chunk headers alone.
+    ///
+    /// Used by `Diarizer` to scale its subprocess timeout to recording length
+    /// — see `Diarizer.diarizeSystemStream`. Cheap because it reads only a
+    /// small window of bytes regardless of file size (a 4 KB cap is plenty
+    /// for the `fmt ` and `data` chunk headers in any normal WAV).
+    public static func probeDurationSeconds(at url: URL) -> Double? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 4096), head.count >= 12 else {
+            return nil
+        }
+        guard head.starts(with: Array("RIFF".utf8)) else { return nil }
+        guard head[8..<12].elementsEqual(Array("WAVE".utf8)) else { return nil }
+
+        func u16(_ o: Int) -> UInt16? {
+            guard o + 2 <= head.count else { return nil }
+            return UInt16(head[o]) | (UInt16(head[o + 1]) << 8)
+        }
+        func u32(_ o: Int) -> UInt32? {
+            guard o + 4 <= head.count else { return nil }
+            return UInt32(head[o]) | (UInt32(head[o + 1]) << 8)
+                | (UInt32(head[o + 2]) << 16) | (UInt32(head[o + 3]) << 24)
+        }
+
+        var channels: UInt16 = 0
+        var rate: UInt32 = 0
+        var bitsPerSample: UInt16 = 0
+        var dataBytes: UInt32 = 0
+
+        var cursor = 12
+        while cursor + 8 <= head.count {
+            let id = String(decoding: head[cursor..<cursor + 4], as: UTF8.self)
+            guard let size = u32(cursor + 4) else { break }
+            let body = cursor + 8
+            if id == "fmt " {
+                channels = u16(body + 2) ?? 0
+                rate = u32(body + 4) ?? 0
+                bitsPerSample = u16(body + 14) ?? 0
+            } else if id == "data" {
+                dataBytes = size
+                break
+            }
+            // Chunks are word-aligned: skip a pad byte on odd length.
+            cursor = body + Int(size) + (Int(size) % 2)
+        }
+        guard channels > 0, rate > 0, bitsPerSample > 0, dataBytes > 0 else {
+            return nil
+        }
+        let bytesPerSecond = Double(rate) * Double(channels) * Double(bitsPerSample / 8)
+        guard bytesPerSecond > 0 else { return nil }
+        return Double(dataBytes) / bytesPerSecond
+    }
 }
