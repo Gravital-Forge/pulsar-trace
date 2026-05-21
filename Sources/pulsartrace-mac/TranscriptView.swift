@@ -97,34 +97,43 @@ private struct SmartScrollingTranscript: View {
                     let delta = newCount - lastSeenLineCount
                     lastSeenLineCount = newCount
                     if controller.linesDidGrow(by: delta) {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                        }
+                        // Snap, don't animate: each new line is a small move
+                        // and an animation here fights the transient distance
+                        // bump (animations cascade through SwiftUI transactions
+                        // and can produce a visible scroll snap-back).
+                        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                     }
                 }
                 .onAppear {
                     lastSeenLineCount = lines.count
-                    if controller.shouldFollow, lines.count > 0 {
-                        // First paint with existing content — jump to bottom
-                        // without animation so the window opens already
-                        // showing the latest lines.
+                    if lines.count > 0 {
+                        // The user's intent on opening the window is "show me
+                        // the latest" — reset to follow-mode in case an early
+                        // preference-update flipped shouldFollow before this
+                        // ran, then jump to bottom without animation.
+                        controller.jumpToLatest()
                         proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if !controller.shouldFollow, controller.pendingNewLines > 0 {
-                        JumpToLatestPill(count: controller.pendingNewLines) {
-                            controller.jumpToLatest()
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                    // Animations are scoped to this overlay so they cannot
+                    // cascade into the ScrollView's content (where they would
+                    // animate the scroll position itself).
+                    Group {
+                        if !controller.shouldFollow, controller.pendingNewLines > 0 {
+                            JumpToLatestPill(count: controller.pendingNewLines) {
+                                controller.jumpToLatest()
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                }
                             }
+                            .padding(12)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
-                        .padding(12)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
+                    .animation(.easeOut(duration: 0.15), value: controller.shouldFollow)
+                    .animation(.easeOut(duration: 0.15), value: controller.pendingNewLines)
                 }
-                .animation(.easeOut(duration: 0.15), value: controller.shouldFollow)
-                .animation(.easeOut(duration: 0.15), value: controller.pendingNewLines)
             }
         }
     }
