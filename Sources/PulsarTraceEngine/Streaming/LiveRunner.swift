@@ -51,6 +51,15 @@ final class LiveRunner: Sendable {
     /// The ticker child task's heartbeat interval.
     static let defaultTickInterval: Duration = .seconds(1)
 
+    /// Phase-tracker heartbeat cadence (`LiveRunnerPhaseTracker.runHeartbeat`).
+    /// Diagnostic only — picks up a wedged run loop within one tick.
+    static let defaultPhaseHeartbeatInterval: Duration = .seconds(2)
+
+    /// Phase-tracker threshold — log when the current phase has been active
+    /// at least this long. Matches the heartbeat cadence so a wedged phase
+    /// reports on the first tick after it crosses 2 s.
+    static let defaultPhaseHeartbeatThreshold: Duration = .seconds(2)
+
     private let configuration: StreamingPipeline.Configuration
     private let writer: LiveMarkdownWriter
     private let logger: Logger
@@ -64,6 +73,11 @@ final class LiveRunner: Sendable {
     private let silenceGapThreshold: Duration
     /// Ticker heartbeat interval. Defaults to `defaultTickInterval`.
     private let tickInterval: Duration
+    /// Phase-tracker heartbeat interval. Defaults to
+    /// `defaultPhaseHeartbeatInterval`. Tests inject a short value.
+    private let phaseHeartbeatInterval: Duration
+    /// Phase-tracker threshold. Defaults to `defaultPhaseHeartbeatThreshold`.
+    private let phaseHeartbeatThreshold: Duration
 
     init(
         configuration: StreamingPipeline.Configuration,
@@ -72,7 +86,9 @@ final class LiveRunner: Sendable {
         library: SpeakerLibrary?,
         diarBufferProbe: (@Sendable (Int) -> Void)? = nil,
         silenceGapThreshold: Duration = LiveRunner.defaultSilenceGapThreshold,
-        tickInterval: Duration = LiveRunner.defaultTickInterval
+        tickInterval: Duration = LiveRunner.defaultTickInterval,
+        phaseHeartbeatInterval: Duration = LiveRunner.defaultPhaseHeartbeatInterval,
+        phaseHeartbeatThreshold: Duration = LiveRunner.defaultPhaseHeartbeatThreshold
     ) {
         self.configuration = configuration
         self.writer = writer
@@ -81,6 +97,8 @@ final class LiveRunner: Sendable {
         self.diarBufferProbe = diarBufferProbe
         self.silenceGapThreshold = silenceGapThreshold
         self.tickInterval = tickInterval
+        self.phaseHeartbeatInterval = phaseHeartbeatInterval
+        self.phaseHeartbeatThreshold = phaseHeartbeatThreshold
     }
 
     func run(
@@ -218,11 +236,35 @@ final class LiveRunner: Sendable {
         // diarizer's window is sliced from this, not the trimmed `diarBuffer`.
         var diarTotalSamples: Int { diarBufferBase + diarBuffer.count }
 
+        // --- diagnostic phase tracker + heartbeat ---------------------------
+        // Records the current step of the run loop so a background task can
+        // log a warning whenever a single phase has been active longer than
+        // the threshold — making a wedged `await` (the suspected cause of the
+        // 2026-05-20-113001 / 2026-05-21-071823 silent cutoffs at ~17–18 min)
+        // visible as a stream of identical log lines with a growing age.
+        // Diagnostic only — every `phase.set` is non-suspending and changes
+        // no run-loop semantics.
+        let phase = LiveRunnerPhaseTracker()
+        var frameIdx = 0
+        let phaseLogger = self.logger
+        let heartbeatInterval = self.phaseHeartbeatInterval
+        let heartbeatThreshold = self.phaseHeartbeatThreshold
+        let heartbeatTask = Task {
+            await phase.runHeartbeat(
+                interval: heartbeatInterval,
+                threshold: heartbeatThreshold,
+                logger: phaseLogger)
+        }
+        defer { heartbeatTask.cancel() }
+        phase.set("loop-start")
+
         // --- the run loop ---------------------------------------------------
         for await item in merged {
             let elapsed = ContinuousClock.now - startWall
             switch item {
             case .frame(.system, let frame):
+                frameIdx += 1
+                phase.set("frame-system-received", frameIndex: frameIdx)
                 let systemFrameNow = ContinuousClock.now
                 if systemGapAnnotated {
                     // Frames are flowing again after an annotated silence gap
@@ -230,15 +272,21 @@ final class LiveRunner: Sendable {
                     // — live.md is never rewritten) carrying the real measured
                     // gap, then re-arm the watchdog for this stream.
                     systemGapAnnotated = false
+                    phase.set("await-sink-appendGap-system-resumed")
                     await sink.appendGap(
                         .resumed(systemFrameNow - lastSystemActivity))
                 }
                 lastSystemActivity = systemFrameNow
+                phase.set("wav-append-system")
                 appendToWAV(systemWAVWriter, frame.samples, stream: "system")
+                phase.set("whisper-ingest-system")
                 for utt in systemStreamer.ingest(
                     frame: frame, realTimeElapsed: elapsed) {
+                    phase.set("await-resolveSystemLabel")
                     let label = await resolveSystemLabel(
-                        for: utt, diarState: diarState, diarizer: liveDiarizer)
+                        for: utt, diarState: diarState, diarizer: liveDiarizer,
+                        phase: phase)
+                    phase.set("await-sink-appendSystemUtterance")
                     await sink.appendSystemUtterance(
                         utt, label: label, realElapsed: elapsed)
                 }
@@ -256,6 +304,7 @@ final class LiveRunner: Sendable {
                     let loAbs = max(0, diarTotalSamples - diarWindow)
                     let lo = loAbs - diarBufferBase
                     lastDiarEnd = diarTotalSamples
+                    phase.set("await-diarGate-tryAcquire")
                     if lo >= 0, lo <= diarBuffer.count,
                        await diarGate.tryAcquire() {
                         // Copy the window out of `diarBuffer` up front: the
@@ -289,19 +338,25 @@ final class LiveRunner: Sendable {
                 diarBufferProbe?(diarBuffer.count)
 
             case .frame(.mic, let frame):
+                frameIdx += 1
+                phase.set("frame-mic-received", frameIndex: frameIdx)
                 let micFrameNow = ContinuousClock.now
                 if micGapAnnotated {
                     // Frames are flowing again on the mic stream after its own
                     // annotated silence gap — append a resumed note carrying the
                     // real measured gap and re-arm this stream's watchdog.
                     micGapAnnotated = false
+                    phase.set("await-sink-appendGap-mic-resumed")
                     await sink.appendGap(.resumed(micFrameNow - lastMicActivity))
                 }
                 lastMicActivity = micFrameNow
+                phase.set("wav-append-mic")
                 appendToWAV(micWAVWriter, frame.samples, stream: "mic")
                 if let micStreamer {
+                    phase.set("whisper-ingest-mic")
                     for utt in micStreamer.ingest(
                         frame: frame, realTimeElapsed: elapsed) {
+                        phase.set("await-sink-appendMicUtterance")
                         await sink.appendMicUtterance(utt, realElapsed: elapsed)
                     }
                 }
@@ -312,11 +367,13 @@ final class LiveRunner: Sendable {
                 // mic stream's paired marker is ignored to avoid a double note.
                 systemPaused = true
                 lastSystemActivity = ContinuousClock.now
+                phase.set("await-sink-appendGap-paused-system")
                 await sink.appendGap(.paused)
 
             case .resumed(.system, let gap):
                 systemPaused = false
                 lastSystemActivity = ContinuousClock.now
+                phase.set("await-sink-appendGap-resumed-system")
                 await sink.appendGap(.resumed(gap))
 
             case .paused(.mic):
@@ -346,19 +403,25 @@ final class LiveRunner: Sendable {
                 if !systemDone, !systemPaused, !systemGapAnnotated,
                    now - lastSystemActivity >= silenceGapThreshold {
                     systemGapAnnotated = true
+                    phase.set("await-sink-appendGap-tick-system")
                     await sink.appendGap(.paused)
                 }
                 if hasMic, !micDone, !micPaused, !micGapAnnotated,
                    now - lastMicActivity >= silenceGapThreshold {
                     micGapAnnotated = true
+                    phase.set("await-sink-appendGap-tick-mic")
                     await sink.appendGap(.paused)
                 }
 
             case .ended(.system):
+                phase.set("ended-system")
                 let elapsedNow = ContinuousClock.now - startWall
                 for utt in systemStreamer.finish() {
+                    phase.set("await-resolveSystemLabel-flush")
                     let label = await resolveSystemLabel(
-                        for: utt, diarState: diarState, diarizer: liveDiarizer)
+                        for: utt, diarState: diarState, diarizer: liveDiarizer,
+                        phase: phase)
+                    phase.set("await-sink-appendSystemUtterance-flush")
                     await sink.appendSystemUtterance(
                         utt, label: label, realElapsed: elapsedNow,
                         isFlush: true)
@@ -366,9 +429,11 @@ final class LiveRunner: Sendable {
                 systemDone = true
 
             case .ended(.mic):
+                phase.set("ended-mic")
                 if let micStreamer {
                     let elapsedNow = ContinuousClock.now - startWall
                     for utt in micStreamer.finish() {
+                        phase.set("await-sink-appendMicUtterance-flush")
                         await sink.appendMicUtterance(
                             utt, realElapsed: elapsedNow, isFlush: true)
                     }
@@ -378,18 +443,23 @@ final class LiveRunner: Sendable {
             // The exit condition is *exactly* "both streams `.ended`". A
             // silence gap never reaches here as a done flag.
             if systemDone && micDone { break }
+            phase.set("idle-awaiting-next-item")
         }
 
         // Fix B: hand off any in-flight diarization task before returning —
         // bounded, so a wedged diarizer cannot make the run hang on exit.
+        phase.set("await-diarGate-drain")
         await diarGate.drain(timeout: .seconds(2))
+        phase.set("await-readers-value")
         _ = await readers.value
         // Propagate the language whisper actually detected on the system
         // stream so Output.language reflects reality. Falls back to "en" only
         // when no window was ever decoded (a silent / empty recording).
+        phase.set("await-sink-noteSystemLanguage")
         await sink.noteSystemLanguage(
             systemStreamer.detectedLanguage ?? "en")
 
+        phase.set("await-sink-stats")
         let stats = await sink.stats()
         return StreamingPipeline.Output(
             liveURL: configuration.liveURL,
@@ -456,11 +526,18 @@ final class LiveRunner: Sendable {
     ///
     /// `internal` (not `private`) so the R18 library-lookup path can be tested
     /// directly — see `LiveRunnerLibraryLookupTests`.
+    ///
+    /// `phase` is an optional diagnostic tracker — when supplied (production
+    /// callers do, tests typically don't) the inner `await`s update phase
+    /// strings so a wedge inside the library / diarizer-actor lookup chain is
+    /// observable in the heartbeat log.
     func resolveSystemLabel(
         for utterance: CommittedUtterance,
         diarState: DiarState,
-        diarizer: (any LiveDiarizing)?
+        diarizer: (any LiveDiarizing)?,
+        phase: LiveRunnerPhaseTracker? = nil
     ) async -> String {
+        phase?.set("await-diarState-dominantKey")
         let key = await diarState.dominantKey(
             start: utterance.start, end: utterance.end) ?? "Them"
 
@@ -471,14 +548,18 @@ final class LiveRunner: Sendable {
         // (Open Question #3), so passing the real revision is what makes R18
         // able to match at all.
         if let library, let diarizer {
+            phase?.set("await-diarizer-centroids")
             let centroids = await diarizer.centroids()
+            phase?.set("await-diarizer-modelRevision")
             let revision = await diarizer.modelRevision()
-            if let centroid = centroids[key], !centroid.isEmpty,
-               let match = try? await library.bestMatch(
-                   for: centroid,
-                   modelRevision: revision,
-                   threshold: SpeakerLibrary.defaultMatchThreshold) {
-                return "\(match.speaker.name) (provisional)"
+            if let centroid = centroids[key], !centroid.isEmpty {
+                phase?.set("await-library-bestMatch")
+                if let match = try? await library.bestMatch(
+                       for: centroid,
+                       modelRevision: revision,
+                       threshold: SpeakerLibrary.defaultMatchThreshold) {
+                    return "\(match.speaker.name) (provisional)"
+                }
             }
         }
         return "\(key) (provisional)"
