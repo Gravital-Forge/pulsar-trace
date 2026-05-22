@@ -98,6 +98,10 @@ public final class WhisperTranscriber: WindowTranscribing {
     /// process so the Metal backend never sees concurrent contexts.
     private static let metalLock = NSLock()
 
+    /// Per-segment token cap for the streaming window path (whisper.h `max_tokens`).
+    /// Bounds a degenerate/runaway decode. 0 = unlimited (old behavior).
+    static let streamingMaxTokensPerSegment = 256
+
     public enum TranscribeError: Error, CustomStringConvertible, Equatable {
         case modelNotFound(String)
         case modelLoadFailed(String)
@@ -507,6 +511,28 @@ public final class WhisperTranscriber: WindowTranscribing {
         params.suppress_blank = true
         params.suppress_nst = true
         params.no_speech_thold = options.noSpeechThreshold
+
+        // Per-segment token cap: a window is ≤ 8 s of speech, so a few hundred
+        // tokens is generous; an unbounded (0) cap lets a degenerate decode
+        // loop spin. Bounds a runaway even between abort polls.
+        params.max_tokens = Int32(Self.streamingMaxTokensPerSegment)
+
+        // Abort hook: a watchdog on another task flips `abort.cancel()`; whisper
+        // polls this at each encode/decode-step boundary (this build checks it
+        // after every `whisper_encode_internal` / `whisper_decode_internal`, not
+        // between individual ggml graph nodes — verified in vendor/whisper.cpp)
+        // and returns early, skipping the rest of the decode and releasing
+        // metalLock. The closure is @convention(c) (no captures) and reads the
+        // token through the user-data pointer.
+        if let abort {
+            let cb: ggml_abort_callback = { userData in
+                guard let userData else { return false }
+                return Unmanaged<AbortToken>
+                    .fromOpaque(userData).takeUnretainedValue().isCancelled
+            }
+            params.abort_callback = cb
+            params.abort_callback_user_data = Unmanaged.passUnretained(abort).toOpaque()
+        }
 
         let langString = options.language.flatMap { isEnglishOnlyModel ? nil : $0 }
             ?? (isEnglishOnlyModel ? "en" : "auto")
