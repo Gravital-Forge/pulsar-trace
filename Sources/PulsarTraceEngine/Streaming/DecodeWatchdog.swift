@@ -10,12 +10,16 @@ import Logging
 ///  2. **abort-grace** — if the decode is *still* outstanding this long after the
 ///     abort was signalled, the abort did not take (a hang inside a single
 ///     encode/decode step, where control never reaches the next abort poll).
-///     Emit an escalating, greppable warning with a growing age so the
+///     Emit a greppable warning that repeats with a growing age so the
 ///     unrecoverable case is visible and countable.
 ///
 /// The watchdog runs as its own task, so it keeps observing even while the
 /// worker is suspended awaiting a blocking decode (the decode runs on a
 /// DispatchQueue thread; this poll runs on the cooperative pool).
+///
+/// On a decode that never returns (a true hang), the worker cannot call
+/// `endDecode()`; the owner MUST call `endDecode()` at teardown to stop the
+/// abort-grace monitor's poll task — this disarm is load-bearing, not defensive.
 actor DecodeWatchdog {
     private let deadline: Duration
     private let abortGrace: Duration

@@ -617,6 +617,12 @@ final class LiveRunner: Sendable {
         let detectedLanguage = await workerResult.language ?? "en"
         worker.cancel()  // abandon a still-wedged worker; recording is safe
 
+        // Stop the watchdog's poll task. On a healthy run this is a redundant
+        // no-op (already disarmed); on a wedged run whose decode never returned,
+        // `endDecode()` was never called from the worker, so this is what stops
+        // the abort-grace monitor from logging forever after the run returns.
+        await watchdog.endDecode()
+
         // Fix B: hand off any in-flight diarization task before returning —
         // bounded, so a wedged diarizer cannot make the run hang on exit.
         phase.set("await-diarGate-drain")
