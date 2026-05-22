@@ -12,6 +12,7 @@ import Foundation
 /// Lock-protected (not an actor) so `enqueue` is synchronous and can be called
 /// from the drain's per-frame hot path without suspension. A single waiting
 /// consumer is supported (the design uses one worker).
+// @unchecked Sendable: all mutable state is guarded by `lock`; AudioFrame is a Sendable value type.
 public final class BoundedFrameQueue: @unchecked Sendable {
 
     private let lock = NSLock()
@@ -26,7 +27,7 @@ public final class BoundedFrameQueue: @unchecked Sendable {
     private var caughtUpEdge = false
 
     public init(capacityFrames: Int) {
-        precondition(capacityFrames > 0)
+        precondition(capacityFrames > 0, "capacityFrames must be positive")
         self.capacityFrames = capacityFrames
     }
 
@@ -70,6 +71,7 @@ public final class BoundedFrameQueue: @unchecked Sendable {
                     immediate = .some(nil)     // resume now with nil
                     return
                 }
+                precondition(waiter == nil, "BoundedFrameQueue supports a single consumer; a second concurrent dequeue would leak the parked continuation")
                 waiter = cont                  // park
             }
             if let immediate { cont.resume(returning: immediate) }
