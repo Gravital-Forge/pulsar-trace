@@ -28,12 +28,13 @@ public final class BoundedFrameQueue: @unchecked Sendable {
 
     /// Posted (if set) whenever a frame is enqueued or the queue is finished, so
     /// a worker multiplexing several queues can re-check without a parked
-    /// per-queue continuation. Set once at construction by the owner.
-    public var onActivity: (@Sendable () -> Void)?
+    /// per-queue continuation. Set once at construction.
+    private let onActivity: (@Sendable () -> Void)?
 
-    public init(capacityFrames: Int) {
+    public init(capacityFrames: Int, onActivity: (@Sendable () -> Void)? = nil) {
         precondition(capacityFrames > 0, "capacityFrames must be positive")
         self.capacityFrames = capacityFrames
+        self.onActivity = onActivity
     }
 
     /// Total frames dropped over the queue's lifetime.

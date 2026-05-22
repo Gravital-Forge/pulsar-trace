@@ -276,18 +276,21 @@ final class LiveRunner: Sendable {
         // worker Task owns the (non-Sendable) streamers, drains both queues,
         // and writes committed utterances to the sink. A hung/slow whisper can
         // therefore never block the WAV write — the recording is always safe.
-        let queueCapacityFrames = max(
-            1, durationToSamples(queueCapacity) / AudioFormat.samplesPerFrame)
-        let systemQueue = BoundedFrameQueue(capacityFrames: queueCapacityFrames)
-        let micQueue: BoundedFrameQueue? =
-            hasMic ? BoundedFrameQueue(capacityFrames: queueCapacityFrames) : nil
-
         // Wakeup signal: each queue posts on enqueue/finish so the single worker
         // re-checks both queues. AsyncStream's buffering makes lost wakeups
-        // impossible (a yield before the next await is retained).
+        // impossible (a yield before the next await is retained). Created before
+        // the queues so the activity closures can be passed at queue init.
         let (wake, wakeContinuation) = AsyncStream.makeStream(of: Void.self)
-        systemQueue.onActivity = { wakeContinuation.yield(()) }
-        micQueue?.onActivity = { wakeContinuation.yield(()) }
+        let queueCapacityFrames = max(
+            1, durationToSamples(queueCapacity) / AudioFormat.samplesPerFrame)
+        let systemQueue = BoundedFrameQueue(
+            capacityFrames: queueCapacityFrames,
+            onActivity: { wakeContinuation.yield(()) })
+        let micQueue: BoundedFrameQueue? = hasMic
+            ? BoundedFrameQueue(
+                capacityFrames: queueCapacityFrames,
+                onActivity: { wakeContinuation.yield(()) })
+            : nil
 
         // The streamers are non-Sendable (`StreamingTranscriber` owns a
         // `whisper_context`). Box them so the worker Task can capture them
@@ -555,7 +558,11 @@ final class LiveRunner: Sendable {
         // a wedged whisper decode is uncancellable, so structurally awaiting the
         // worker (e.g. via `withTaskGroup`) would block the run forever even
         // after `cancel()`. The bound is on *inactivity* — the run stops waiting
-        // once the worker has made no progress for `workerDrainTimeout`. A
+        // once the worker has made no progress for `workerDrainTimeout`. The
+        // deadline is *armed at teardown start* (`armDeadline()` below) so it
+        // measures inactivity since teardown began, not since run-start — a
+        // short recording whose single final decode is slow but progressing
+        // then gets the full `workerDrainTimeout` of grace. A
         // slow-but-progressing decode (a fast-fed fixture, or CPU whisper
         // catching up on a backlog) therefore runs to completion, while a
         // genuinely wedged decode releases the run after the timeout. The poll
@@ -563,6 +570,7 @@ final class LiveRunner: Sendable {
         // "en" if the worker never finished. The recording is safe on disk
         // regardless.
         phase.set("await-worker")
+        await workerResult.armDeadline()
         while !(await workerResult.isFinished), !Task.isCancelled,
               ContinuousClock.now - (await workerResult.lastProgress)
                 < workerDrainTimeout {
@@ -776,8 +784,10 @@ private struct UncheckedSendableBox<T>: @unchecked Sendable {
 
 /// A `Sendable` wrapper that lets the non-`Sendable` `StreamingTranscriber`s be
 /// captured into the single whisper worker `Task` (Swift 6 concurrency). Its
-/// contents are ONLY ever touched on the worker task, so the unchecked
-/// conformance is safe — the streamers are never concurrently accessed.
+/// contents are ONLY ever touched on the serialized offload path driven by the
+/// single worker (the blocking decode runs on a DispatchQueue thread while the
+/// worker is suspended), so the unchecked conformance is safe — the streamers
+/// are never concurrently accessed.
 private final class StreamerBox: @unchecked Sendable {
     let system: StreamingTranscriber
     let mic: StreamingTranscriber?
@@ -807,6 +817,12 @@ actor WorkerLanguageResult {
     /// Mark that the worker made forward progress (a window decoded). Keeps the
     /// teardown's inactivity deadline fresh.
     func noteProgress() { lastProgress = ContinuousClock.now }
+
+    /// Reset the inactivity clock to now — call once when the teardown wait
+    /// begins so the bound measures inactivity *since teardown started*, not
+    /// since run-start. A first/final decode that is slow but progressing then
+    /// gets the full `workerDrainTimeout` of grace.
+    func armDeadline() { lastProgress = ContinuousClock.now }
 
     func finish(language: String) {
         self.language = language
