@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Logging
 @testable import PulsarTraceEngine
 
 /// Resilience coverage for `LiveRunner`'s run loop (Fix A/B/C).
@@ -50,6 +51,7 @@ struct LiveRunnerResilienceTests {
 
     private func makeRunner(
         folder: URL,
+        logger: Logger = Logger(label: "test"),
         diarBufferProbe: (@Sendable (Int) -> Void)? = nil,
         silenceGapThreshold: Duration = .milliseconds(250),
         tickInterval: Duration = .milliseconds(40),
@@ -67,7 +69,7 @@ struct LiveRunnerResilienceTests {
         let runner = LiveRunner(
             configuration: config,
             writer: writer,
-            logger: .init(label: "test"),
+            logger: logger,
             library: nil,
             diarBufferProbe: diarBufferProbe,
             silenceGapThreshold: silenceGapThreshold,
@@ -499,6 +501,40 @@ struct LiveRunnerResilienceTests {
         #expect(out.utteranceLines > 0)
         #expect(await flaky.decodesAttempted >= 2)
     }
+
+    @Test("a decode that ignores the abort is monitored with an escalating warning")
+    func unrecoverableHangIsMonitored() async throws {
+        let folder = tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let capture = CaptureLog()
+        let ignorer = IgnoresAbortTranscriber()
+        let source = ControllableSource()
+        let (runner, writer, _) = makeRunner(
+            folder: folder,
+            logger: Logger(label: "test") { _ in capture },
+            workerDrainTimeout: .milliseconds(300),
+            decodeDeadline: .milliseconds(100),
+            abortGrace: .milliseconds(150))
+        try await writer.start()
+
+        let runTask = Task {
+            try await runner.run(
+                systemTranscriber: ignorer, micTranscriber: nil,
+                systemSource: source, micSource: nil, liveDiarizer: nil)
+        }
+        // Feed enough non-silent frames to trigger a decode (>= one 2 s window
+        // = 100 frames), then let the wedge run while the monitor warns.
+        for i in 0..<200 { await source.yieldFrame(tone(sequenceIndex: i)) }
+        try await Task.sleep(for: .milliseconds(800))
+        await source.finish()
+        _ = await withTimeoutOrNil(seconds: 5) { try await runTask.value }
+        await writer.finish()
+        ignorer.release()   // let the abandoned decode thread exit
+
+        let warnings = capture.messages.filter { $0.contains("did not honor abort") }
+        #expect(!warnings.isEmpty, "monitor did not warn; got \(capture.messages)")
+    }
 }
 
 // MARK: - Test doubles
@@ -628,6 +664,36 @@ final class HangThenRecoverTranscriber: WindowTranscribing, @unchecked Sendable 
         return TranscriptionResult(
             segments: [TranscriptSegment(start: windowStart, end: windowStart, text: "ok")],
             language: "en")
+    }
+}
+
+/// Ignores the abort token completely — the true single-kernel GPU-hang
+/// analogue: nothing the watchdog does interrupts it. Released explicitly by the
+/// test so the abandoned dispatch thread can exit at end of test.
+final class IgnoresAbortTranscriber: WindowTranscribing, @unchecked Sendable {
+    private let lock = NSLock(); private var released = false
+    func release() { lock.withLock { released = true } }
+    func transcribeWindow(
+        _ samples: [Float], windowStart: Duration,
+        options: WhisperTranscriber.Options, abort: AbortToken?
+    ) throws -> TranscriptionResult {
+        while !(lock.withLock { released }) { Thread.sleep(forTimeInterval: 0.02) }
+        return TranscriptionResult(segments: [], language: "en")
+    }
+}
+
+/// Lock-protected log sink that records every message, for asserting on log
+/// output in an integration test.
+final class CaptureLog: LogHandler, @unchecked Sendable {
+    private let lock = NSLock(); private var _m: [String] = []
+    var logLevel: Logger.Level = .trace
+    var metadata: Logger.Metadata = [:]
+    subscript(metadataKey k: String) -> Logger.Metadata.Value? {
+        get { metadata[k] } set { metadata[k] = newValue } }
+    var messages: [String] { lock.withLock { _m } }
+    func log(level: Logger.Level, message: Logger.Message, metadata: Logger.Metadata?,
+             source: String, file: String, function: String, line: UInt) {
+        lock.withLock { _m.append("\(message)") }
     }
 }
 
