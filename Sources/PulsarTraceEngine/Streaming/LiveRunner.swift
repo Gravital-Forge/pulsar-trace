@@ -102,8 +102,8 @@ final class LiveRunner: Sendable {
     }
 
     func run(
-        systemTranscriber: WhisperTranscriber,
-        micTranscriber: WhisperTranscriber?,
+        systemTranscriber: any WindowTranscribing,
+        micTranscriber: (any WindowTranscribing)?,
         systemSource: some AudioFrameSource,
         micSource: (any AudioFrameSource)?,
         liveDiarizer: (any LiveDiarizing)?

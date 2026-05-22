@@ -97,7 +97,7 @@ public final class StreamingTranscriber {
         }
     }
 
-    private let transcriber: WhisperTranscriber
+    private let transcriber: any WindowTranscribing
     private let configuration: Configuration
     private let logger: Logger
 
@@ -131,7 +131,7 @@ public final class StreamingTranscriber {
     public var detectedLanguage: String? { lastDetectedLanguage }
 
     public init(
-        transcriber: WhisperTranscriber,
+        transcriber: any WindowTranscribing,
         configuration: Configuration = .init(),
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
@@ -241,7 +241,8 @@ public final class StreamingTranscriber {
             result = try transcriber.transcribeWindow(
                 window,
                 windowStart: windowStart,
-                options: configuration.whisperOptions)
+                options: configuration.whisperOptions,
+                abort: nil)
         } catch {
             logger.error("streaming window decode failed; skipping window")
             return

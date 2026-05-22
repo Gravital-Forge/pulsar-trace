@@ -92,7 +92,7 @@ public struct SpeechRegion: Sendable, Equatable {
 /// `ggml_metal_device_free` residency-set assertion that fires at process exit
 /// when many `whisper_context`s are created/freed in one process. See
 /// project-docs/DECISIONS.md D15.
-public final class WhisperTranscriber {
+public final class WhisperTranscriber: WindowTranscribing {
 
     /// Guards `whisper_context` lifecycle and `whisper_full` across the
     /// process so the Metal backend never sees concurrent contexts.
@@ -485,7 +485,8 @@ public final class WhisperTranscriber {
     public func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: Options = Options()
+        options: Options = Options(),
+        abort: AbortToken? = nil
     ) throws -> TranscriptionResult {
         guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
 
