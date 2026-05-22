@@ -360,3 +360,19 @@ that each layer is as deterministic as possible:
   us how often an abort genuinely doesn't take, decide whether the engine should
   escalate to restarting itself (the only real recovery, since the stuck thread
   holds `metalLock`). Deferred until the monitor produces data.
+- **Worker-side label-resolution is unmonitored (follow-up, identified in the
+  final review).** The whisper worker's `resolveSystemLabel` runs three awaits
+  that can block — `LiveDiarizer.centroids()`/`modelRevision()` (actor hops) and
+  `SpeakerLibrary.bestMatch` (a synchronous SQLite read on the library actor) —
+  and these are covered by **neither** the phase heartbeat (it only instruments
+  the drain loop) **nor** the `DecodeWatchdog` (it brackets only the offloaded
+  decode). This is precisely the speaker-library SQLite-read wedge hypothesized in
+  the superseded 2026-05-20 plan; the decoupling moved it **off the recording
+  path** (a wedge here cannot lose the recording, and the teardown inactivity
+  bound still returns the run), but a live-phase wedge would stall live
+  transcription with no observability. Not a blocker — both hard guarantees
+  (recording safety, run termination) hold. Fix when next touching `LiveRunner`:
+  give the worker its **own** phase tracker (the shared one would race the drain's
+  updates) or extend the watchdog over label resolution, and add a
+  `library != nil` + hanging-diarizer resilience test (current resilience tests
+  all run with `library: nil`).
