@@ -82,10 +82,22 @@ final class LiveRunner: Sendable {
     /// drops the oldest frame from the live view (recording unaffected) once a
     /// queue holds more than this much un-decoded audio (Phase 1).
     private let queueCapacity: Duration
-    /// Bounded wait on the whisper worker at teardown. A wedged decode (no abort
-    /// until Task 5) cannot make the run hang past this — the recording is
-    /// already safe on disk regardless.
+    /// Bounded wait on the whisper worker at teardown. A wedged decode that
+    /// ignores its abort (a stall inside a single encode/decode step) cannot
+    /// make the run hang past this — the recording is already safe on disk
+    /// regardless.
     private let workerDrainTimeout: Duration
+    /// Per-decode watchdog deadline (Phase 2). A live-window decode that
+    /// overruns this has its `AbortToken` flipped so whisper bails at its next
+    /// decode-step boundary, the worker drops that window, and live
+    /// transcription resumes. The dropped audio is recovered by the post-pass.
+    private let decodeDeadline: Duration
+    /// Per-decode watchdog abort-grace (Phase 2). If a decode is still
+    /// outstanding this long *after* its abort was signalled, the abort did not
+    /// take (a stall inside a single encode/decode step where control never
+    /// reaches the next abort poll). The watchdog then emits an escalating
+    /// "did not honor abort" warning so the unrecoverable case is visible.
+    private let abortGrace: Duration
 
     init(
         configuration: StreamingPipeline.Configuration,
@@ -98,7 +110,9 @@ final class LiveRunner: Sendable {
         phaseHeartbeatInterval: Duration = LiveRunner.defaultPhaseHeartbeatInterval,
         phaseHeartbeatThreshold: Duration = LiveRunner.defaultPhaseHeartbeatThreshold,
         queueCapacity: Duration = .seconds(30),
-        workerDrainTimeout: Duration = .seconds(10)
+        workerDrainTimeout: Duration = .seconds(10),
+        decodeDeadline: Duration = .seconds(10),
+        abortGrace: Duration = .seconds(5)
     ) {
         self.configuration = configuration
         self.writer = writer
@@ -111,6 +125,8 @@ final class LiveRunner: Sendable {
         self.phaseHeartbeatThreshold = phaseHeartbeatThreshold
         self.queueCapacity = queueCapacity
         self.workerDrainTimeout = workerDrainTimeout
+        self.decodeDeadline = decodeDeadline
+        self.abortGrace = abortGrace
     }
 
     func run(
@@ -305,6 +321,18 @@ final class LiveRunner: Sendable {
         // The poll loop is the same cancellation-safe shape as `DiarGate.drain`.
         let workerResult = WorkerLanguageResult()
 
+        // Phase 2: the per-decode watchdog. It arms a fresh `AbortToken` before
+        // each per-frame `ingest` decode and, if that decode overruns
+        // `decodeDeadline`, flips the token so whisper bails at its next
+        // decode-step boundary — the worker drops that window and live
+        // transcription resumes. A decode that ignores the abort past
+        // `abortGrace` (a stall inside a single encode/decode step) is logged as
+        // an escalating "did not honor abort" warning. The watchdog runs as its
+        // own task, so it keeps observing while the worker is suspended awaiting
+        // the offloaded (blocking) decode.
+        let watchdog = DecodeWatchdog(
+            deadline: decodeDeadline, abortGrace: abortGrace, logger: logger)
+
         // The whisper worker: owns the streamers, drains both queues, writes
         // committed utterances to the sink. Never blocks the drain — the queues
         // drop-oldest under backpressure. Publishes the system stream's detected
@@ -333,9 +361,19 @@ final class LiveRunner: Sendable {
                 guard let queue, let streamer else { return true }
                 while let frame = queue.tryDequeueNonSuspending() {
                     let elapsed = ContinuousClock.now - startWall
+                    // Arm the watchdog with a fresh token for this decode. If
+                    // the decode overruns the deadline the watchdog flips the
+                    // token; whisper bails at its next decode step, `offload`
+                    // returns (empty/throwing), and the worker drops this
+                    // window and continues — live transcription resumes.
+                    let token = AbortToken()
+                    await watchdog.beginDecode(
+                        token: token, stream: isMic ? "mic" : "system")
                     let utterances = await Self.offload {
-                        streamer.ingest(frame: frame, realTimeElapsed: elapsed)
+                        streamer.ingest(
+                            frame: frame, realTimeElapsed: elapsed, abort: token)
                     }
+                    await watchdog.endDecode()
                     await workerResult.noteProgress()
                     for utt in utterances {
                         if isMic {

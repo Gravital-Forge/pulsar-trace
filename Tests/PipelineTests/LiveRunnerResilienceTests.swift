@@ -54,7 +54,9 @@ struct LiveRunnerResilienceTests {
         silenceGapThreshold: Duration = .milliseconds(250),
         tickInterval: Duration = .milliseconds(40),
         queueCapacity: Duration = .seconds(30),
-        workerDrainTimeout: Duration = .seconds(10)
+        workerDrainTimeout: Duration = .seconds(10),
+        decodeDeadline: Duration = .seconds(10),
+        abortGrace: Duration = .seconds(5)
     ) -> (LiveRunner, LiveMarkdownWriter, StreamingPipeline.Configuration) {
         let config = StreamingPipeline.Configuration(
             recordingFolder: folder,
@@ -71,7 +73,9 @@ struct LiveRunnerResilienceTests {
             silenceGapThreshold: silenceGapThreshold,
             tickInterval: tickInterval,
             queueCapacity: queueCapacity,
-            workerDrainTimeout: workerDrainTimeout)
+            workerDrainTimeout: workerDrainTimeout,
+            decodeDeadline: decodeDeadline,
+            abortGrace: abortGrace)
         return (runner, writer, config)
     }
 
@@ -466,6 +470,35 @@ struct LiveRunnerResilienceTests {
         let text = try String(contentsOf: liveURL, encoding: .utf8)
         #expect(text.contains("_(recording paused)_"))
     }
+
+    // MARK: - Phase 2 — per-decode watchdog recovers a one-shot hung decode
+
+    @Test("the watchdog aborts a hung decode and the worker keeps going")
+    func watchdogAbortsHungDecodeAndResumes() async throws {
+        let folder = tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        // First decode hangs until aborted; later decodes return text.
+        let flaky = HangThenRecoverTranscriber(hangCount: 1)
+        let source = ControllableSource()
+        let (runner, writer, _) = makeRunner(
+            folder: folder, decodeDeadline: .milliseconds(150), abortGrace: .seconds(10))
+        try await writer.start()
+
+        let runTask = Task {
+            try await runner.run(
+                systemTranscriber: flaky, micTranscriber: nil,
+                systemSource: source, micSource: nil, liveDiarizer: nil)
+        }
+        for i in 0..<400 { await source.yieldFrame(tone(sequenceIndex: i)) }
+        try await Task.sleep(for: .milliseconds(800))
+        await source.finish()
+        let out = try await runTask.value
+        await writer.finish()
+
+        #expect(out.utteranceLines > 0)
+        #expect(await flaky.decodesAttempted >= 2)
+    }
 }
 
 // MARK: - Test doubles
@@ -573,6 +606,28 @@ final class BlockingWindowTranscriber: WindowTranscribing, @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.02)
         }
         throw WhisperTranscriber.TranscribeError.transcriptionFailed(-999)
+    }
+}
+
+/// Hangs (honoring the abort token) for its first `hangCount` decodes, then
+/// returns a real-looking utterance — a decode that wedges once, then recovers.
+final class HangThenRecoverTranscriber: WindowTranscribing, @unchecked Sendable {
+    private let hangCount: Int
+    private let lock = NSLock(); private var _attempted = 0
+    init(hangCount: Int) { self.hangCount = hangCount }
+    var decodesAttempted: Int { get async { lock.withLock { _attempted } } }
+    func transcribeWindow(
+        _ samples: [Float], windowStart: Duration,
+        options: WhisperTranscriber.Options, abort: AbortToken?
+    ) throws -> TranscriptionResult {
+        let n = lock.withLock { _attempted += 1; return _attempted }
+        if n <= hangCount {
+            while abort?.isCancelled != true { Thread.sleep(forTimeInterval: 0.02) }
+            throw WhisperTranscriber.TranscribeError.transcriptionFailed(-999)
+        }
+        return TranscriptionResult(
+            segments: [TranscriptSegment(start: windowStart, end: windowStart, text: "ok")],
+            language: "en")
     }
 }
 

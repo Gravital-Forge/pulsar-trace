@@ -154,23 +154,29 @@ public final class StreamingTranscriber {
     /// - Parameter realTimeElapsed: wall-clock elapsed since the stream began,
     ///   used only for the backpressure check / lag logging. Pass `nil` to
     ///   disable backpressure handling (offline/fast callers).
+    /// - Parameter abort: a watchdog cancellation token threaded into each
+    ///   window decode so a hung/runaway window can be interrupted (Phase 2).
+    ///   `nil` disables it.
     public func ingest(
         frame: AudioFrame,
-        realTimeElapsed: Duration? = nil
+        realTimeElapsed: Duration? = nil,
+        abort: AbortToken? = nil
     ) -> [CommittedUtterance] {
         samples.append(contentsOf: frame.samples)
-        return drainWindows(realTimeElapsed: realTimeElapsed)
+        return drainWindows(realTimeElapsed: realTimeElapsed, abort: abort)
     }
 
     /// End-of-stream: decode any remaining tail audio and flush the committer
     /// (the final hypothesis has no successor to agree with, so its tail is
     /// committed unconditionally — see `LiveAgreementCommitter.flush`).
     public func finish() -> [CommittedUtterance] {
-        var out = drainWindows(realTimeElapsed: nil)
+        // The end-of-stream flush is bounded by the worker-drain teardown, not
+        // the per-decode watchdog, so it passes no abort token.
+        var out = drainWindows(realTimeElapsed: nil, abort: nil)
         // One last anchored window covering everything from the commit point
         // to end-of-stream, so no tail audio is missed.
         if recordingSampleCount > windowAnchorSample {
-            runWindow()
+            runWindow(abort: nil)
         }
         _ = committer.flush()
         out.append(contentsOf: regroupNewlyCommitted())
@@ -190,7 +196,8 @@ public final class StreamingTranscriber {
 
     /// Decode every window that is now "due" given the accumulated audio.
     private func drainWindows(
-        realTimeElapsed: Duration?
+        realTimeElapsed: Duration?,
+        abort: AbortToken?
     ) -> [CommittedUtterance] {
         // A window is due once `stepSamples` of new audio have arrived since
         // the last decode AND there is at least one step of audio past the
@@ -212,7 +219,7 @@ public final class StreamingTranscriber {
                 }
             }
 
-            runWindow()
+            runWindow(abort: abort)
             lastDecodeEndSample = recordingSampleCount
         }
         return regroupNewlyCommitted()
@@ -221,7 +228,7 @@ public final class StreamingTranscriber {
     /// Run whisper on the anchored window `[windowAnchorSample, +windowDuration]`
     /// (clamped to available audio), feed the hypothesis to the committer, and
     /// advance the anchor + trim the buffer to whatever was committed.
-    private func runWindow() {
+    private func runWindow(abort: AbortToken?) {
         let loAbs = windowAnchorSample
         let hiAbs = min(recordingSampleCount, loAbs + windowSamples)
         let lo = loAbs - bufferBaseSample
@@ -242,7 +249,7 @@ public final class StreamingTranscriber {
                 window,
                 windowStart: windowStart,
                 options: configuration.whisperOptions,
-                abort: nil)
+                abort: abort)
         } catch {
             logger.error("streaming window decode failed; skipping window")
             return
