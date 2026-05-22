@@ -1,6 +1,6 @@
 # Live Transcription Pipeline Decoupling — Recording Safety + Whisper Hang Recovery
 
-- **Status:** design approved, pre-implementation
+- **Status:** implemented 2026-05-22 (branch feat/refinement-job-queue)
 - **Date:** 2026-05-22
 - **Scope:** `pulsartrace-engine` only (the capture daemon is unchanged)
 - **Supersedes the open hypothesis in:** `docs/specs/2026-05-20-refine-perf-and-capture-resilience-plan.md` (the "Out of scope" note that guessed the wedge was a sink/speaker-library SQLite read)
