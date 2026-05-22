@@ -199,11 +199,16 @@ sync worker (consumer).
   slot; a watchdog **task** (async timer, the heartbeat shape) observes it. On
   return the slot is cleared. The watchdog has **two stages**:
   1. **Deadline** (default ~10 s — far above a healthy sub-2 s decode, far below
-     the minutes-long hang): flip `token.cancel()`, attempting recovery. whisper
-     polls the abort hook between ggml graph nodes *and* between token-decode
-     steps (`whisper.cpp:179,2455,7137`), so this interrupts both a runaway
-     decode loop and a mid-graph stall. An aborted decode → drop that window +
-     `live.md` note → continue.
+     the minutes-long hang): flip `token.cancel()`, attempting recovery.
+     **Abort granularity (verified during Task 2 against this whisper.cpp
+     build):** the hook is polled only at **encode/decode-*step* boundaries**
+     (`whisper.cpp:2455,2977`), *not* between ggml graph nodes — the sched-based
+     `ggml_graph_compute_helper` does not install the callback on its backends.
+     So an abort interrupts a **runaway/degenerate decode loop** (the realistic
+     hang — it bails at the next decode-step boundary) but **cannot** interrupt a
+     stall *inside* a single encode/decode step (e.g. the one-shot mel/encode or
+     auto-language-detect pass, which are bounded, not hang-prone). An aborted
+     decode → drop that window + `live.md` note → continue.
   2. **Abort-grace deadline** (default deadline + ~5 s): if the decode is *still*
      outstanding this long *after* the abort was signalled, the abort "did not
      take" — emit an escalating warning that repeats with a growing age (the
@@ -221,8 +226,9 @@ sync worker (consumer).
 
 ### 5.6 Unrecoverable-hang monitor (Phase 2)
 - The abort-grace stage of the watchdog (§5.4) is the monitor for the one case
-  we cannot recover from: a decode that ignores the abort (a true single-kernel
-  GPU hang). Because the watchdog is an independent task — not the stuck worker
+  we cannot recover from: a decode that ignores the abort — a hang *inside* a
+  single encode/decode step, where control never reaches the next step-boundary
+  abort poll (§5.4). Because the watchdog is an independent task — not the stuck worker
   thread — it keeps observing and logging even while the worker is wedged inside
   `whisper_full`, exactly as the phase heartbeat caught the original wedge from
   outside the stuck run loop.
