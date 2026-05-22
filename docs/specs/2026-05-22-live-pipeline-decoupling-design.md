@@ -88,6 +88,12 @@ asserts if two contexts touch the GPU concurrently (DECISIONS.md D8). Therefore:
 - A whisper stub that hangs on one window → the watchdog aborts it within the
   deadline, that window is dropped with a `live.md` note, and the **next** window
   transcribes normally.
+- **A real `whisper_full` decode is provably interruptible:** with a pre-cancelled
+  abort token it returns far faster than the un-aborted baseline on the CPU
+  backend, and a subsequent decode succeeds (proving `metalLock` was released).
+- **An abort that is ignored is detected:** a decode still outstanding past the
+  abort-grace threshold produces an escalating, greppable warning with a growing
+  age (the unrecoverable-hang monitor).
 - No filesystem paths in any new log line or note (Hard Invariant #7).
 
 ## 4. Architecture
@@ -190,10 +196,19 @@ sync worker (consumer).
   `whisper_full` polls this during compute and returns early when it flips true,
   which releases `metalLock`.
 - The worker, before each decode, publishes `(token, startInstant)` to a shared
-  slot; a watchdog **task** (async timer, the heartbeat shape) flips
-  `token.cancel()` if a decode exceeds the deadline (default ~10 s — far above a
-  healthy sub-2 s decode, far below the minutes-long hang). On return the slot is
-  cleared. An aborted decode → drop that window + `live.md` note → continue.
+  slot; a watchdog **task** (async timer, the heartbeat shape) observes it. On
+  return the slot is cleared. The watchdog has **two stages**:
+  1. **Deadline** (default ~10 s — far above a healthy sub-2 s decode, far below
+     the minutes-long hang): flip `token.cancel()`, attempting recovery. whisper
+     polls the abort hook between ggml graph nodes *and* between token-decode
+     steps (`whisper.cpp:179,2455,7137`), so this interrupts both a runaway
+     decode loop and a mid-graph stall. An aborted decode → drop that window +
+     `live.md` note → continue.
+  2. **Abort-grace deadline** (default deadline + ~5 s): if the decode is *still*
+     outstanding this long *after* the abort was signalled, the abort "did not
+     take" — emit an escalating warning that repeats with a growing age (the
+     phase-heartbeat shape), giving the unrecoverable hang an unmistakable,
+     greppable log signature distinct from a normal abort. See §8 / §5.6.
 - Secondary guard: set `params.max_tokens` to a sane per-segment cap (was 0 =
   unlimited) so a runaway decode is bounded even between abort polls. The cap
   must be validated not to truncate legitimately dense 8 s windows.
@@ -203,6 +218,23 @@ sync worker (consumer).
 - `WhisperTranscriber` conforms; `StreamingTranscriber` depends on the protocol
   rather than the concrete type. Tests inject a stub that can return canned
   results, sleep (slow), block forever (hang), or honor/ignore the `AbortToken`.
+
+### 5.6 Unrecoverable-hang monitor (Phase 2)
+- The abort-grace stage of the watchdog (§5.4) is the monitor for the one case
+  we cannot recover from: a decode that ignores the abort (a true single-kernel
+  GPU hang). Because the watchdog is an independent task — not the stuck worker
+  thread — it keeps observing and logging even while the worker is wedged inside
+  `whisper_full`, exactly as the phase heartbeat caught the original wedge from
+  outside the stuck run loop.
+- Signature: a distinct `warning` line, e.g. `whisper decode did not honor abort;
+  age=<ms> past abort signal, stream=<mic|system>` — repeated each tick with a
+  growing age. No filesystem paths (Hard Invariant #7). This is greppable and
+  alertable the same way the heartbeat is.
+- Recovery is out of scope here: the stuck thread holds `metalLock`, so even a
+  fresh whisper context would deadlock — true recovery needs a process restart.
+  The monitor's job is to make the event **visible and countable** so we can
+  decide later (see §12) whether an engine self-restart is warranted, based on
+  how often it actually occurs.
 
 ## 6. Data flow (three regimes)
 
@@ -242,10 +274,12 @@ hostage.
 - **Both streams lag at once:** independent per-stream queues + notes; `live.md`
   is append-only so duplicate cosmetic notes are harmless (matches the existing
   Fix-A convention).
-- **Abort that doesn't take** (a true GPU-kernel hang where control never
+- **Abort that doesn't take** (a true single-kernel GPU hang where control never
   returns to the abort poll): `abort_callback` cannot help. Phase 1's recording
-  guarantee still holds; live transcription stays dead until restart. Documented
-  limitation; the `max_tokens` cap reduces the window for this.
+  guarantee still holds; live transcription stays dead until restart. This is now
+  **monitored**, not merely documented — the watchdog's abort-grace stage emits
+  an escalating, greppable warning (§5.6) so the event is visible and countable.
+  The `max_tokens` cap further narrows the window for it.
 - **Ordering in `live.md`:** utterances (from the worker) and gap notes (from the
   drain) both go through the serial `LiveSink` actor and carry timestamps; mild
   interleaving is acceptable in the live view and does not affect `final.md`.
@@ -260,12 +294,33 @@ hostage.
   (no recording loss) and the queue stays at its cap (bounded memory).
 - **Drop-note test:** stub slower than real time; assert exactly one "fell
   behind" note and one "caught up" note per episode in `live.md`.
-- **Watchdog test (Phase 2):** stub whose `transcribeWindow` blocks until the
-  `AbortToken` is cancelled; assert the watchdog fires within ~deadline, the
-  window is dropped, and a subsequent window returns normally.
-- **`AbortToken` plumbing test:** a real `transcribeWindow` call with a
-  pre-cancelled token returns promptly (verifies `abort_callback` is wired) —
-  CPU backend (`useGPU: false`) per the test posture.
+Phase 2 — proving the interruption mechanism actually works. This is layered so
+that each layer is as deterministic as possible:
+
+- **Real-whisper abort proof (race-free, the core of this requirement):** on a
+  buffer large enough to take meaningful time, measure the baseline full-decode
+  time `T_full`; then run the *same* `transcribeWindow` with a **pre-cancelled**
+  `AbortToken`. whisper polls the hook on its first compute step, so it bails
+  almost immediately: assert `T_abort ≪ T_full`. This proves `abort_callback`
+  genuinely interrupts a real `whisper_full` — no timing race, since the token is
+  set before the call. CPU backend (`useGPU: false`) per the test posture. Then
+  run a normal decode and assert it succeeds — proving the aborted call released
+  `metalLock` and the worker can resume.
+- **Watchdog timer test (deterministic, stub):** a `WindowTranscribing` stub that
+  blocks until its `AbortToken` is cancelled; the worker's watchdog with a short
+  deadline flips it within ~deadline; assert the window is dropped and the next
+  window transcribes. Proves the timer → flip → recover loop without a
+  real-whisper timing race.
+- **Watchdog end-to-end with real whisper (integration):** real decode on a large
+  buffer + a short watchdog deadline → the watchdog flips the token mid-flight,
+  the decode aborts (elapsed ≪ baseline), and the worker continues. Large timing
+  margin; gate if ever flaky.
+- **No-false-positive test:** a healthy fast decode under a generous deadline →
+  the watchdog never fires; normal result returned.
+- **Abort-not-honored monitor test (stub):** a stub that *ignores* the
+  `AbortToken` and stays blocked → assert the abort-grace warning (§5.6) is
+  emitted and repeats with a growing age. The test cancels the stub at teardown
+  so it does not actually block forever.
 - All run under the narrow filters (`UnitTests`, `Streaming`, `LiveRunner`,
   `Transcription`) per CLAUDE.md; no failing/ungated tests.
 
@@ -274,6 +329,8 @@ hostage.
 - `BoundedFrameQueue` capacity: **~30 s** of audio per stream (aligns with the
   existing 2-window ≈ 16 s anchor-advance backpressure).
 - Watchdog decode deadline (Phase 2): **~10 s**.
+- Watchdog abort-grace threshold (Phase 2): **~5 s** past the deadline before the
+  unrecoverable-hang monitor (§5.6) starts warning.
 - `max_tokens` per window (Phase 2): a validated cap (replacing `0`/unlimited).
 - Existing `windowDuration` (8 s) / `stepInterval` (2 s) unchanged.
 
@@ -293,3 +350,7 @@ hostage.
   (the engine draining promptly should keep it from triggering).
 - Whether to surface a structured `events/*.jsonl` entry for drops/aborts (public
   surface; deferred).
+- **Engine self-restart on an unrecoverable hang:** once the §5.6 monitor tells
+  us how often an abort genuinely doesn't take, decide whether the engine should
+  escalate to restarting itself (the only real recovery, since the stuck thread
+  holds `metalLock`). Deferred until the monitor produces data.
