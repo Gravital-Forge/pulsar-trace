@@ -26,6 +26,11 @@ public final class BoundedFrameQueue: @unchecked Sendable {
     private var dropEpisodeStartedEdge = false
     private var caughtUpEdge = false
 
+    /// Posted (if set) whenever a frame is enqueued or the queue is finished, so
+    /// a worker multiplexing several queues can re-check without a parked
+    /// per-queue continuation. Set once at construction by the owner.
+    public var onActivity: (@Sendable () -> Void)?
+
     public init(capacityFrames: Int) {
         precondition(capacityFrames > 0, "capacityFrames must be positive")
         self.capacityFrames = capacityFrames
@@ -33,6 +38,20 @@ public final class BoundedFrameQueue: @unchecked Sendable {
 
     /// Total frames dropped over the queue's lifetime.
     public var droppedFrameCount: Int { lock.withLock { _droppedFrameCount } }
+
+    /// Non-suspending dequeue for a worker that parks on an external wakeup
+    /// instead of `dequeue()`. Returns nil when momentarily empty.
+    public func tryDequeueNonSuspending() -> AudioFrame? {
+        lock.withLock {
+            guard !buffer.isEmpty else { return nil }
+            let f = buffer.removeFirst()
+            if buffer.isEmpty && dropping { dropping = false; caughtUpEdge = true }
+            return f
+        }
+    }
+
+    /// True once `finish()` was called and every buffered frame has been taken.
+    public var isFinishedAndEmpty: Bool { lock.withLock { finished && buffer.isEmpty } }
 
     /// Non-blocking. Hands the frame to a waiting consumer if one is parked,
     /// else buffers it, dropping the oldest frame when at capacity.
@@ -54,6 +73,7 @@ public final class BoundedFrameQueue: @unchecked Sendable {
             buffer.append(frame)
         }
         toResume?.resume(returning: handoff)
+        onActivity?()
     }
 
     /// Suspends until a frame is available or the queue is finished+empty.
@@ -88,6 +108,7 @@ public final class BoundedFrameQueue: @unchecked Sendable {
             if buffer.isEmpty, let w = waiter { waiter = nil; toResume = w }
         }
         toResume?.resume(returning: nil)
+        onActivity?()
     }
 
     /// One-shot read of "a drop episode just began" (true at most once until a

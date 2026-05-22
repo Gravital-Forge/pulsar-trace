@@ -34,11 +34,27 @@ struct LiveRunnerResilienceTests {
         Date(timeIntervalSince1970: 1_770_000_000)
     }
 
+    /// A non-silent 20 ms frame whose peak clears the streaming VAD gate
+    /// (`silencePeakThreshold` 0.01), so the streaming transcriber actually
+    /// reaches `transcribeWindow` once a window is due. `.silence` frames are
+    /// VAD-gated out before whisper, so they cannot exercise the wedge.
+    private func tone(sequenceIndex: Int) -> AudioFrame {
+        let n = AudioFormat.samplesPerFrame
+        var s = [Float](repeating: 0, count: n)
+        for i in 0..<n {
+            // ~440 Hz sine at 0.2 amplitude — well above the 0.01 VAD gate.
+            s[i] = 0.2 * sin(2 * Float.pi * 440 * Float(i) / Float(AudioFormat.sampleRate))
+        }
+        return AudioFrame(samples: s, sequenceIndex: sequenceIndex)
+    }
+
     private func makeRunner(
         folder: URL,
         diarBufferProbe: (@Sendable (Int) -> Void)? = nil,
         silenceGapThreshold: Duration = .milliseconds(250),
-        tickInterval: Duration = .milliseconds(40)
+        tickInterval: Duration = .milliseconds(40),
+        queueCapacity: Duration = .seconds(30),
+        workerDrainTimeout: Duration = .seconds(10)
     ) -> (LiveRunner, LiveMarkdownWriter, StreamingPipeline.Configuration) {
         let config = StreamingPipeline.Configuration(
             recordingFolder: folder,
@@ -53,7 +69,9 @@ struct LiveRunnerResilienceTests {
             library: nil,
             diarBufferProbe: diarBufferProbe,
             silenceGapThreshold: silenceGapThreshold,
-            tickInterval: tickInterval)
+            tickInterval: tickInterval,
+            queueCapacity: queueCapacity,
+            workerDrainTimeout: workerDrainTimeout)
         return (runner, writer, config)
     }
 
@@ -374,6 +392,80 @@ struct LiveRunnerResilienceTests {
             #expect(observedPeak > 0)
         }
     }
+
+    // MARK: - Recording safety — WAV is never blocked by whisper
+
+    @Test("a wedged whisper decode never stalls the WAV recording")
+    func wedgedWhisperDoesNotStallRecording() async throws {
+        let folder = tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let blocking = BlockingWindowTranscriber()
+        let source = ControllableSource()
+        let systemWAV = folder.appendingPathComponent(RecordingFolder.FileName.audioSystem)
+
+        let (runner, writer, _) = makeRunner(folder: folder)
+        try await writer.start()
+
+        let runTask = Task {
+            try await runner.run(
+                systemTranscriber: blocking,
+                micTranscriber: nil,
+                systemSource: source,
+                micSource: nil,
+                liveDiarizer: nil)
+        }
+
+        // Non-silent frames so the streaming transcriber actually reaches
+        // `transcribeWindow` (which then wedges) once a window is due — 100
+        // frames is 2 s, exactly one step, so the wedge engages mid-stream.
+        for i in 0..<100 { await source.yieldFrame(tone(sequenceIndex: i)) }
+        try await Task.sleep(for: .milliseconds(400))
+
+        // The recording-folder WAV stores mono Int16 PCM — 2 bytes/sample —
+        // so 100 frames of 320 samples is 100 * 320 * 2 data bytes on disk
+        // (plus the 44-byte header). Assert the data bytes are all present while
+        // whisper is wedged: the WAV grew, the decode did not block it.
+        let size = (try? Data(contentsOf: systemWAV))?.count ?? 0
+        #expect(size >= 100 * AudioFormat.samplesPerFrame * 2,
+                "WAV did not grow while whisper was wedged; size=\(size)")
+
+        await source.finish()
+        _ = await withTimeoutOrNil(seconds: 5) { try await runTask.value }
+        await writer.finish()
+
+        let finalSize = (try? Data(contentsOf: systemWAV))?.count ?? 0
+        #expect(finalSize >= 100 * AudioFormat.samplesPerFrame * 2)
+    }
+
+    @Test("when whisper falls behind, the live view notes the drop and recording is whole")
+    func dropNoteOnBacklog() async throws {
+        let folder = tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let liveURL = folder.appendingPathComponent(RecordingFolder.FileName.live)
+
+        let blocking = BlockingWindowTranscriber()
+        let source = ControllableSource()
+        let (runner, writer, _) = makeRunner(folder: folder, queueCapacity: .milliseconds(200))
+        try await writer.start()
+
+        let runTask = Task {
+            try await runner.run(
+                systemTranscriber: blocking, micTranscriber: nil,
+                systemSource: source, micSource: nil, liveDiarizer: nil)
+        }
+        // 200 non-silent frames into a 200 ms (= 10-frame) queue while whisper is
+        // wedged: the queue saturates and starts dropping, which the drain notes
+        // once in live.md as a recording-paused gap.
+        for i in 0..<200 { await source.yieldFrame(tone(sequenceIndex: i)) }
+        try await Task.sleep(for: .milliseconds(300))
+        await source.finish()
+        _ = await withTimeoutOrNil(seconds: 15) { try await runTask.value }
+        await writer.finish()
+
+        let text = try String(contentsOf: liveURL, encoding: .utf8)
+        #expect(text.contains("_(recording paused)_"))
+    }
 }
 
 // MARK: - Test doubles
@@ -465,4 +557,36 @@ final class PeakCounter: @unchecked Sendable {
 actor DoneFlag {
     private(set) var isDone = false
     func markDone() { isDone = true }
+}
+
+/// A `WindowTranscribing` whose every decode blocks forever — the live wedge.
+/// Honors the abort token (set by the watchdog in a later task); until then it
+/// spin-sleeps until cancelled.
+final class BlockingWindowTranscriber: WindowTranscribing, @unchecked Sendable {
+    func transcribeWindow(
+        _ samples: [Float],
+        windowStart: Duration,
+        options: WhisperTranscriber.Options,
+        abort: AbortToken?
+    ) throws -> TranscriptionResult {
+        while abort?.isCancelled != true {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        throw WhisperTranscriber.TranscribeError.transcriptionFailed(-999)
+    }
+}
+
+/// Run `body`, returning nil if it does not finish within `seconds`.
+func withTimeoutOrNil<T: Sendable>(
+    seconds: Double, _ body: @escaping @Sendable () async throws -> T
+) async -> T? {
+    await withTaskGroup(of: T?.self) { group in
+        group.addTask { try? await body() }
+        group.addTask {
+            try? await Task.sleep(for: .seconds(seconds)); return nil
+        }
+        let first = await group.next() ?? nil
+        group.cancelAll()
+        return first
+    }
 }
