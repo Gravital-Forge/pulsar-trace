@@ -80,14 +80,14 @@ public final class StreamingTranscriber {
         /// into separate utterances.
         public var utteranceGap: Duration
         /// whisper decode options for each window.
-        public var whisperOptions: WhisperTranscriber.Options
+        public var whisperOptions: WhisperOptions
 
         public init(
             windowDuration: Duration = .seconds(8),
             stepInterval: Duration = .seconds(2),
             silencePeakThreshold: Float = 0.01,
             utteranceGap: Duration = .milliseconds(800),
-            whisperOptions: WhisperTranscriber.Options = .init()
+            whisperOptions: WhisperOptions = .init()
         ) {
             self.windowDuration = windowDuration
             self.stepInterval = stepInterval

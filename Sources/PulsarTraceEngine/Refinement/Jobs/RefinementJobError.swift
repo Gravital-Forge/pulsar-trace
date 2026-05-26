@@ -10,7 +10,7 @@ import Foundation
 /// - `OfflineRefiner.makeDiarizer` → `Diarizer.DiarizeError` (.pythonNotFound,
 ///   .launchFailed)
 /// - `ResumableRefiner.run` → `Diarizer.DiarizeError` (non-.cancelled variants),
-///   raw `WhisperTranscriber.TranscribeError`, I/O errors from `WAVReader` /
+///   raw `WhisperTranscribeError`, I/O errors from `WAVReader` /
 ///   `AtomicFile`.
 /// - `RefinementPipeline.assembleAndWrite` → `RefinementPipeline.RefineError`
 ///   (when the assemble step's reconciler / file writes wrap into the typed

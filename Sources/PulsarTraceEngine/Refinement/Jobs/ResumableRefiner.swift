@@ -13,7 +13,7 @@ import Logging
 public actor ResumableRefiner {
 
     public typealias TranscribeRegion =
-        @Sendable ([Float], SpeechRegion, WhisperTranscriber.Options) async throws
+        @Sendable ([Float], SpeechRegion, WhisperOptions) async throws
         -> TranscriptionResult
     public typealias DetectRegions =
         @Sendable ([Float]) throws -> [SpeechRegion]

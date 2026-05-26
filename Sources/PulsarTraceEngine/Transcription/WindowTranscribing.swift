@@ -14,7 +14,7 @@ public protocol WindowTranscribing: AnyObject {
     func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: WhisperTranscriber.Options,
+        options: WhisperOptions,
         abort: AbortToken?
     ) throws -> TranscriptionResult
 }

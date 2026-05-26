@@ -72,7 +72,7 @@ public struct SpeechRegion: Sendable, Equatable {
 /// so output is still byte-reproducible run-to-run on a given build. An
 /// optional Silero VAD model drops non-speech regions before decoding so a
 /// long digital-silence stretch can't drive the decoder into that degenerate
-/// state in the first place. See `Options`.
+/// state in the first place. See `WhisperOptions`.
 ///
 /// Not `Sendable`: `whisper_context` is not thread-safe. Use one transcriber
 /// per source from a single task.
@@ -92,7 +92,7 @@ public struct SpeechRegion: Sendable, Equatable {
 /// `ggml_metal_device_free` residency-set assertion that fires at process exit
 /// when many `whisper_context`s are created/freed in one process. See
 /// project-docs/DECISIONS.md D15.
-public final class WhisperTranscriber: WindowTranscribing {
+public final class WhisperTranscriber: WindowTranscribing, RegionTranscribing {
 
     /// Guards `whisper_context` lifecycle and `whisper_full` across the
     /// process so the Metal backend never sees concurrent contexts.
@@ -102,97 +102,11 @@ public final class WhisperTranscriber: WindowTranscribing {
     /// Bounds a degenerate/runaway decode. 0 = unlimited (old behavior).
     static let streamingMaxTokensPerSegment = 256
 
-    public enum TranscribeError: Error, CustomStringConvertible, Equatable {
-        case modelNotFound(String)
-        case modelLoadFailed(String)
-        case transcriptionFailed(Int)
-        case emptyAudio
-
-        public var description: String {
-            switch self {
-            case .modelNotFound(let p): return "whisper model not found: \(p)"
-            case .modelLoadFailed(let p): return "whisper model failed to load: \(p)"
-            case .transcriptionFailed(let c): return "whisper_full failed with code \(c)"
-            case .emptyAudio: return "no audio samples to transcribe"
-            }
-        }
-    }
-
-    /// Tunables for a transcription run. The defaults target the offline
-    /// refine pass; production may raise `threadCount`.
-    public struct Options: Sendable {
-        /// `nil` → auto-detect (whisper picks the language). A two-letter code
-        /// forces that language. The default multilingual `base`/`large-v3`
-        /// models support auto-detect.
-        public var language: String?
-        /// Decoder threads. 1 keeps output deterministic and is plenty for the
-        /// offline path on a fixture; bump for large recordings.
-        public var threadCount: Int
-        /// whisper's no-speech threshold — segments above this probability of
-        /// being non-speech are dropped by whisper before they reach us. Guards
-        /// against silence hallucinations ("thanks for watching").
-        public var noSpeechThreshold: Float
-        /// Decoder temperature for the *first* decode pass. whisper.cpp samples
-        /// the token distribution when this is > 0; its sampler RNG is seeded
-        /// with a fixed constant per `whisper_full` call, so a non-zero value
-        /// is still byte-reproducible run-to-run on a given build. `0` is pure
-        /// argmax. Read by `transcribe(_:)` only — `transcribeWindow` keeps
-        /// argmax for committer stability.
-        public var temperature: Float
-        /// Temperature step for whisper's fallback re-decode. When a segment
-        /// fails whisper's quality checks (compression-ratio / avg-logprob /
-        /// no-speech), whisper retries it at `temperature + step`, then
-        /// `+ 2·step`, … up to 1.0. This is whisper's primary escape from a
-        /// degenerate greedy-decode loop: at `0` a failed window has no
-        /// fallback and its garbage tokens poison every later window in the
-        /// same call. Read by `transcribe(_:)` only.
-        public var temperatureFallbackStep: Float
-        /// Path to a ggml Silero VAD model. When set, `transcribe(_:)` enables
-        /// whisper.cpp's built-in voice-activity detection: non-speech regions
-        /// are dropped before decoding, so a long digital-silence stretch in a
-        /// recording can't drive the decoder into a degenerate state. `nil`
-        /// disables VAD (whole-buffer decode). Ignored by `transcribeWindow`,
-        /// which the streaming pipeline already VAD-gates upstream.
-        public var vadModelURL: URL?
-
-        public init(
-            language: String? = nil,
-            threadCount: Int = 1,
-            noSpeechThreshold: Float = 0.6,
-            temperature: Float = 0.2,
-            temperatureFallbackStep: Float = 0.2,
-            vadModelURL: URL? = nil
-        ) {
-            self.language = language
-            self.threadCount = threadCount
-            self.noSpeechThreshold = noSpeechThreshold
-            self.temperature = temperature
-            self.temperatureFallbackStep = temperatureFallbackStep
-            self.vadModelURL = vadModelURL
-        }
-    }
-
     private let ctx: OpaquePointer
     private let modelURL: URL
     private let logger: Logger
     /// True when the model file name marks an English-only model (`*.en`).
     private let isEnglishOnlyModel: Bool
-
-    /// Default GPU setting, resolved from the environment.
-    ///
-    /// `PULSARTRACE_WHISPER_CPU` set to `1`/`true`/`yes` forces whisper's CPU
-    /// backend process-wide. This is the escape hatch for hosts where the Metal
-    /// GPU is unreachable — notably a command sandbox that denies IOKit GPU
-    /// access, where the Metal backend crashes during buffer allocation. The
-    /// production default is GPU (Metal).
-    public static var gpuEnabledByDefault: Bool {
-        switch ProcessInfo.processInfo.environment["PULSARTRACE_WHISPER_CPU"]?
-            .lowercased()
-        {
-        case "1", "true", "yes": return false
-        default: return true
-        }
-    }
 
     /// Load a ggml whisper model file and keep it resident.
     ///
@@ -200,13 +114,13 @@ public final class WhisperTranscriber: WindowTranscribing {
     ///   - modelURL: a `ggml-*.bin` file (`base`, `large-v3`, …).
     ///   - useGPU: loads the model on the Metal backend (production) when
     ///     `true`, or whisper's CPU backend when `false`. Defaults to
-    ///     `gpuEnabledByDefault` — GPU unless `PULSARTRACE_WHISPER_CPU` is set.
+    ///     `WhisperOptions.defaultGPUEnabled` — GPU unless `PULSARTRACE_WHISPER_CPU` is set.
     ///     The test/CI suite passes `false` explicitly so it never touches the
     ///     ggml-metal device and so cannot trip the upstream exit-time
     ///     residency-set assertion (project-docs/DECISIONS.md D15).
     public init(
         modelURL: URL,
-        useGPU: Bool = WhisperTranscriber.gpuEnabledByDefault,
+        useGPU: Bool = WhisperOptions.defaultGPUEnabled,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) throws {
         self.modelURL = modelURL
@@ -215,7 +129,7 @@ public final class WhisperTranscriber: WindowTranscribing {
             modelURL.deletingPathExtension().lastPathComponent.hasSuffix(".en")
 
         guard FileManager.default.fileExists(atPath: modelURL.path) else {
-            throw TranscribeError.modelNotFound(modelURL.path)
+            throw WhisperTranscribeError.modelNotFound(modelURL.path)
         }
 
         var cparams = whisper_context_default_params()
@@ -230,7 +144,7 @@ public final class WhisperTranscriber: WindowTranscribing {
         Self.metalLock.unlock()
 
         guard let loaded else {
-            throw TranscribeError.modelLoadFailed(modelURL.path)
+            throw WhisperTranscribeError.modelLoadFailed(modelURL.path)
         }
         self.ctx = loaded
         logger.notice(
@@ -254,8 +168,8 @@ public final class WhisperTranscriber: WindowTranscribing {
     ///   (longer for `large-v3` or long recordings) and holds a process-wide
     ///   lock. It must never be called from the main actor — dispatch it to a
     ///   background task/queue.
-    public func transcribe(_ samples: [Float], options: Options = Options()) throws -> TranscriptionResult {
-        guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
+    public func transcribe(_ samples: [Float], options: WhisperOptions = WhisperOptions()) throws -> TranscriptionResult {
+        guard !samples.isEmpty else { throw WhisperTranscribeError.emptyAudio }
         warnIfEnglishOnlyModel()
 
         // Serialize the whole ctx-touching region: `whisper_full` plus the
@@ -292,9 +206,9 @@ public final class WhisperTranscriber: WindowTranscribing {
     public func transcribe(
         _ samples: [Float],
         regions: [SpeechRegion],
-        options: Options = Options()
+        options: WhisperOptions = WhisperOptions()
     ) throws -> TranscriptionResult {
-        guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
+        guard !samples.isEmpty else { throw WhisperTranscribeError.emptyAudio }
         guard !regions.isEmpty else {
             var wholeBuffer = options
             wholeBuffer.vadModelURL = nil   // VAD found no speech to gate on
@@ -355,9 +269,9 @@ public final class WhisperTranscriber: WindowTranscribing {
     public func transcribeRegion(
         _ samples: [Float],
         region: SpeechRegion,
-        options: Options = Options()
+        options: WhisperOptions = WhisperOptions()
     ) throws -> TranscriptionResult {
-        guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
+        guard !samples.isEmpty else { throw WhisperTranscribeError.emptyAudio }
         warnIfEnglishOnlyModel()
 
         Self.metalLock.lock()
@@ -419,7 +333,7 @@ public final class WhisperTranscriber: WindowTranscribing {
     ) throws -> [SpeechRegion] {
         guard !samples.isEmpty else { return [] }
         guard FileManager.default.fileExists(atPath: vadModelURL.path) else {
-            throw TranscribeError.modelNotFound(vadModelURL.path)
+            throw WhisperTranscribeError.modelNotFound(vadModelURL.path)
         }
 
         Self.metalLock.lock()
@@ -430,7 +344,7 @@ public final class WhisperTranscriber: WindowTranscribing {
         guard let vctx = vadModelURL.path.withCString({
             whisper_vad_init_from_file_with_params($0, cparams)
         }) else {
-            throw TranscribeError.modelLoadFailed(vadModelURL.path)
+            throw WhisperTranscribeError.modelLoadFailed(vadModelURL.path)
         }
         defer { whisper_vad_free(vctx) }
 
@@ -439,7 +353,7 @@ public final class WhisperTranscriber: WindowTranscribing {
             whisper_vad_segments_from_samples(
                 vctx, vparams, buf.baseAddress, Int32(buf.count))
         }) else {
-            throw TranscribeError.transcriptionFailed(-1)
+            throw WhisperTranscribeError.transcriptionFailed(-1)
         }
         defer { whisper_vad_free_segments(segments) }
 
@@ -484,15 +398,15 @@ public final class WhisperTranscriber: WindowTranscribing {
     /// the degenerate-decode failure mode `transcribe(_:)` guards against
     /// can't arise here; and LocalAgreement-2 relies on two consecutive
     /// windows decoding their shared audio *identically*, which argmax gives
-    /// and sampling would not. `Options.temperature` / `.vadModelURL` are
+    /// and sampling would not. `WhisperOptions.temperature` / `.vadModelURL` are
     /// therefore ignored. Runs under the same process-wide Metal lock (D8).
     public func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: Options = Options(),
+        options: WhisperOptions = WhisperOptions(),
         abort: AbortToken? = nil
     ) throws -> TranscriptionResult {
-        guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
+        guard !samples.isEmpty else { throw WhisperTranscribeError.emptyAudio }
 
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.n_threads = Int32(options.threadCount)
@@ -546,7 +460,7 @@ public final class WhisperTranscriber: WindowTranscribing {
             return runFull(&params, samples)
         }
         guard code == 0 else {
-            throw TranscribeError.transcriptionFailed(Int(code))
+            throw WhisperTranscribeError.transcriptionFailed(Int(code))
         }
 
         let detectedLangId = whisper_full_lang_id(ctx)
@@ -576,7 +490,7 @@ public final class WhisperTranscriber: WindowTranscribing {
     /// inside it would only re-concatenate and re-hide any internal gap.
     private func decodeLocked(
         _ samples: [Float],
-        options: Options,
+        options: WhisperOptions,
         whisperVADModel: URL?
     ) throws -> TranscriptionResult {
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
@@ -646,7 +560,7 @@ public final class WhisperTranscriber: WindowTranscribing {
             code = decode()
         }
         guard code == 0 else {
-            throw TranscribeError.transcriptionFailed(Int(code))
+            throw WhisperTranscribeError.transcriptionFailed(Int(code))
         }
 
         let detectedLangId = whisper_full_lang_id(ctx)

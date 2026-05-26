@@ -56,7 +56,7 @@ public struct OfflineTranscriptionPipeline: Sendable {
         source: some AudioFrameSource,
         transcriber: WhisperTranscriber,
         recordingStart: Date = Date(),
-        options: WhisperTranscriber.Options = .init()
+        options: WhisperOptions = .init()
     ) async throws -> Output {
         let samples = try await accumulate(source)
         let duration = Duration.milliseconds(

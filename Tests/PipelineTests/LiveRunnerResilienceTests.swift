@@ -635,13 +635,13 @@ final class BlockingWindowTranscriber: WindowTranscribing, @unchecked Sendable {
     func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: WhisperTranscriber.Options,
+        options: WhisperOptions,
         abort: AbortToken?
     ) throws -> TranscriptionResult {
         while abort?.isCancelled != true {
             Thread.sleep(forTimeInterval: 0.02)
         }
-        throw WhisperTranscriber.TranscribeError.transcriptionFailed(-999)
+        throw WhisperTranscribeError.transcriptionFailed(-999)
     }
 }
 
@@ -654,12 +654,12 @@ final class HangThenRecoverTranscriber: WindowTranscribing, @unchecked Sendable 
     var decodesAttempted: Int { get async { lock.withLock { _attempted } } }
     func transcribeWindow(
         _ samples: [Float], windowStart: Duration,
-        options: WhisperTranscriber.Options, abort: AbortToken?
+        options: WhisperOptions, abort: AbortToken?
     ) throws -> TranscriptionResult {
         let n = lock.withLock { _attempted += 1; return _attempted }
         if n <= hangCount {
             while abort?.isCancelled != true { Thread.sleep(forTimeInterval: 0.02) }
-            throw WhisperTranscriber.TranscribeError.transcriptionFailed(-999)
+            throw WhisperTranscribeError.transcriptionFailed(-999)
         }
         return TranscriptionResult(
             segments: [TranscriptSegment(start: windowStart, end: windowStart, text: "ok")],
@@ -675,7 +675,7 @@ final class IgnoresAbortTranscriber: WindowTranscribing, @unchecked Sendable {
     func release() { lock.withLock { released = true } }
     func transcribeWindow(
         _ samples: [Float], windowStart: Duration,
-        options: WhisperTranscriber.Options, abort: AbortToken?
+        options: WhisperOptions, abort: AbortToken?
     ) throws -> TranscriptionResult {
         while !(lock.withLock { released }) { Thread.sleep(forTimeInterval: 0.02) }
         return TranscriptionResult(segments: [], language: "en")
