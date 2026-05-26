@@ -55,7 +55,19 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         }
     }
 
-    private enum Stream: Sendable, Hashable { case system, mic }
+    internal enum Stream: Sendable, Hashable { case system, mic }
+
+    /// Identifies what triggered `handleStall` so the recency guard can be
+    /// applied selectively.
+    ///
+    /// - `watchdog`: the `FrameWatchdog` fired — silence past the stall
+    ///   threshold. The guard is appropriate: a watchdog cannot legitimately
+    ///   fire before `stallThreshold` has elapsed, so an early callback is
+    ///   stale and safe to skip.
+    /// - `streamError`: `SCStream.didStopWithError` fired — the stream is
+    ///   dead now, regardless of how recently the engine was installed. The
+    ///   recency guard must NOT apply.
+    internal enum StallCause: Sendable { case watchdog, streamError }
 
     private let configuration: Configuration
     private let systemServer: CaptureSocketServer
@@ -179,17 +191,37 @@ public final class DeviceCaptureSource: @unchecked Sendable {
 
     // MARK: - Engine construction
 
-    private func makeMicEngine() -> MicCaptureEngine {
+    // `internal` (not `private`) so `StallRecoveryTests` can construct the
+    // engines via the production wiring path and assert that the watchdog /
+    // stream-error callbacks are assigned. The tests don't start the engines —
+    // they just inspect the closure slots.
+    internal func makeMicEngine() -> MicCaptureEngine {
         let engine = MicCaptureEngine(deviceID: configuration.micDeviceID)
         engine.onEvent = { [weak self] event in self?.route(event, .mic) }
         engine.onStall = { [weak self] in self?.handleStall(stream: .mic) }
         return engine
     }
 
-    private func makeSystemEngine() -> SystemAudioCaptureEngine {
+    internal func makeSystemEngine() -> SystemAudioCaptureEngine {
         let engine = SystemAudioCaptureEngine(filter: .allApps)
         engine.onEvent = { [weak self] event in self?.route(event, .system) }
         engine.onStall = { [weak self] in self?.handleStall(stream: .system) }
+        // A hard `SCStream` failure (e.g. TCC revoked mid-session, display
+        // rearrangement, ScreenCaptureKit internal abort) reaches
+        // `SystemAudioCaptureEngine.stream(_:didStopWithError:)`, which fires
+        // `onStreamError`. Without this assignment the callback fires into
+        // the void and capture dies silently — observed on session
+        // 2026-05-20-113001 (~17 min in, no `recording_paused` event).
+        // Route into the same path as a silent stall: `handleStall` emits
+        // `recording_paused` (reason `stall_recovery`), stops the engine,
+        // and rebuilds a fresh one with exponential backoff. The error's
+        // type name is logged for diagnosability (its description is not
+        // logged because it can carry a filesystem path — Hard Invariant #7).
+        engine.onStreamError = { [weak self] error in
+            guard let self else { return }
+            self.log("system audio stream error (\(type(of: error)))")
+            self.handleStall(stream: .system, cause: .streamError)
+        }
         return engine
     }
 
@@ -345,20 +377,29 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     /// re-schedules the next one with `restartQueue.asyncAfter` and returns,
     /// so each queued block is short and `handleSleep`/`handleWake` can
     /// interleave between attempts.
-    private func handleStall(stream: Stream) {
+    internal func handleStall(stream: Stream, cause: StallCause = .watchdog) {
         let stallWall = Date()
         restartQueue.async { [self] in
             // Bail if teardown began, a sleep is in progress (the wake rebuilds
             // both engines anyway), or this stream is already being restarted.
             //
-            // Also bail if this stream's engine was installed more recently
-            // than its stall threshold ago: the callback was dispatched before
-            // an engine swap (e.g. across sleep/wake) and now targets a fresh,
-            // healthy engine that has had no chance to genuinely stall.
+            // For the watchdog path only: also bail if this stream's engine was
+            // installed more recently than its stall threshold ago. A watchdog
+            // callback dispatched just before an engine swap (e.g. across
+            // sleep/wake) targets a fresh, healthy engine that has had no chance
+            // to genuinely stall and should be ignored.
+            //
+            // This guard does NOT apply to `.streamError`: SCStream's
+            // `didStopWithError` is authoritative — the stream is dead
+            // regardless of how recently the engine was installed. A TCC
+            // permission inconsistency or ScreenCaptureKit abort can fire
+            // within the first second of start(); suppressing that would leave
+            // capture silently dead.
             let proceed = lock.withLock { () -> Bool in
                 guard !stopped, !paused, !restartingStreams.contains(stream)
                 else { return false }
-                if let installedAt = engineInstalledAt[stream],
+                if cause == .watchdog,
+                   let installedAt = engineInstalledAt[stream],
                    Date().timeIntervalSince(installedAt)
                        < secondsValue(stallThreshold(for: stream)) {
                     return false
@@ -519,6 +560,23 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         let c = duration.components
         return TimeInterval(c.seconds)
             + TimeInterval(c.attoseconds) / 1_000_000_000_000_000_000
+    }
+
+    // MARK: - Test hooks
+
+    /// Record the wall-clock time at which `stream`'s engine was installed.
+    /// Used by `StallRecoveryTests` to simulate a freshly-installed engine
+    /// without starting real hardware (so the recency guard can be tested
+    /// in isolation).
+    internal func markEngineInstalled(stream: Stream, at date: Date) {
+        lock.withLock { engineInstalledAt[stream] = date }
+    }
+
+    /// The set of streams currently undergoing a stall restart. Exposed for
+    /// `StallRecoveryTests` so the test can confirm `handleStall` enqueued a
+    /// restart without starting real hardware.
+    internal var restartingStreamsForTest: Set<Stream> {
+        lock.withLock { restartingStreams }
     }
 
     /// Operational diagnostic to stderr — the daemon's log channel.

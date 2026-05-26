@@ -92,11 +92,15 @@ public struct SpeechRegion: Sendable, Equatable {
 /// `ggml_metal_device_free` residency-set assertion that fires at process exit
 /// when many `whisper_context`s are created/freed in one process. See
 /// project-docs/DECISIONS.md D15.
-public final class WhisperTranscriber {
+public final class WhisperTranscriber: WindowTranscribing {
 
     /// Guards `whisper_context` lifecycle and `whisper_full` across the
     /// process so the Metal backend never sees concurrent contexts.
     private static let metalLock = NSLock()
+
+    /// Per-segment token cap for the streaming window path (whisper.h `max_tokens`).
+    /// Bounds a degenerate/runaway decode. 0 = unlimited (old behavior).
+    static let streamingMaxTokensPerSegment = 256
 
     public enum TranscribeError: Error, CustomStringConvertible, Equatable {
         case modelNotFound(String)
@@ -331,6 +335,60 @@ public final class WhisperTranscriber {
             language: language ?? (isEnglishOnlyModel ? "en" : "unknown"))
     }
 
+    /// Decode one VAD region as a single `whisper_full` call, with timestamps
+    /// shifted onto the recording timeline.
+    ///
+    /// Intended for callers that iterate regions externally — e.g.
+    /// `ResumableRefiner` (D-Q6), which persists a checkpoint between regions
+    /// and honours a pause gate. Each call acquires `metalLock` independently,
+    /// so the pause gate can fire between consecutive regions. This is the
+    /// public contract that `transcribe(_:regions:options:)` implements
+    /// internally (with the lock already held for the whole batch).
+    ///
+    /// Same blocking / process-lock contract as `transcribe(_:options:)`.
+    ///
+    /// - Parameters:
+    ///   - samples: the whole recording, 16 kHz mono Float32.
+    ///   - region: the speech region to decode, in recording-relative time.
+    ///   - options: decoder tunables; `options.vadModelURL` is ignored — the
+    ///     region is already speech-only.
+    public func transcribeRegion(
+        _ samples: [Float],
+        region: SpeechRegion,
+        options: Options = Options()
+    ) throws -> TranscriptionResult {
+        guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
+        warnIfEnglishOnlyModel()
+
+        Self.metalLock.lock()
+        defer { Self.metalLock.unlock() }
+
+        let sampleCount = samples.count
+        let lo = Self.sampleIndex(of: region.start, sampleCount: sampleCount)
+        let hi = Self.sampleIndex(of: region.end, sampleCount: sampleCount)
+        guard lo < hi else {
+            return TranscriptionResult(
+                segments: [],
+                language: isEnglishOnlyModel ? "en" : "unknown")
+        }
+
+        // whisper VAD off (`whisperVADModel: nil`): the region is already
+        // speech-only. Shift the region-relative segment times back onto
+        // the recording timeline.
+        let decoded = try decodeLocked(
+            Array(samples[lo..<hi]), options: options, whisperVADModel: nil)
+        let offset = Duration.milliseconds(lo * 1000 / AudioFormat.sampleRate)
+        let shifted = decoded.segments.map { seg in
+            TranscriptSegment(
+                start: seg.start + offset,
+                end: seg.end + offset,
+                text: seg.text)
+        }
+        return TranscriptionResult(
+            segments: shifted,
+            language: decoded.language)
+    }
+
     /// Detect the speech regions of a recording with whisper.cpp's bundled
     /// Silero VAD, coalescing regions closer than `minTurnGap` so the transcript
     /// splits at genuine conversational turn pauses rather than at every breath.
@@ -431,7 +489,8 @@ public final class WhisperTranscriber {
     public func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: Options = Options()
+        options: Options = Options(),
+        abort: AbortToken? = nil
     ) throws -> TranscriptionResult {
         guard !samples.isEmpty else { throw TranscribeError.emptyAudio }
 
@@ -452,6 +511,28 @@ public final class WhisperTranscriber {
         params.suppress_blank = true
         params.suppress_nst = true
         params.no_speech_thold = options.noSpeechThreshold
+
+        // Per-segment token cap: a window is ≤ 8 s of speech, so a few hundred
+        // tokens is generous; an unbounded (0) cap lets a degenerate decode
+        // loop spin. Bounds a runaway even between abort polls.
+        params.max_tokens = Int32(Self.streamingMaxTokensPerSegment)
+
+        // Abort hook: a watchdog on another task flips `abort.cancel()`; whisper
+        // polls this at each encode/decode-step boundary (this build checks it
+        // after every `whisper_encode_internal` / `whisper_decode_internal`, not
+        // between individual ggml graph nodes — verified in vendor/whisper.cpp)
+        // and returns early, skipping the rest of the decode and releasing
+        // metalLock. The closure is @convention(c) (no captures) and reads the
+        // token through the user-data pointer.
+        if let abort {
+            let cb: ggml_abort_callback = { userData in
+                guard let userData else { return false }
+                return Unmanaged<AbortToken>
+                    .fromOpaque(userData).takeUnretainedValue().isCancelled
+            }
+            params.abort_callback = cb
+            params.abort_callback_user_data = Unmanaged.passUnretained(abort).toOpaque()
+        }
 
         let langString = options.language.flatMap { isEnglishOnlyModel ? nil : $0 }
             ?? (isEnglishOnlyModel ? "en" : "auto")

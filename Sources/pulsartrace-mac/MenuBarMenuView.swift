@@ -12,6 +12,7 @@ import SwiftUI
 /// to read as a clean dropdown list rather than bordered buttons (#2).
 struct MenuBarMenuView: View {
     @Environment(RecordingViewModel.self) private var recording
+    @Environment(RefinementJobQueueViewModel.self) private var queueVM
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.openWindow) private var openWindow
 
@@ -59,8 +60,6 @@ struct MenuBarMenuView: View {
             menuButton("Show Live Transcript…") {
                 open(WindowID.liveTranscript)
             }
-        case .refining:
-            menuButton("Refining…", enabled: false) {}
         case .crashed:
             menuButton("Recover Transcript") {
                 Task { await recording.recoverFromCrash() }
@@ -87,27 +86,40 @@ struct MenuBarMenuView: View {
         Divider().padding(.vertical, 3)
     }
 
-    /// The single status line (#1) — driven entirely by `RecordingStatus`, so
-    /// the menu no longer stacks a redundant `progressMessage` line beneath it.
+    /// The single status line (#1) — driven by `RecordingStatus` with a queue
+    /// overlay when a refinement is running or queued in the background.
     /// `progressMessage` is consulted only when idle: a failed refine leaves a
     /// message there that would otherwise be lost.
     private var statusText: String {
         switch recording.status {
-        case .idle:
-            return recording.progressMessage.isEmpty
-                ? "Ready" : recording.progressMessage
-        case .launching:
-            return "Starting…"
         case .recording(_, let startedAt):
             let started = startedAt.formatted(date: .omitted, time: .shortened)
+            if let q = queueStatus { return "Recording since \(started) · \(q)" }
             return "Recording since \(started)"
-        case .refining:
-            return "Refining transcript…"
-        case .crashed:
-            return "Recording stopped unexpectedly"
-        case .error(let message):
-            return message
+        case .idle:
+            if let q = queueStatus { return q }
+            return recording.progressMessage.isEmpty
+                ? "Ready" : recording.progressMessage
+        case .launching: return "Starting…"
+        case .crashed:   return "Recording stopped unexpectedly"
+        case .error(let message): return message
         }
+    }
+
+    /// A short queue summary to append to or replace the status line.
+    /// Returns `nil` when the queue is idle so the recording status stands alone.
+    private var queueStatus: String? {
+        if let running = queueVM.running,
+           case .running(let stage, _, _, _, _) = running.state {
+            if let pct = running.state.progressFraction {
+                return "Refining \(Int((pct * 100).rounded()))% · \(stage.displayName)"
+            }
+            return "Refining · \(stage.displayName)"
+        }
+        if !queueVM.queued.isEmpty {
+            return "\(queueVM.queued.count) queued"
+        }
+        return nil
     }
 
     /// Colour for the status line — red/orange keep a crash or error salient

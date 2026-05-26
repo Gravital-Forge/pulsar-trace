@@ -126,31 +126,4 @@ struct RecordingsScannerTests {
         #expect(scanner.recordings.map(\.id) == ["rec_good"])
     }
 
-    @Test("reRefine runs the injected refiner and rescans")
-    func reRefineInvokesInjectedRefiner() async throws {
-        let root = MenuBarFixtures.tempDir()
-        defer { try? FileManager.default.removeItem(at: root) }
-        try MenuBarFixtures.makeRecordingFolder(
-            root: root, name: "standup", recordingId: "rec_x")
-
-        let refinedFolder = Mailbox()
-        let scanner = RecordingsScanner(
-            settings: try settings(outputRoot: root),
-            reRefiner: { url in await refinedFolder.set(url) })
-        await scanner.refresh()
-
-        let entry = try #require(scanner.recordings.first)
-        await scanner.reRefine(entry)
-
-        #expect(await refinedFolder.value()?.lastPathComponent == "standup")
-        #expect(scanner.lastError == nil)
-    }
-
-    /// A tiny `Sendable` mailbox for capturing a value from a `@Sendable`
-    /// closure.
-    private actor Mailbox {
-        private var url: URL?
-        func set(_ u: URL) { url = u }
-        func value() -> URL? { url }
-    }
 }

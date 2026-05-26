@@ -33,6 +33,7 @@ struct PulsarTraceMacApp: App {
         MenuBarExtra {
             MenuBarMenuView()
                 .environment(environment.recording)
+                .environment(environment.queueVM)
                 .environment(environment.navigation)
         } label: {
             Image(systemName: environment.recording.status.menuBarSymbol)
@@ -48,6 +49,7 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.recording)
                 .environment(environment.scanner)
                 .environment(environment.navigation)
+                .environment(environment.queueVM)
         }
         .defaultSize(width: 760, height: 480)
 
@@ -58,6 +60,76 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.liveWatcher)
         }
         .defaultSize(width: 460, height: 480)
+    }
+}
+
+/// A mutable container for an async closure — used to break the init-time
+/// dependency cycle in `AppEnvironment`. `RecordingViewModel` calls `call(_:_:)`
+/// on the box; `AppEnvironment` wires the real implementation into `impl` once
+/// `self` is fully initialized (every stored property is set).
+///
+/// `@unchecked Sendable` because `impl` is mutated once during init on the
+/// MainActor and read-only thereafter — the mutation happens before any
+/// concurrent caller can reach it.
+private final class EnqueueBox: @unchecked Sendable {
+    var impl: (@Sendable (URL, String) async -> Void)?
+
+    func call(_ url: URL, _ recordingId: String) async {
+        await impl?(url, recordingId)
+    }
+}
+
+/// A mutable container for a no-argument async closure — same init-time
+/// dependency-cycle break as `EnqueueBox`, used for `pauseRefinement` and
+/// `resumeRefinement`.
+///
+/// `@unchecked Sendable`: mutated once during init on the MainActor, then
+/// read-only from `RecordingViewModel` closures.
+private final class AsyncCallBox: @unchecked Sendable {
+    var impl: (@Sendable () async -> Void)?
+
+    func call() async {
+        await impl?()
+    }
+}
+
+/// One-shot async gate. `wait()` suspends until `signal()` is called; once
+/// signalled, every later `wait()` returns immediately. Used by
+/// AppEnvironment to block auto-refine enqueues until `bootstrap` has
+/// installed the real `RefinementJobQueue`.
+///
+/// `@unchecked Sendable`: the lock protects `signalled` and `waiters` from
+/// concurrent access; everything mutates inside `lock.withLock`.
+private final class QueueReadyGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var signalled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func signal() {
+        let toResume: [CheckedContinuation<Void, Never>] = lock.withLock {
+            guard !signalled else { return [] }
+            signalled = true
+            let w = waiters
+            waiters.removeAll()
+            return w
+        }
+        for c in toResume { c.resume() }
+    }
+
+    func wait() async {
+        let alreadySignalled: Bool = lock.withLock {
+            if signalled { return true }
+            return false
+        }
+        if alreadySignalled { return }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let resumeImmediately: Bool = lock.withLock {
+                if signalled { return true }
+                waiters.append(c)
+                return false
+            }
+            if resumeImmediately { c.resume() }
+        }
     }
 }
 
@@ -82,6 +154,24 @@ final class AppEnvironment {
     /// The standard app paths — events directory, speaker library, sockets.
     let paths: AppPaths
 
+    /// The single-worker refinement queue (D2). Built asynchronously in
+    /// `bootstrap()` — `nil` until then, so `toggleRecording` uses optional
+    /// calls throughout. This matches the existing `events.bootstrap()` pattern:
+    /// async setup is deferred to an `App.task { }`, keeping `init()` sync.
+    private(set) var queue: RefinementJobQueue? = nil
+
+    /// Gate that opens once `bootstrap()` has installed the real queue. The
+    /// `enqueueBox.impl` closure awaits this before reading `self.queue`, so
+    /// a stop-recording that lands during bootstrap still gets its auto-
+    /// refine enqueued instead of silently dropping (race fix).
+    private let queueReady = QueueReadyGate()
+
+    /// Main-actor façade over `queue` — always non-optional (E2). Initialised
+    /// with a placeholder (noop) queue in `init()`; `bootstrap()` swaps in the
+    /// real queue via `setQueue(_:)` once `makeStandard` completes. Non-optional
+    /// so it can be passed directly to `.environment(...)` without extra wrappers.
+    let queueVM: RefinementJobQueueViewModel
+
     /// Passive global-hotkey monitor (R41). `addGlobalMonitorForEvents` needs
     /// NO Accessibility TCC grant; the keypress also reaching the frontmost
     /// app is an accepted v1 tradeoff (D27). NOT a `CGEventTap`.
@@ -96,6 +186,10 @@ final class AppEnvironment {
     /// or not it is open (FIX 1). Lives for the process lifetime.
     private var liveWatcherWiring: Task<Void, Never>?
 
+    /// Handle for the combined bootstrap task (events → queue). Stored so
+    /// it can be cancelled if `AppEnvironment` is ever torn down.
+    private var bootstrapTask: Task<Void, Never>?
+
     init() {
         let settings = MenuBarSettings()
         let paths = AppPaths.standard
@@ -103,17 +197,111 @@ final class AppEnvironment {
         self.settings = settings
         self.paths = paths
         self.events = events
+
+        // Placeholder queue used only to make queueVM non-Optional before
+        // bootstrap() swaps in the real queue. Points at a unique temp dir so
+        // it can never accidentally read or write the real refinement-queue
+        // store on disk.
+        let placeholderDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulsartrace-placeholder-queue-\(ProcessInfo.processInfo.processIdentifier)",
+                                    isDirectory: true)
+        let placeholderStore = RefinementJobStore(directory: placeholderDir)
+        let placeholderQueue = RefinementJobQueue(
+            store: placeholderStore, runJob: { _ in })
+        self.queueVM = RefinementJobQueueViewModel(queue: placeholderQueue)
+
+        // Indirection boxes: let RecordingViewModel call real closures before
+        // `self` is fully initialized (Swift forbids [weak self] captures until
+        // every stored property is set, which `recording` itself prevents). Each
+        // box is created up-front, passed into RecordingViewModel as the closure
+        // payload, and filled in below once `self` is complete.
+        let enqueueBox = EnqueueBox()
+        let pauseBox = AsyncCallBox()
+        let resumeBox = AsyncCallBox()
+
         self.recording = RecordingViewModel(
-            settings: settings, paths: paths, events: events)
-        self.scanner = RecordingsScanner(
-            settings: settings, paths: paths, events: events)
+            settings: settings, paths: paths, events: events,
+            enqueueAutoRefine: { url, recordingId in
+                await enqueueBox.call(url, recordingId)
+            },
+            pauseRefinement: { await pauseBox.call() },
+            resumeRefinement: { await resumeBox.call() })
+        self.scanner = RecordingsScanner(settings: settings)
         self.liveWatcher = LiveTranscriptWatcher()
         self.onboarding = OnboardingTourViewModel()
-        // Bootstrap the events writer (creates today's events file) before any
-        // component emits — mirrors `AppLifecycle.start`.
-        Task { await events.bootstrap() }
+
+        // All stored properties are now set — `self` is fully initialized.
+        // Wire the real implementations into the boxes. Closures hop to MainActor
+        // to read @MainActor-isolated state before crossing into the queue actor.
+        enqueueBox.impl = { [weak self] url, recordingId in
+            // Wait for bootstrap() to install the real queue. If
+            // AppEnvironment is torn down before bootstrap completes, the
+            // weak self below evaluates to nil and the closure exits.
+            let gateOpt: QueueReadyGate? = await MainActor.run { self?.queueReady }
+            guard let gate = gateOpt else { return }
+            await gate.wait()
+
+            let pair: (RefinementJobQueue, String, String)? =
+                await MainActor.run {
+                    guard let self, let queue = self.queue else { return nil }
+                    let name = self.settings.refineModelName
+                    let model = ModelCatalog.model(named: name) ?? ModelCatalog.base
+                    return (queue, model.name, model.sha256)
+                }
+            guard let (queue, modelName, modelSHA256) = pair else {
+                FileHandle.standardError.write(
+                    Data("pulsartrace-mac: auto-refine dropped — queue gone after bootstrap\n".utf8))
+                return
+            }
+            do {
+                try await queue.enqueueAutoRefine(
+                    folderURL: url, recordingId: recordingId,
+                    modelName: modelName, modelSHA256: modelSHA256)
+            } catch {
+                let raw = "pulsartrace-mac: auto-refine enqueue failed: \(error)\n"
+                let msg = PathRedactor.redactHome(raw)
+                FileHandle.standardError.write(Data(msg.utf8))
+            }
+        }
+        pauseBox.impl = { [weak self] in
+            let q: RefinementJobQueue? = await MainActor.run { self?.queue }
+            await q?.pauseForRecording()
+        }
+        resumeBox.impl = { [weak self] in
+            let q: RefinementJobQueue? = await MainActor.run { self?.queue }
+            await q?.resumeAfterRecording()
+        }
+
+        // Chain events bootstrap → queue bootstrap in a single stored Task so
+        // that `RefinementJobQueue.makeStandard` (and any `runJob` it spawns)
+        // always sees a fully bootstrapped events writer. The handle is stored
+        // so cancellation is possible if `AppEnvironment` is ever torn down.
+        self.bootstrapTask = Task { [weak self] in
+            await events.bootstrap()
+            await self?.bootstrap()
+        }
         installHotkeyMonitor()
         startLiveWatcherWiring()
+    }
+
+    /// Build the refinement queue asynchronously. Invoked from a fire-and-forget
+    /// `Task` in `init()` — the same pattern as `events.bootstrap()`. Keeps
+    /// `init()` synchronous while allowing the expensive async setup to run
+    /// once the MainActor is free after initialization.
+    func bootstrap() async {
+        let q = await RefinementJobQueue.makeStandard(events: events, paths: paths)
+        self.queue = q
+        await queueVM.setQueue(q)
+        queueVM.onJobsTerminated = { [weak self] _ in
+            guard let self else { return }
+            Task { await self.scanner.refresh() }
+        }
+        // Single process-wide poller. The menubar dropdown and the
+        // recordings-list RefineBadge both read from queueVM; before this
+        // change polling only ran while RefinementsListView was visible,
+        // so those two surfaces were stale.
+        queueVM.startPolling()
+        queueReady.signal()
     }
 
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).
@@ -177,6 +365,10 @@ final class AppEnvironment {
     }
 
     /// Start or stop recording — the hotkey's effect (R41).
+    ///
+    /// Pause/resume of the refinement queue is now owned by `RecordingViewModel`
+    /// via the injected hooks, so every path (hotkey, menubar dropdown) is
+    /// correct by construction.
     func toggleRecording() async {
         switch recording.status {
         case .idle:
@@ -196,7 +388,6 @@ extension RecordingStatus {
         case .idle: return "waveform"
         case .launching: return "waveform.badge.plus"
         case .recording: return "waveform.badge.microphone"
-        case .refining: return "waveform.badge.exclamationmark"
         case .crashed: return "exclamationmark.triangle"
         case .error: return "exclamationmark.triangle"
         }

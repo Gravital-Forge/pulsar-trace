@@ -9,8 +9,17 @@ import SwiftUI
 /// menubar panel. The watcher lives at app scope and keeps tailing whether or
 /// not this window is open, so re-opening just re-shows the already-tailed
 /// lines.
+///
+/// Smart auto-scroll (R45): a view-scoped `AutoScrollController` follows the
+/// latest line while the user is at/near the bottom, pauses when they scroll
+/// up, and surfaces a "Jump to latest" pill until they return.
 struct LiveTranscriptView: View {
     @Environment(LiveTranscriptWatcher.self) private var watcher
+
+    /// View-scoped — a fresh controller per window open. `@State` keeps the
+    /// instance alive across view re-renders; `@Observable` makes its mutations
+    /// trigger re-renders without needing `@Bindable`.
+    @State private var autoScroll = AutoScrollController()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -37,7 +46,8 @@ struct LiveTranscriptView: View {
                 lines: watcher.lines,
                 placeholder: watcher.isActive
                     ? "Waiting for transcript…"
-                    : "No recording in progress.")
+                    : "No recording in progress.",
+                autoScroll: autoScroll)
         }
         .frame(minWidth: 360, minHeight: 320)
     }

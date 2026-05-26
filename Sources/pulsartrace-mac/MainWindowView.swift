@@ -10,6 +10,16 @@ import SwiftUI
 /// resizable window: the menubar dropdown is a plain panel again, and a
 /// `.sheet` (merge/split, the transcript viewer) positions correctly because
 /// it is presented on an ordinary window rather than a menubar panel.
+///
+/// ## Sidebar pane chrome rule
+/// Every view that appears in the `detail` column (see `detail` below) MUST
+/// carry a `.toolbar {}` modifier — even a toolbar with only a single item.
+/// Without it, macOS's `NavigationSplitView` renders different corner rounding
+/// and a different sidebar visual boundary: the three traffic-light circles
+/// appear outside the sidebar outline rather than inside it. The canonical
+/// explanation lives in `SettingsView.swift:66-68`. All four detail panes
+/// (`RecordingsListView`, `RefinementsListView`, `SpeakerEditorView`,
+/// `SettingsView`) follow this rule.
 struct MainWindowView: View {
     /// The process-wide events writer — handed to the speaker editor so its
     /// `speaker_*` / `final_md_rewritten` events are emitted in the shipped app.
@@ -54,6 +64,8 @@ struct MainWindowView: View {
         switch navigation.section {
         case .recordings:
             RecordingsListView()
+        case .refinements:
+            RefinementsListView()
         case .speakers:
             SpeakerEditorView(events: events)
         case .settings:

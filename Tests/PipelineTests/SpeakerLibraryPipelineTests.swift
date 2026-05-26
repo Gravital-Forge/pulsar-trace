@@ -42,6 +42,16 @@ struct SpeakerLibraryPipelineTests {
         return lines.joined(separator: "\n")
     }
 
+    /// Lossy normalization for whisper-output comparison: lowercase, letters
+    /// only. Whisper.cpp's token logits at punctuation boundaries are not
+    /// reliably deterministic across BLAS/Accelerate versions — a single
+    /// comma can flip across macOS releases on the same model + audio — so
+    /// the snapshot match below tolerates that drift while still catching
+    /// wrong speaker labels, missing turns, or garbled words.
+    private func lettersOnly(_ s: String) -> String {
+        s.lowercased().filter { $0.isLetter }
+    }
+
     /// All event `type`s in an events file, in order.
     private func eventTypes(in url: URL) throws -> [String] {
         try String(contentsOf: url, encoding: .utf8)
@@ -169,8 +179,17 @@ struct SpeakerLibraryPipelineTests {
         #expect(log.contains("\"speakers_new\":1"))
         #expect(log.contains("\"speakers_matched\":1"))
 
-        // Snapshot recording B's reconciled final.md body.
-        assertSnapshot(of: body(of: finalB), as: .lines)
+        // Reconciled final.md body matches the committed reference, tolerant
+        // of whisper's non-deterministic punctuation/whitespace drift across
+        // BLAS versions. The reference file stays human-readable for review;
+        // only the comparison is normalized.
+        let referenceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("__Snapshots__")
+            .appendingPathComponent("SpeakerLibraryPipelineTests")
+            .appendingPathComponent("returningSpeakerAutoLabelled.1.txt")
+        let reference = try String(contentsOf: referenceURL, encoding: .utf8)
+        #expect(lettersOnly(body(of: finalB)) == lettersOnly(reference))
     }
 
     // MARK: - A genuinely different speaker becomes a new Unknown

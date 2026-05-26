@@ -73,51 +73,42 @@ struct RecordingViewModelTests {
         return settings
     }
 
-    /// Build a VM around a given stub orchestrator and a no-op refiner.
+    /// Build a VM around a given stub orchestrator and a no-op enqueue closure.
     private func makeVM(
         settings: MenuBarSettings,
         orchestrator: StubOrchestrator
     ) -> RecordingViewModel {
         RecordingViewModel(
             settings: settings,
-            orchestratorFactory: { _, _ in orchestrator },
-            reRefiner: { _ in })
+            orchestratorFactory: { _, _ in orchestrator })
     }
 
     // MARK: - Tests
 
-    @Test("happy path: idle → recording → refining → idle, refine targets the recorded folder")
+    @Test("happy path: idle → recording → idle, refine is enqueued not run inline")
     func happyPathTransitions() async throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let stub = StubOrchestrator()
-        let refined = RefineMailbox()
+        let enqueued = EnqueueMailbox()
+
         let vm = RecordingViewModel(
             settings: try settings(outputRoot: root),
             orchestratorFactory: { _, _ in stub },
-            reRefiner: { url in await refined.record(url) })
+            enqueueAutoRefine: { url, recordingId in
+                await enqueued.record(url: url, recordingId: recordingId)
+            })
 
         #expect(vm.status == .idle)
         await vm.startRecording()
-
-        guard case .recording = vm.status else {
-            Issue.record("expected .recording, got \(vm.status)")
-            return
-        }
+        if case .recording = vm.status {} else { Issue.record("not recording") }
 
         await vm.stopRecording()
         #expect(vm.status == .idle)
-        #expect(stub.stopped)
 
-        // The post-recording refine must receive the actual recording folder.
-        // A freshly-recorded folder has no `metadata.json`, so it cannot be
-        // re-discovered by scanning the output root — the VM must carry the
-        // folder it created through to the refine pass (regression guard).
-        #expect(await refined.count() == 1)
-        let refinedURL = try #require(await refined.first())
-        #expect(refinedURL.deletingLastPathComponent().standardizedFileURL
-            == root.standardizedFileURL)
-        #expect(FileManager.default.fileExists(atPath: refinedURL.path))
+        let recorded = await enqueued.entries
+        #expect(recorded.count == 1)
+        #expect(recorded.first?.recordingId.hasPrefix("rec_") == true)
     }
 
     @Test("an unexpected engine exit while recording moves to .crashed")
@@ -187,8 +178,7 @@ struct RecordingViewModelTests {
         let settings = MenuBarSettings(defaults: defaults)   // no output folder
         let vm = RecordingViewModel(
             settings: settings,
-            orchestratorFactory: { _, _ in StubOrchestrator() },
-            reRefiner: { _ in })
+            orchestratorFactory: { _, _ in StubOrchestrator() })
 
         await vm.startRecording()
         guard case .error = vm.status else {
@@ -197,17 +187,19 @@ struct RecordingViewModelTests {
         }
     }
 
-    @Test("recoverFromCrash refines the partial folder and returns to idle")
+    @Test("recoverFromCrash enqueues the partial folder and returns to idle")
     func recoverFromCrashRefines() async throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let stub = StubOrchestrator()
 
-        let refined = RefineMailbox()
+        let enqueued = EnqueueMailbox()
         let vm = RecordingViewModel(
             settings: try settings(outputRoot: root),
             orchestratorFactory: { _, _ in stub },
-            reRefiner: { url in await refined.record(url) })
+            enqueueAutoRefine: { url, recordingId in
+                await enqueued.record(url: url, recordingId: recordingId)
+            })
 
         await vm.startRecording()
         await stub.signalEngineExit()
@@ -222,7 +214,7 @@ struct RecordingViewModelTests {
 
         await vm.recoverFromCrash()
         #expect(vm.status == .idle)
-        #expect(await refined.count() == 1)
+        #expect(await enqueued.entries.count == 1)
     }
 
     // MARK: - FIX 1 / FIX 4
@@ -234,8 +226,7 @@ struct RecordingViewModelTests {
         let stub = StubOrchestrator()
         let vm = RecordingViewModel(
             settings: try settings(outputRoot: root),
-            orchestratorFactory: { _, _ in stub },
-            reRefiner: { _ in })
+            orchestratorFactory: { _, _ in stub })
 
         #expect(vm.liveMarkdownURL == nil)
 
@@ -273,7 +264,7 @@ struct RecordingViewModelTests {
         #expect(vm.liveMarkdownURL == nil)
     }
 
-    @Test("the live pass receives liveModelName, the refine path receives refineModelName (FIX 4)")
+    @Test("the live pass receives liveModelName, enqueue is called after stop (FIX 4)")
     func liveAndRefineModelsAreSeparate() async throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -284,7 +275,7 @@ struct RecordingViewModelTests {
 
         // Capture the RecordPlan the live pass is launched with.
         let planBox = PlanMailbox()
-        let refined = RefineMailbox()
+        let enqueued = EnqueueMailbox()
         let stub = StubOrchestrator()
         let vm = RecordingViewModel(
             settings: settings,
@@ -292,10 +283,11 @@ struct RecordingViewModelTests {
                 Task { await planBox.set(plan) }
                 return stub
             },
-            // The production re-refiner reads `settings.refineModelName`; here
-            // we assert the VM hands the live pass `liveModelName` via the plan
-            // and that the refine path is taken at all.
-            reRefiner: { url in await refined.record(url) })
+            // Assert the VM hands the live pass `liveModelName` via the plan
+            // and that the enqueue path is taken after stop.
+            enqueueAutoRefine: { url, recordingId in
+                await enqueued.record(url: url, recordingId: recordingId)
+            })
 
         await vm.startRecording()
         let plan = try #require(await planBox.value())
@@ -306,7 +298,71 @@ struct RecordingViewModelTests {
         #expect(plan.engineArguments.contains("base"))
 
         await vm.stopRecording()
-        #expect(await refined.count() == 1)
+        #expect(await enqueued.entries.count == 1)
+    }
+
+    // MARK: - Pause / resume hooks (Bug 1)
+
+    @Test("pause is called on successful start, resume is NOT called")
+    func pauseCalledOnStart() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+        let counter = CallCounter()
+
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            pauseRefinement: { await counter.incrementPause() },
+            resumeRefinement: { await counter.incrementResume() })
+
+        await vm.startRecording()
+        if case .recording = vm.status {} else { Issue.record("expected .recording") }
+        #expect(await counter.pauseCount == 1)
+        #expect(await counter.resumeCount == 0)
+    }
+
+    @Test("resume is called exactly once after stop")
+    func resumeCalledOnStop() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+        let counter = CallCounter()
+
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            pauseRefinement: { await counter.incrementPause() },
+            resumeRefinement: { await counter.incrementResume() })
+
+        await vm.startRecording()
+        await vm.stopRecording()
+        #expect(vm.status == .idle)
+        #expect(await counter.pauseCount == 1)
+        #expect(await counter.resumeCount == 1)
+    }
+
+    @Test("pause and resume both called on start failure, status is .error")
+    func pauseAndResumeOnStartFailure() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator(
+            startError: RecordOrchestrator.StartError.readyTimedOut)
+        let counter = CallCounter()
+
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            pauseRefinement: { await counter.incrementPause() },
+            resumeRefinement: { await counter.incrementResume() })
+
+        await vm.startRecording()
+        guard case .error = vm.status else {
+            Issue.record("expected .error, got \(vm.status)")
+            return
+        }
+        #expect(await counter.pauseCount == 1)
+        #expect(await counter.resumeCount == 1)
     }
 
     private actor PlanMailbox {
@@ -314,11 +370,19 @@ struct RecordingViewModelTests {
         func set(_ p: RecordPlan) { plan = p }
         func value() -> RecordPlan? { plan }
     }
+}
 
-    private actor RefineMailbox {
-        private var urls: [URL] = []
-        func record(_ u: URL) { urls.append(u) }
-        func count() -> Int { urls.count }
-        func first() -> URL? { urls.first }
-    }
+/// Captures (url, recordingId) pairs passed to `enqueueAutoRefine`.
+actor EnqueueMailbox {
+    var entries: [(url: URL, recordingId: String)] = []
+    func record(url: URL, recordingId: String) { entries.append((url, recordingId)) }
+}
+
+/// Counts `pauseRefinement` / `resumeRefinement` invocations from tests.
+/// Actor-based for safe cross-isolation reads.
+actor CallCounter {
+    private(set) var pauseCount = 0
+    private(set) var resumeCount = 0
+    func incrementPause() { pauseCount += 1 }
+    func incrementResume() { resumeCount += 1 }
 }

@@ -51,6 +51,15 @@ final class LiveRunner: Sendable {
     /// The ticker child task's heartbeat interval.
     static let defaultTickInterval: Duration = .seconds(1)
 
+    /// Phase-tracker heartbeat cadence (`LiveRunnerPhaseTracker.runHeartbeat`).
+    /// Diagnostic only — picks up a wedged run loop within one tick.
+    static let defaultPhaseHeartbeatInterval: Duration = .seconds(2)
+
+    /// Phase-tracker threshold — log when the current phase has been active
+    /// at least this long. Matches the heartbeat cadence so a wedged phase
+    /// reports on the first tick after it crosses 2 s.
+    static let defaultPhaseHeartbeatThreshold: Duration = .seconds(2)
+
     private let configuration: StreamingPipeline.Configuration
     private let writer: LiveMarkdownWriter
     private let logger: Logger
@@ -64,6 +73,31 @@ final class LiveRunner: Sendable {
     private let silenceGapThreshold: Duration
     /// Ticker heartbeat interval. Defaults to `defaultTickInterval`.
     private let tickInterval: Duration
+    /// Phase-tracker heartbeat interval. Defaults to
+    /// `defaultPhaseHeartbeatInterval`. Tests inject a short value.
+    private let phaseHeartbeatInterval: Duration
+    /// Phase-tracker threshold. Defaults to `defaultPhaseHeartbeatThreshold`.
+    private let phaseHeartbeatThreshold: Duration
+    /// Per-stream whisper hand-off queue capacity, in audio duration. The drain
+    /// drops the oldest frame from the live view (recording unaffected) once a
+    /// queue holds more than this much un-decoded audio (Phase 1).
+    private let queueCapacity: Duration
+    /// Bounded wait on the whisper worker at teardown. A wedged decode that
+    /// ignores its abort (a stall inside a single encode/decode step) cannot
+    /// make the run hang past this — the recording is already safe on disk
+    /// regardless.
+    private let workerDrainTimeout: Duration
+    /// Per-decode watchdog deadline (Phase 2). A live-window decode that
+    /// overruns this has its `AbortToken` flipped so whisper bails at its next
+    /// decode-step boundary, the worker drops that window, and live
+    /// transcription resumes. The dropped audio is recovered by the post-pass.
+    private let decodeDeadline: Duration
+    /// Per-decode watchdog abort-grace (Phase 2). If a decode is still
+    /// outstanding this long *after* its abort was signalled, the abort did not
+    /// take (a stall inside a single encode/decode step where control never
+    /// reaches the next abort poll). The watchdog then emits an escalating
+    /// "did not honor abort" warning so the unrecoverable case is visible.
+    private let abortGrace: Duration
 
     init(
         configuration: StreamingPipeline.Configuration,
@@ -72,7 +106,13 @@ final class LiveRunner: Sendable {
         library: SpeakerLibrary?,
         diarBufferProbe: (@Sendable (Int) -> Void)? = nil,
         silenceGapThreshold: Duration = LiveRunner.defaultSilenceGapThreshold,
-        tickInterval: Duration = LiveRunner.defaultTickInterval
+        tickInterval: Duration = LiveRunner.defaultTickInterval,
+        phaseHeartbeatInterval: Duration = LiveRunner.defaultPhaseHeartbeatInterval,
+        phaseHeartbeatThreshold: Duration = LiveRunner.defaultPhaseHeartbeatThreshold,
+        queueCapacity: Duration = .seconds(30),
+        workerDrainTimeout: Duration = .seconds(10),
+        decodeDeadline: Duration = .seconds(10),
+        abortGrace: Duration = .seconds(5)
     ) {
         self.configuration = configuration
         self.writer = writer
@@ -81,11 +121,17 @@ final class LiveRunner: Sendable {
         self.diarBufferProbe = diarBufferProbe
         self.silenceGapThreshold = silenceGapThreshold
         self.tickInterval = tickInterval
+        self.phaseHeartbeatInterval = phaseHeartbeatInterval
+        self.phaseHeartbeatThreshold = phaseHeartbeatThreshold
+        self.queueCapacity = queueCapacity
+        self.workerDrainTimeout = workerDrainTimeout
+        self.decodeDeadline = decodeDeadline
+        self.abortGrace = abortGrace
     }
 
     func run(
-        systemTranscriber: WhisperTranscriber,
-        micTranscriber: WhisperTranscriber?,
+        systemTranscriber: any WindowTranscribing,
+        micTranscriber: (any WindowTranscribing)?,
         systemSource: some AudioFrameSource,
         micSource: (any AudioFrameSource)?,
         liveDiarizer: (any LiveDiarizing)?
@@ -218,37 +264,200 @@ final class LiveRunner: Sendable {
         // diarizer's window is sliced from this, not the trimmed `diarBuffer`.
         var diarTotalSamples: Int { diarBufferBase + diarBuffer.count }
 
+        // --- diagnostic phase tracker + heartbeat ---------------------------
+        // Records the current step of the run loop so a background task can
+        // log a warning whenever a single phase has been active longer than
+        // the threshold — making a wedged `await` (the suspected cause of the
+        // 2026-05-20-113001 / 2026-05-21-071823 silent cutoffs at ~17–18 min)
+        // visible as a stream of identical log lines with a growing age.
+        // Diagnostic only — every `phase.set` is non-suspending and changes
+        // no run-loop semantics.
+        let phase = LiveRunnerPhaseTracker()
+        var frameIdx = 0
+        let phaseLogger = self.logger
+        let heartbeatInterval = self.phaseHeartbeatInterval
+        let heartbeatThreshold = self.phaseHeartbeatThreshold
+        let heartbeatTask = Task {
+            await phase.runHeartbeat(
+                interval: heartbeatInterval,
+                threshold: heartbeatThreshold,
+                logger: phaseLogger)
+        }
+        defer { heartbeatTask.cancel() }
+
+        // --- per-stream whisper hand-off queues + worker --------------------
+        // Phase 1: the recording-safe drain (the `for await item in merged`
+        // loop below) writes the WAV, feeds diarization, and *enqueues* frames
+        // onto bounded per-stream queues — it never calls whisper. A single
+        // worker Task owns the (non-Sendable) streamers, drains both queues,
+        // and writes committed utterances to the sink. A hung/slow whisper can
+        // therefore never block the WAV write — the recording is always safe.
+        // Wakeup signal: each queue posts on enqueue/finish so the single worker
+        // re-checks both queues. AsyncStream's buffering makes lost wakeups
+        // impossible (a yield before the next await is retained). Created before
+        // the queues so the activity closures can be passed at queue init.
+        let (wake, wakeContinuation) = AsyncStream.makeStream(of: Void.self)
+        let queueCapacityFrames = max(
+            1, durationToSamples(queueCapacity) / AudioFormat.samplesPerFrame)
+        let systemQueue = BoundedFrameQueue(
+            capacityFrames: queueCapacityFrames,
+            onActivity: { wakeContinuation.yield(()) })
+        let micQueue: BoundedFrameQueue? = hasMic
+            ? BoundedFrameQueue(
+                capacityFrames: queueCapacityFrames,
+                onActivity: { wakeContinuation.yield(()) })
+            : nil
+
+        // The streamers are non-Sendable (`StreamingTranscriber` owns a
+        // `whisper_context`). Box them so the worker Task can capture them
+        // across the Swift 6 concurrency boundary. Safe: the box's contents are
+        // ONLY ever touched on the worker task below — nowhere else.
+        let streamerBox = StreamerBox(system: systemStreamer, mic: micStreamer)
+
+        // The worker publishes its end-of-stream detected language here when it
+        // finishes. Teardown *polls* this (bounded) rather than `await`ing the
+        // worker Task — a wedged decode is uncancellable, so structurally
+        // awaiting it (e.g. via `withTaskGroup`) would block the run forever.
+        // The poll loop is the same cancellation-safe shape as `DiarGate.drain`.
+        let workerResult = WorkerLanguageResult()
+
+        // Phase 2: the per-decode watchdog. It arms a fresh `AbortToken` before
+        // each per-frame `ingest` decode and, if that decode overruns
+        // `decodeDeadline`, flips the token so whisper bails at its next
+        // decode-step boundary — the worker drops that window and live
+        // transcription resumes. A decode that ignores the abort past
+        // `abortGrace` (a stall inside a single encode/decode step) is logged as
+        // an escalating "did not honor abort" warning. The watchdog runs as its
+        // own task, so it keeps observing while the worker is suspended awaiting
+        // the offloaded (blocking) decode.
+        let watchdog = DecodeWatchdog(
+            deadline: decodeDeadline, abortGrace: abortGrace, logger: logger)
+
+        // The whisper worker: owns the streamers, drains both queues, writes
+        // committed utterances to the sink. Never blocks the drain — the queues
+        // drop-oldest under backpressure. Publishes the system stream's detected
+        // language to `workerResult` at end of stream (teardown polls it).
+        //
+        // The synchronous whisper decode (`ingest` / `finish`) is offloaded to a
+        // background DispatchQueue via `Self.offload` rather than called directly
+        // on the worker Task. A whisper decode can block for an unbounded time
+        // (and, until Task 5's abort lands, a wedged one blocks *forever*).
+        // Calling it directly would pin a Swift cooperative-pool thread, which
+        // can starve the bounded teardown timeout's own `Task.sleep` (the timer
+        // continuation needs a free pool thread). Offloading keeps the worker
+        // Task suspended (pool thread free) while the blocking call runs on a
+        // dispatch thread — so the teardown timeout always fires and the run
+        // always returns. The streamer is only ever touched here (the worker is
+        // suspended awaiting the offload), so no concurrent access occurs.
+        let worker = Task { [streamerBox] () -> Void in
+            var wakeIterator = wake.makeAsyncIterator()
+            var systemEnded = false
+            var micEnded = (micQueue == nil)
+
+            func drain(
+                _ queue: BoundedFrameQueue?, _ streamer: StreamingTranscriber?,
+                isMic: Bool
+            ) async -> Bool {
+                guard let queue, let streamer else { return true }
+                while let frame = queue.tryDequeueNonSuspending() {
+                    let elapsed = ContinuousClock.now - startWall
+                    // Arm the watchdog with a fresh token for this decode. If
+                    // the decode overruns the deadline the watchdog flips the
+                    // token; whisper bails at its next decode step, `offload`
+                    // returns (empty/throwing), and the worker drops this
+                    // window and continues — live transcription resumes.
+                    let token = AbortToken()
+                    await watchdog.beginDecode(
+                        token: token, stream: isMic ? "mic" : "system")
+                    let utterances = await Self.offload {
+                        streamer.ingest(
+                            frame: frame, realTimeElapsed: elapsed, abort: token)
+                    }
+                    await watchdog.endDecode()
+                    await workerResult.noteProgress()
+                    for utt in utterances {
+                        if isMic {
+                            await sink.appendMicUtterance(utt, realElapsed: elapsed)
+                        } else {
+                            let label = await self.resolveSystemLabel(
+                                for: utt, diarState: diarState, diarizer: liveDiarizer)
+                            await sink.appendSystemUtterance(
+                                utt, label: label, realElapsed: elapsed)
+                        }
+                    }
+                }
+                if queue.isFinishedAndEmpty {
+                    let elapsed = ContinuousClock.now - startWall
+                    let utterances = await Self.offload { streamer.finish() }
+                    await workerResult.noteProgress()
+                    for utt in utterances {
+                        if isMic {
+                            await sink.appendMicUtterance(
+                                utt, realElapsed: elapsed, isFlush: true)
+                        } else {
+                            let label = await self.resolveSystemLabel(
+                                for: utt, diarState: diarState, diarizer: liveDiarizer)
+                            await sink.appendSystemUtterance(
+                                utt, label: label, realElapsed: elapsed, isFlush: true)
+                        }
+                    }
+                    return true
+                }
+                return false
+            }
+
+            while true {
+                if !systemEnded {
+                    systemEnded = await drain(
+                        systemQueue, streamerBox.system, isMic: false)
+                }
+                if !micEnded {
+                    micEnded = await drain(micQueue, streamerBox.mic, isMic: true)
+                }
+                if systemEnded && micEnded { break }
+                _ = await wakeIterator.next()
+            }
+            // Publish the detected language and mark the worker finished so the
+            // bounded poll in teardown can pick it up without awaiting the Task.
+            await workerResult.finish(
+                language: streamerBox.system.detectedLanguage ?? "en")
+        }
+
+        phase.set("loop-start")
+
         // --- the run loop ---------------------------------------------------
+        // The drain owns the WAV write, diarization, and the per-stream silence
+        // watchdog; it never calls whisper. Each `.frame` case is WAV-first,
+        // then enqueues onto the worker's queue. Real-time elapsed is computed
+        // per-case where needed (the worker computes its own at decode time).
         for await item in merged {
-            let elapsed = ContinuousClock.now - startWall
             switch item {
             case .frame(.system, let frame):
+                frameIdx += 1
+                phase.set("frame-system-received", frameIndex: frameIdx)
                 let systemFrameNow = ContinuousClock.now
+                // WAV FIRST — the recording must never sit behind anything.
+                phase.set("wav-append-system")
+                appendToWAV(systemWAVWriter, frame.samples, stream: "system")
                 if systemGapAnnotated {
                     // Frames are flowing again after an annotated silence gap
                     // on *this* stream. Append a resumed-style note (append-only
                     // — live.md is never rewritten) carrying the real measured
                     // gap, then re-arm the watchdog for this stream.
                     systemGapAnnotated = false
+                    phase.set("await-sink-appendGap-system-resumed")
                     await sink.appendGap(
                         .resumed(systemFrameNow - lastSystemActivity))
                 }
                 lastSystemActivity = systemFrameNow
-                appendToWAV(systemWAVWriter, frame.samples, stream: "system")
-                for utt in systemStreamer.ingest(
-                    frame: frame, realTimeElapsed: elapsed) {
-                    let label = await resolveSystemLabel(
-                        for: utt, diarState: diarState, diarizer: liveDiarizer)
-                    await sink.appendSystemUtterance(
-                        utt, label: label, realElapsed: elapsed)
-                }
                 // Feed a diarization window on cadence — *off* the run loop's
                 // critical path (Fix B). The window samples + windowStart are
                 // captured as locals and a detached task runs `diarizeWindow`
                 // then `diarState.merge`; the run loop never `await`s the
                 // diarizer subprocess. At most one window is in flight — if the
                 // previous one has not finished, this window is skipped (live
-                // diarization is best-effort/provisional).
+                // diarization is best-effort/provisional). Diarization stays on
+                // the drain (it is fast: a detached dispatch, Fix B/C).
                 diarBuffer.append(contentsOf: frame.samples)
                 if let liveDiarizer,
                    diarTotalSamples - lastDiarEnd >= diarStep,
@@ -256,6 +465,7 @@ final class LiveRunner: Sendable {
                     let loAbs = max(0, diarTotalSamples - diarWindow)
                     let lo = loAbs - diarBufferBase
                     lastDiarEnd = diarTotalSamples
+                    phase.set("await-diarGate-tryAcquire")
                     if lo >= 0, lo <= diarBuffer.count,
                        await diarGate.tryAcquire() {
                         // Copy the window out of `diarBuffer` up front: the
@@ -287,23 +497,30 @@ final class LiveRunner: Sendable {
                     diarBufferBase += trim
                 }
                 diarBufferProbe?(diarBuffer.count)
+                // Hand off to whisper — never blocks; drops oldest if behind.
+                phase.set("enqueue-system")
+                systemQueue.enqueue(frame)
+                await noteDropEdges(systemQueue, stream: "system", sink: sink)
 
             case .frame(.mic, let frame):
+                frameIdx += 1
+                phase.set("frame-mic-received", frameIndex: frameIdx)
                 let micFrameNow = ContinuousClock.now
+                phase.set("wav-append-mic")
+                appendToWAV(micWAVWriter, frame.samples, stream: "mic")  // WAV FIRST
                 if micGapAnnotated {
                     // Frames are flowing again on the mic stream after its own
                     // annotated silence gap — append a resumed note carrying the
                     // real measured gap and re-arm this stream's watchdog.
                     micGapAnnotated = false
+                    phase.set("await-sink-appendGap-mic-resumed")
                     await sink.appendGap(.resumed(micFrameNow - lastMicActivity))
                 }
                 lastMicActivity = micFrameNow
-                appendToWAV(micWAVWriter, frame.samples, stream: "mic")
-                if let micStreamer {
-                    for utt in micStreamer.ingest(
-                        frame: frame, realTimeElapsed: elapsed) {
-                        await sink.appendMicUtterance(utt, realElapsed: elapsed)
-                    }
+                if let micQueue {
+                    phase.set("enqueue-mic")
+                    micQueue.enqueue(frame)
+                    await noteDropEdges(micQueue, stream: "mic", sink: sink)
                 }
 
             case .paused(.system):
@@ -312,11 +529,13 @@ final class LiveRunner: Sendable {
                 // mic stream's paired marker is ignored to avoid a double note.
                 systemPaused = true
                 lastSystemActivity = ContinuousClock.now
+                phase.set("await-sink-appendGap-paused-system")
                 await sink.appendGap(.paused)
 
             case .resumed(.system, let gap):
                 systemPaused = false
                 lastSystemActivity = ContinuousClock.now
+                phase.set("await-sink-appendGap-resumed-system")
                 await sink.appendGap(.resumed(gap))
 
             case .paused(.mic):
@@ -346,50 +565,76 @@ final class LiveRunner: Sendable {
                 if !systemDone, !systemPaused, !systemGapAnnotated,
                    now - lastSystemActivity >= silenceGapThreshold {
                     systemGapAnnotated = true
+                    phase.set("await-sink-appendGap-tick-system")
                     await sink.appendGap(.paused)
                 }
                 if hasMic, !micDone, !micPaused, !micGapAnnotated,
                    now - lastMicActivity >= silenceGapThreshold {
                     micGapAnnotated = true
+                    phase.set("await-sink-appendGap-tick-mic")
                     await sink.appendGap(.paused)
                 }
 
             case .ended(.system):
-                let elapsedNow = ContinuousClock.now - startWall
-                for utt in systemStreamer.finish() {
-                    let label = await resolveSystemLabel(
-                        for: utt, diarState: diarState, diarizer: liveDiarizer)
-                    await sink.appendSystemUtterance(
-                        utt, label: label, realElapsed: elapsedNow,
-                        isFlush: true)
-                }
+                phase.set("ended-system")
+                systemQueue.finish()
                 systemDone = true
 
             case .ended(.mic):
-                if let micStreamer {
-                    let elapsedNow = ContinuousClock.now - startWall
-                    for utt in micStreamer.finish() {
-                        await sink.appendMicUtterance(
-                            utt, realElapsed: elapsedNow, isFlush: true)
-                    }
-                }
+                phase.set("ended-mic")
+                micQueue?.finish()
                 micDone = true
             }
             // The exit condition is *exactly* "both streams `.ended`". A
             // silence gap never reaches here as a done flag.
             if systemDone && micDone { break }
+            phase.set("idle-awaiting-next-item")
         }
+
+        // Both streams ended: let the worker drain remaining frames + flush. We
+        // *poll* the worker's published result rather than `await worker.value`:
+        // a wedged whisper decode is uncancellable, so structurally awaiting the
+        // worker (e.g. via `withTaskGroup`) would block the run forever even
+        // after `cancel()`. The bound is on *inactivity* — the run stops waiting
+        // once the worker has made no progress for `workerDrainTimeout`. The
+        // deadline is *armed at teardown start* (`armDeadline()` below) so it
+        // measures inactivity since teardown began, not since run-start — a
+        // short recording whose single final decode is slow but progressing
+        // then gets the full `workerDrainTimeout` of grace. A
+        // slow-but-progressing decode (a fast-fed fixture, or CPU whisper
+        // catching up on a backlog) therefore runs to completion, while a
+        // genuinely wedged decode releases the run after the timeout. The poll
+        // loop is cancellation-aware (mirrors `DiarGate.drain`) and falls back to
+        // "en" if the worker never finished. The recording is safe on disk
+        // regardless.
+        phase.set("await-worker")
+        await workerResult.armDeadline()
+        while !(await workerResult.isFinished), !Task.isCancelled,
+              ContinuousClock.now - (await workerResult.lastProgress)
+                < workerDrainTimeout {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let detectedLanguage = await workerResult.language ?? "en"
+        worker.cancel()  // abandon a still-wedged worker; recording is safe
+
+        // Stop the watchdog's poll task. On a healthy run this is a redundant
+        // no-op (already disarmed); on a wedged run whose decode never returned,
+        // `endDecode()` was never called from the worker, so this is what stops
+        // the abort-grace monitor from logging forever after the run returns.
+        await watchdog.endDecode()
 
         // Fix B: hand off any in-flight diarization task before returning —
         // bounded, so a wedged diarizer cannot make the run hang on exit.
+        phase.set("await-diarGate-drain")
         await diarGate.drain(timeout: .seconds(2))
+        phase.set("await-readers-value")
         _ = await readers.value
         // Propagate the language whisper actually detected on the system
-        // stream so Output.language reflects reality. Falls back to "en" only
-        // when no window was ever decoded (a silent / empty recording).
-        await sink.noteSystemLanguage(
-            systemStreamer.detectedLanguage ?? "en")
+        // stream so Output.language reflects reality.
+        phase.set("await-sink-noteSystemLanguage")
+        await sink.noteSystemLanguage(detectedLanguage)
 
+        phase.set("await-sink-stats")
         let stats = await sink.stats()
         return StreamingPipeline.Output(
             liveURL: configuration.liveURL,
@@ -456,11 +701,18 @@ final class LiveRunner: Sendable {
     ///
     /// `internal` (not `private`) so the R18 library-lookup path can be tested
     /// directly — see `LiveRunnerLibraryLookupTests`.
+    ///
+    /// `phase` is an optional diagnostic tracker — when supplied (production
+    /// callers do, tests typically don't) the inner `await`s update phase
+    /// strings so a wedge inside the library / diarizer-actor lookup chain is
+    /// observable in the heartbeat log.
     func resolveSystemLabel(
         for utterance: CommittedUtterance,
         diarState: DiarState,
-        diarizer: (any LiveDiarizing)?
+        diarizer: (any LiveDiarizing)?,
+        phase: LiveRunnerPhaseTracker? = nil
     ) async -> String {
+        phase?.set("await-diarState-dominantKey")
         let key = await diarState.dominantKey(
             start: utterance.start, end: utterance.end) ?? "Them"
 
@@ -471,20 +723,59 @@ final class LiveRunner: Sendable {
         // (Open Question #3), so passing the real revision is what makes R18
         // able to match at all.
         if let library, let diarizer {
+            phase?.set("await-diarizer-centroids")
             let centroids = await diarizer.centroids()
+            phase?.set("await-diarizer-modelRevision")
             let revision = await diarizer.modelRevision()
-            if let centroid = centroids[key], !centroid.isEmpty,
-               let match = try? await library.bestMatch(
-                   for: centroid,
-                   modelRevision: revision,
-                   threshold: SpeakerLibrary.defaultMatchThreshold) {
-                return "\(match.speaker.name) (provisional)"
+            if let centroid = centroids[key], !centroid.isEmpty {
+                phase?.set("await-library-bestMatch")
+                if let match = try? await library.bestMatch(
+                       for: centroid,
+                       modelRevision: revision,
+                       threshold: SpeakerLibrary.defaultMatchThreshold) {
+                    return "\(match.speaker.name) (provisional)"
+                }
             }
         }
         return "\(key) (provisional)"
     }
 
     // MARK: - Helpers
+
+    /// Run a blocking synchronous body on a background dispatch thread and await
+    /// its result, suspending the caller (and freeing its Swift cooperative-pool
+    /// thread) while the body runs. Used by the whisper worker so an unbounded /
+    /// wedged decode never pins a pool thread (which would starve the bounded
+    /// teardown timeout). The body is only ever invoked from the single worker
+    /// task while it is otherwise suspended, so the unchecked-Sendable wrapper is
+    /// safe (no concurrent access to the captured streamer).
+    private static func offload<T: Sendable>(
+        _ body: @escaping () -> T
+    ) async -> T {
+        // `body` captures the non-Sendable streamer; wrap it so it can cross the
+        // continuation boundary. Safe: see the doc comment above.
+        let boxed = UncheckedSendableBox(body)
+        return await withCheckedContinuation { (cont: CheckedContinuation<T, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                cont.resume(returning: boxed.value())
+            }
+        }
+    }
+
+    /// Emit a one-time live.md note when a queue starts dropping, and another
+    /// when it catches back up. Best-effort; the only cost on the drain hot path
+    /// is a cheap sink append at the rare drop/recover transition.
+    private func noteDropEdges(
+        _ queue: BoundedFrameQueue, stream: String, sink: LiveSink
+    ) async {
+        if queue.consumeDropEpisodeStarted() {
+            logger.warning("live transcription falling behind; dropping \(stream) audio from the live view (recording unaffected)")
+            await sink.appendGap(.paused)
+        }
+        if queue.consumeCaughtUp() {
+            await sink.appendGap(.resumed(.zero))
+        }
+    }
 
     /// Append a frame's samples to a streaming WAV writer. A write failure is
     /// non-fatal — the live pass must keep transcribing — but it is logged as
@@ -522,6 +813,64 @@ final class LiveRunner: Sendable {
     }
     private func samplesToDuration(_ count: Int) -> Duration {
         .milliseconds(count * 1000 / AudioFormat.sampleRate)
+    }
+}
+
+/// Wraps an arbitrary value so it can cross a `Sendable` boundary (e.g. a
+/// `withCheckedContinuation` closure) without the compiler proving it. Used by
+/// `LiveRunner.offload` to carry a closure that captures the non-`Sendable`
+/// streamer onto a dispatch thread; safe because the worker is suspended (no
+/// concurrent access) while the offloaded body runs.
+private struct UncheckedSendableBox<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
+}
+
+/// A `Sendable` wrapper that lets the non-`Sendable` `StreamingTranscriber`s be
+/// captured into the single whisper worker `Task` (Swift 6 concurrency). Its
+/// contents are ONLY ever touched on the serialized offload path driven by the
+/// single worker (the blocking decode runs on a DispatchQueue thread while the
+/// worker is suspended), so the unchecked conformance is safe — the streamers
+/// are never concurrently accessed.
+private final class StreamerBox: @unchecked Sendable {
+    let system: StreamingTranscriber
+    let mic: StreamingTranscriber?
+    init(system: StreamingTranscriber, mic: StreamingTranscriber?) {
+        self.system = system
+        self.mic = mic
+    }
+}
+
+/// Carries the whisper worker's end-of-stream detected language back to the run
+/// teardown, and a liveness timestamp the teardown uses to bound the wait.
+///
+/// The worker calls `noteProgress()` after every decoded window and
+/// `finish(language:)` once it has drained both queues and flushed. Teardown
+/// *polls* (it never `await`s the worker Task — a wedged decode is
+/// uncancellable, so awaiting it could hang the run forever). The bound is on
+/// *inactivity*, not total time: the run stops waiting once the worker has made
+/// no progress for the drain timeout. So a slow-but-progressing decode (e.g. a
+/// fast-fed fixture, or CPU whisper catching up on a backlog) runs to
+/// completion, while a genuinely wedged decode — no progress at all — releases
+/// the run after the timeout. The recording is already safe on disk regardless.
+actor WorkerLanguageResult {
+    private(set) var language: String?
+    private(set) var isFinished = false
+    private(set) var lastProgress = ContinuousClock.now
+
+    /// Mark that the worker made forward progress (a window decoded). Keeps the
+    /// teardown's inactivity deadline fresh.
+    func noteProgress() { lastProgress = ContinuousClock.now }
+
+    /// Reset the inactivity clock to now — call once when the teardown wait
+    /// begins so the bound measures inactivity *since teardown started*, not
+    /// since run-start. A first/final decode that is slow but progressing then
+    /// gets the full `workerDrainTimeout` of grace.
+    func armDeadline() { lastProgress = ContinuousClock.now }
+
+    func finish(language: String) {
+        self.language = language
+        self.isFinished = true
     }
 }
 

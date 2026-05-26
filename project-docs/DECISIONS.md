@@ -749,3 +749,84 @@ restarts its own stream fast; the engine tolerates a longer outage without
 wedging) means a recording continues through a transient capture failure
 and, combined with D32's incremental WAV, survives even a total
 capture-daemon loss.
+
+## D34 — Refinement runs through a single-worker async queue; recording no longer blocks on refine
+
+**Decision:** Refinement work for the menubar app — auto-post-recording,
+manual "Refine" from the recordings list, and crash recovery — now runs
+through a single `RefinementJobQueue` actor instead of inline within
+`RecordingViewModel`. The queue is FIFO, single-worker (one refine at a
+time), persisted to JSONL via `RefinementJobStore`, and exposed through a
+`@MainActor @Observable` view model. The refiner inside the queue
+(`ResumableRefiner`) writes a `refine-progress.json` checkpoint in the
+recording folder between every VAD region and every stage transition, so a
+mid-run pause loses at most one in-flight region. The `RecordingStatus`
+enum loses its `.refining` case: `stopRecording` enqueues the auto-refine
+and returns to `.idle` immediately. Starting a recording pauses the queue
+(closes a shared `PauseGate` *and* terminates the inflight pyannote
+subprocess via a `Cancellable` seam); stopping resumes it. The `pulsartrace
+refine` CLI continues to use `OfflineRefiner` directly (one-shot, no
+queue) — its bare-WAV runs don't benefit from pause/resume.
+
+**Why:** A real user issue: the prior design ran refinement inline in
+`RecordingViewModel`, blocking new recordings until refine completed. For
+back-to-back meetings — the common case — that was a deal-breaker. The
+queue resolves three problems at once: (a) recording is exclusive and
+prioritised (a refine pauses to give capture its CPU/RAM/Metal), (b)
+refines survive across recording starts (resume from the on-disk
+checkpoint), and (c) auto and manual refinement paths share the same
+observable orchestrator, so the new Refinements sidebar pane shows a
+single source of truth for both. The pyannote cancel-and-retry strategy
+(D-Q7 internal) accepts up to one pyannote re-run per pause cycle —
+~10–30s of model reload plus re-inference of the cancelled diarize —
+which is well inside the user's "5 minutes of duplicated effort"
+tolerance. The 8-stage refiner reports stage and region progress through
+a `StageReporter` async closure, so the UI can show a fraction without
+the queue and refiner sharing more surface than the `PauseGate`.
+
+The architectural shape — actor + `@Observable` façade, polling 250 ms
+snapshot, on-disk JSONL persistence — matches the existing
+`RecordingsScanner`/`LiveTranscriptWatcher` patterns. The decision to keep
+`OfflineRefiner` rather than fold the CLI onto the queue too is
+deliberate: the CLI's bare-WAV path has no recording-vs-refine
+interleaving to coordinate, and one-shot CLI semantics ("run once, exit")
+are awkward with a long-lived queue actor and store.
+
+## D35 — Refinement-queue UI polls at 250 ms; no `AsyncStream` push channel
+
+**Decision:** `RefinementJobQueueViewModel` (the `@MainActor @Observable` façade in `Sources/PulsarTraceMenuBar/RefinementJobQueueViewModel.swift`) refreshes by polling `RefinementJobQueue.snapshot()` every 250 ms via a `Task` loop. We are not threading an `AsyncStream<Snapshot>` from inside the queue actor to the view model.
+
+**Why:** Three reasons. (1) The pattern matches `LiveTranscriptWatcher` and `RecordingsScanner`, which both poll — consistency reduces the number of distinct UI-update shapes a future contributor has to learn. (2) `RefinementJobQueue.Snapshot` is `Equatable` and small (typically ≤ a few jobs); the VM mutates `@Observable` properties only on real change, so SwiftUI's diffing keeps steady-state work tiny — one actor hop and one struct comparison per tick, four times a second. (3) Push channels across an actor boundary into the MainActor introduce buffering and back-pressure questions (drop-oldest? coalesce? cancel?) that aren't justified by the workload — a refine emits at most one stage update every few seconds. Polling is the simpler design at this throughput.
+
+## D36 (revised 2026-05-20) — `WhisperTranscriber` is reused across regions within a job
+
+**Decision:** `RefinementJobQueue.makeStandard` builds one `WhisperTranscriber` per job via a `SharedTranscriberBox`, and the refiner's `transcribe:` closure pulls the same instance for every VAD region. `OfflineRefiner` / `RefinementPipeline.transcribe` already builds one transcriber per WAV (i.e. one per stream); the queue path now matches that locality.
+
+**Why:** the original D36 decision held that per-region construction was negligible because the model file is mmapped, so the OS page cache amortised the cost. That reasoning was wrong on two fronts:
+
+- The page cache covers the mmap'd weights only. `whisper_init_from_file_with_params` builds the **Metal pipeline state object**, allocates the KV cache, and initialises the GGML backend on every call — multi-second for `large-v3` on Apple Silicon, not "tens of ms".
+- The claim that the per-region pattern "matches OfflineRefiner" was simply false — `RefinementPipeline.transcribe` already constructs the transcriber once per stream and reuses it across regions via `transcriber.transcribe(samples, regions:, options:)`.
+
+Reopened after refining session `2026-05-20-100033` averaged ~78 s per VAD region of mostly short utterances — roughly two orders of magnitude slower than realistic decode time, dominated by repeated Metal pipeline initialisation. `SharedTranscriberBox` (a small `@unchecked Sendable` lazy single-instance wrapper) lets the existing `@Sendable` `transcribe:` closure capture the box and reuse one instance without changing `ResumableRefiner`'s public surface or breaking its unit tests. The queue is single-worker, so at most one box / one transcriber exists at any time, preserving D8's metalLock contract.
+
+**Tradeoff:** holding the transcriber across a `pauseGate` close keeps ~3 GB resident for `large-v3` while the queue is paused for a recording. Accepted for v1 — the alternative (drop on pause, rebuild on resume) re-introduces the model-reload cost for the common short-pause case (stall recovery, hotkey toggle). If memory pressure surfaces in practice, a "drop after N seconds of idle pause" variant can be layered onto `SharedTranscriberBox` without changing call sites.
+
+## D37 — `EventWriter.append` holds an advisory `flock(LOCK_EX)`
+
+**Decision:** Every `EventWriter.append` call acquires `flock(LOCK_EX)` on the daily events file's fd before writing and releases it after. The events file is a shared resource between every process that links `PulsarTraceEngine` and writes — the capture daemon, the menubar app, and the CLI; the actor model only serialises within one process.
+
+**Why:** an interleaved line was observed in `events/2026-05-20.jsonl` where a `recording_paused` from `pulsartrace-capture` was clobbered mid-write by an `app_stopped` from `pulsartrace-mac`. `flock` is cooperative — it only protects against other callers that also `flock` — but every writer of this file goes through `EventWriter`, so the contract is complete in-tree. Foundation's `FileHandle.write(contentsOf:)` resolves to a single `write(2)` system call, but `write(2)` is only atomic up to `PIPE_BUF` bytes; longer events would still split without the lock. The fix is the simplest thing that works and survives a hot rotation: the lock is per-fd and is released via `defer`.
+
+## D38 — Live pass decouples the recording from transcription (drain + bounded-queue whisper worker + abort-watchdog)
+
+**Decision:** `LiveRunner.run` is split into a recording-safe **drain** and a single best-effort whisper **worker**, connected by bounded per-stream queues. The drain writes the WAV first (the durable recording), feeds diarization, and enqueues frames onto a `BoundedFrameQueue` — it **never calls whisper**. The worker consumes the queues, runs the synchronous `whisper_full` decode, and writes utterances to the live.md sink. The recording (the WAVs) therefore never blocks on a whisper decode; live transcription is best-effort and recovers from a hang. The full design lives in `docs/specs/2026-05-22-live-pipeline-decoupling-design.md`.
+
+**Why:** the live path was a single serial loop that did the WAV write and then the synchronous decode in sequence per frame, so a hung decode also stopped the WAV writes and lost part of the recording. This was root-caused via the phase-tracker heartbeat on session 2026-05-22 to a synchronous `whisper_full` decode wedging the loop — *not* the live-md sink or the speaker-library SQLite read previously hypothesized (see `docs/specs/2026-05-20-refine-perf-and-capture-resilience-plan.md`). Putting the durable recording write upstream of, and independent from, whisper makes the recording immune to a decode hang; what is dropped during a hang is only live-transcript audio, which the offline post-pass recovers.
+
+The load-bearing facts a future reader needs:
+
+- The `BoundedFrameQueue` is bounded and **drop-oldest** under backpressure; a one-time note in `live.md` marks that a drop occurred, so a slow/hung whisper loses live-transcript audio (recovered offline) but never blocks the drain.
+- The worker offloads the blocking decode onto a `DispatchQueue`, so a wedged decode can't pin a cooperative-pool thread (which would starve the bounded teardown timer).
+- A per-decode `DecodeWatchdog` arms a deadline: at the deadline it flips an `AbortToken` wired to whisper's `abort_callback`, so a hung/runaway decode bails and the worker resumes live transcription. A per-window `max_tokens` cap (256) additionally bounds a runaway decode.
+- The abort only takes effect at encode/decode-**step** boundaries (not mid-graph) in this whisper build, so a hang *inside* a single step cannot be aborted — the watchdog's second stage only **monitors** that case, emitting an escalating "did not honor abort" warning so the unrecoverable hang is visible. It is not recoverable.
+- `metalLock` serializes every `whisper_full` call process-wide, so a hung decode holds it; the abort is what releases it.

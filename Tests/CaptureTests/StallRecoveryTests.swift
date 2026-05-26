@@ -272,3 +272,73 @@ struct StallThresholdTests {
                 < SystemAudioCaptureEngine.stallThreshold)
     }
 }
+
+/// Regression coverage for the `onStreamError` wiring gap.
+///
+/// `SystemAudioCaptureEngine` declared and fired `onStreamError` from its
+/// `SCStreamDelegate.stream(_:didStopWithError:)` implementation, but
+/// `DeviceCaptureSource.makeSystemEngine` never assigned the callback —
+/// a hard `SCStream` abort was a silent no-op (no event, no restart).
+/// Session 2026-05-20-113001 stopped delivering audio at ~17 min with no
+/// observable recovery; this gap is the most plausible cause.
+@Suite("Stream-error wiring")
+struct StreamErrorWiringTests {
+
+    /// Regression for session 2026-05-20-113001 (~17-min cutoff with no
+    /// `recording_paused` event): `SystemAudioCaptureEngine.onStreamError`
+    /// was defined and fired by the delegate's `didStopWithError`, but
+    /// `DeviceCaptureSource.makeSystemEngine` never assigned it, so an
+    /// `SCStream` error was a silent no-op — no restart, no event.
+    @Test("DeviceCaptureSource wires onStreamError so SCStream errors trigger restart")
+    func systemEngineHasStreamErrorWiring() {
+        let config = DeviceCaptureSource.Configuration(
+            recordingId: "rec_wire_test",
+            outputDirBasename: "wire",
+            micDeviceID: nil,
+            systemAudioEnabled: true,
+            systemSocketPath: URL(fileURLWithPath: "/tmp/pt-wire-sys.sock"),
+            micSocketPath: URL(fileURLWithPath: "/tmp/pt-wire-mic.sock"),
+            modelLive: "base",
+            events: nil)
+        let source = DeviceCaptureSource(configuration: config)
+        let engine = source.makeSystemEngine()
+        #expect(engine.onStreamError != nil,
+                "SCStream errors must be routed into the stall-restart path")
+    }
+
+    /// A stream-error from SCStream is authoritative — the stream is dead
+    /// regardless of how recently the engine was installed. The recency
+    /// guard that legitimately filters stale watchdog callbacks must NOT
+    /// suppress a streamError callback. Otherwise a TCC permission
+    /// inconsistency or ScreenCaptureKit abort that fires within
+    /// stallThreshold of start() leaves capture dead with no restart.
+    @Test("a stream-error within stallThreshold still triggers restart")
+    func streamErrorBypassesRecencyGuard() async {
+        // Build a minimal DeviceCaptureSource (no engines started — we just
+        // need a target for handleStall). Use the same Configuration shape
+        // as systemEngineHasStreamErrorWiring.
+        let config = DeviceCaptureSource.Configuration(
+            recordingId: "rec_recency_test",
+            outputDirBasename: "rec",
+            micDeviceID: nil,
+            systemAudioEnabled: true,
+            systemSocketPath: URL(fileURLWithPath: "/tmp/pt-rec-sys.sock"),
+            micSocketPath: URL(fileURLWithPath: "/tmp/pt-rec-mic.sock"),
+            modelLive: "base",
+            events: nil)
+        let source = DeviceCaptureSource(configuration: config)
+
+        // Mark the system engine as freshly installed (< 6s ago).
+        source.markEngineInstalled(stream: .system, at: Date())
+
+        // streamError path must NOT be blocked by the recency guard.
+        // (If the recency guard blocks it, restartingStreams stays empty
+        //  and no restart attempt is scheduled.)
+        source.handleStall(stream: .system, cause: .streamError)
+
+        // Give the restartQueue.async one tick to enqueue.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(source.restartingStreamsForTest.contains(.system),
+                "streamError should bypass recency guard and schedule restart")
+    }
+}

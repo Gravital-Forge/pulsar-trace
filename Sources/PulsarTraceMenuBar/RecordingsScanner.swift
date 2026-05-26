@@ -17,33 +17,17 @@ public final class RecordingsScanner {
     /// The recordings found by the most recent `refresh()`, newest first.
     public private(set) var recordings: [RecordingEntry] = []
 
-    /// True while a `refresh()` or `reRefine(_:)` is in flight.
+    /// True while a `refresh()` is in flight.
     public private(set) var isScanning = false
 
-    /// The last error a scan or re-refine surfaced, for the UI.
-    public private(set) var lastError: String?
-
     private let settings: MenuBarSettings
-    private let reRefiner: @Sendable (URL) async throws -> Void
 
     /// - Parameters:
     ///   - settings: provides the output folder(s) to scan.
-    ///   - paths: app paths — resolves the speaker-library location.
-    ///   - events: the process-wide events writer the in-process re-refine
-    ///     emits through; `nil` only in tests that inject their own `reRefiner`.
-    ///   - reRefiner: drives a re-refine of one recording folder. The default
-    ///     runs `OfflineRefiner` **in-process** (D23 — the menubar never shells
-    ///     out to the `pulsartrace` CLI); tests inject a stub.
     public init(
-        settings: MenuBarSettings,
-        paths: AppPaths = .standard,
-        events: EventWriter? = nil,
-        reRefiner: (@Sendable (URL) async throws -> Void)? = nil
+        settings: MenuBarSettings
     ) {
         self.settings = settings
-        self.reRefiner = reRefiner
-            ?? RecordingsScanner.makeDefaultReRefiner(
-                settings: settings, paths: paths, events: events)
     }
 
     /// Rescan every output folder and rebuild `recordings`.
@@ -69,20 +53,6 @@ public final class RecordingsScanner {
         recordings = entries
     }
 
-    /// Re-run the offline refine pass over one recording, then rescan (R31 —
-    /// re-refine from the recordings list).
-    public func reRefine(_ entry: RecordingEntry) async {
-        isScanning = true
-        defer { isScanning = false }
-        do {
-            try await reRefiner(entry.folderURL)
-            lastError = nil
-        } catch {
-            lastError = "Re-refine failed: \(error)"
-        }
-        await refresh()
-    }
-
     // MARK: - Scanning
 
     /// Decode every recording subdirectory of one root. A folder with a valid
@@ -106,38 +76,4 @@ public final class RecordingsScanner {
         }
     }
 
-    // MARK: - Default re-refiner
-
-    /// Production re-refiner: runs `OfflineRefiner` **in-process** (D23 — the
-    /// menubar must not shell out to the `pulsartrace` CLI). A refine failure
-    /// is propagated to `reRefine`'s `lastError`, never swallowed.
-    ///
-    /// Requires an `EventWriter`; when `events` is `nil` (a test path that did
-    /// not inject a `reRefiner`) the closure throws rather than silently
-    /// no-op.
-    private static func makeDefaultReRefiner(
-        settings: MenuBarSettings,
-        paths: AppPaths,
-        events: EventWriter?
-    ) -> @Sendable (URL) async throws -> Void {
-        let modelName = settings.refineModelName
-        return { folderURL in
-            guard let events else { throw ReRefineError.noEventWriter }
-            let model = ModelCatalog.model(named: modelName) ?? ModelCatalog.base
-            let refiner = OfflineRefiner(events: events, paths: paths)
-            _ = try await refiner.refine(inputPath: folderURL, model: model)
-        }
-    }
-
-    /// A re-refine failure.
-    public enum ReRefineError: Error, CustomStringConvertible {
-        case noEventWriter
-
-        public var description: String {
-            switch self {
-            case .noEventWriter:
-                return "re-refine unavailable: no events writer configured"
-            }
-        }
-    }
 }

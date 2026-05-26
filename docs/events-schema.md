@@ -29,6 +29,17 @@ it to understand "what's happened in PulsarTrace recently."
   app launch and at the local-midnight rollover.
 - Append-only. Events are never edited or removed.
 
+### Cross-process serialisation
+
+Every `EventWriter.append` acquires an advisory `flock(LOCK_EX)` on the
+daily file before writing. This protects against the otherwise-possible
+case where `pulsartrace-mac` and `pulsartrace-capture` (each running
+their own `EventWriter`) append concurrently and split a JSONL line
+mid-byte. An external consumer that opens the file while appends are
+in flight should expect to retry a partial tail read — `EventWriter`
+itself never produces a partial line, but the on-disk state is only
+*atomically complete* between flock-acquired writes.
+
 ## Common envelope
 
 Every event line carries these four envelope fields (R80):

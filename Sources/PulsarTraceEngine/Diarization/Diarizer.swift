@@ -45,23 +45,33 @@ public actor Diarizer {
         /// the token is sourced from the macOS Keychain; development
         /// loads it from the repo `.env`.
         public let environment: [String: String]
-        /// Hard wall-clock ceiling for one diarization run. The pyannote model
-        /// load alone is ~10–30s and a long recording adds inference time;
-        /// 600s is generous for an offline refine while still bounding a hang.
+        /// Minimum wall-clock budget for one diarization run. Used as a
+        /// *floor*: `diarizeSystemStream` expands the actual budget to at
+        /// least the input WAV's real-time duration so a long recording is
+        /// not killed by an arbitrarily short ceiling. 600s covers model load
+        /// plus inference on a short meeting; longer audio scales the budget
+        /// up to its own playback length.
         public let timeout: Duration
+        /// When non-nil, replaces the standard `-m <moduleName> <wav> --output json`
+        /// argument list entirely. Used in tests to point the actor at a stand-in
+        /// subprocess (e.g. `/bin/sh -c "sleep 30"`) without a real Python venv.
+        /// Not intended for production use.
+        let customArguments: [String]?
 
         public init(
             pythonExecutable: URL,
             workingDirectory: URL,
             moduleName: String = "pulsartrace_ai.diarize",
             environment: [String: String] = [:],
-            timeout: Duration = .seconds(600)
+            timeout: Duration = .seconds(600),
+            customArguments: [String]? = nil
         ) {
             self.pythonExecutable = pythonExecutable
             self.workingDirectory = workingDirectory
             self.moduleName = moduleName
             self.environment = environment
             self.timeout = timeout
+            self.customArguments = customArguments
         }
     }
 
@@ -73,6 +83,10 @@ public actor Diarizer {
         case timedOut(seconds: Int)
         case emptyOutput
         case decodeFailed(String)
+        /// The subprocess was terminated by a `cancel()` call (queue pause).
+        /// Distinct from `.nonZeroExit` so the refiner can distinguish a pause
+        /// from a real failure and retry when the gate reopens.
+        case cancelled
 
         public var description: String {
             switch self {
@@ -89,6 +103,8 @@ public actor Diarizer {
                 return "diarization subprocess produced no JSON on stdout"
             case .decodeFailed(let m):
                 return "diarization output decode failed: \(m)"
+            case .cancelled:
+                return "diarization cancelled (paused by queue)"
             }
         }
     }
@@ -102,6 +118,12 @@ public actor Diarizer {
     private let logger: Logger
     /// Logger used only for `[python]`-tagged subprocess stderr (R60).
     private let pythonLogger: Logger
+    /// The subprocess currently running inside `runSubprocess`, if any.
+    /// Cleared on every return path via `defer`.
+    private var inflightProcess: Process?
+    /// Set by `cancel()` before terminating the subprocess so the exit-code
+    /// check in `runSubprocess` can throw `.cancelled` instead of `.nonZeroExit`.
+    private var cancelledFlag = false
 
     public init(
         configuration: Configuration,
@@ -110,6 +132,28 @@ public actor Diarizer {
         self.configuration = configuration
         self.logger = logger
         self.pythonLogger = Logger(label: LogSubsystem.engine)
+    }
+
+    /// Terminate the in-flight pyannote subprocess. A no-op when no subprocess
+    /// is running. The next `diarizeSystemStream` call after this returns —
+    /// or the one currently in flight — throws `DiarizeError.cancelled` rather
+    /// than `.nonZeroExit`, so the refiner can distinguish a pause from a
+    /// real failure.
+    public func cancel() {
+        cancelledFlag = true
+        guard let p = inflightProcess, p.isRunning else { return }
+        p.terminate()                            // SIGTERM
+
+        // Escalate to SIGKILL after a short grace, mirroring the timeout
+        // watchdog. A cancel during a recording start must free the GPU
+        // quickly; we cannot afford a 10s SIGTERM wait.
+        // Capture only the pid (an Int32) to avoid a Sendable-capture
+        // compiler error: `Process` is not `Sendable`, but pid is.
+        let pid = p.processIdentifier
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        }
     }
 
     /// Diarize the **system-stream** WAV of a recording (R17).
@@ -131,8 +175,10 @@ public actor Diarizer {
             throw DiarizeError.pythonNotFound(configuration.pythonExecutable.path)
         }
 
-        logger.notice("offline diarization: launching python diarization subprocess")
-        let captured = try await runSubprocess(wavPath: wavPath)
+        let effectiveTimeout = effectiveTimeout(for: wavPath)
+        logger.notice(
+            "offline diarization: launching python diarization subprocess (budget \(Int(effectiveTimeout.components.seconds))s)")
+        let captured = try await runSubprocess(wavPath: wavPath, timeout: effectiveTimeout)
 
         // Forward every stderr line into the operational log, tagged [python]
         // (R60) — a single grep finds Python errors alongside Swift ones.
@@ -176,13 +222,29 @@ public actor Diarizer {
         let exitCode: Int32
     }
 
+    /// Expand `configuration.timeout` to at least the audio's real-time
+    /// length, so an 80-minute meeting is not killed by a 10-minute ceiling.
+    /// The configured value is the floor; a probe failure keeps the floor.
+    private func effectiveTimeout(for wavPath: URL) -> Duration {
+        let configured = configuration.timeout
+        guard let audioSeconds = WAVReader.probeDurationSeconds(at: wavPath),
+              audioSeconds.isFinite, audioSeconds > 0 else {
+            return configured
+        }
+        let configuredSeconds = Double(configured.components.seconds)
+        guard audioSeconds > configuredSeconds else { return configured }
+        return .seconds(Int(audioSeconds.rounded(.up)))
+    }
+
     /// Launch the Python subprocess, drain both pipes concurrently (so a large
     /// stdout cannot deadlock against a full stderr buffer), and enforce the
     /// timeout.
-    private func runSubprocess(wavPath: URL) async throws -> Captured {
+    private func runSubprocess(wavPath: URL, timeout: Duration) async throws -> Captured {
+        defer { self.inflightProcess = nil }
+
         let process = Process()
         process.executableURL = configuration.pythonExecutable
-        process.arguments = [
+        process.arguments = configuration.customArguments ?? [
             "-m", configuration.moduleName,
             wavPath.path,
             "--output", "json",
@@ -213,6 +275,9 @@ public actor Diarizer {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        self.inflightProcess = process
+        self.cancelledFlag = false      // fresh run — clear any prior cancel
+
         do {
             try process.run()
         } catch {
@@ -235,10 +300,10 @@ public actor Diarizer {
         // wedged native extension under it) can ignore — leaving `waitUntilExit`
         // blocked forever and the actor unable to make progress. So after a
         // grace period we escalate to SIGKILL, which the kernel always honours.
-        let timeoutSeconds = Int(configuration.timeout.components.seconds)
+        let timeoutSeconds = Int(timeout.components.seconds)
         let firedTimeout = TimeoutFlag()
         let watchdog = Task {
-            try await Task.sleep(for: configuration.timeout)
+            try await Task.sleep(for: timeout)
             guard process.isRunning else { return }
             await firedTimeout.set()
             process.terminate()  // SIGTERM — ask politely first.
@@ -255,6 +320,13 @@ public actor Diarizer {
 
         let out = await stdoutData
         let err = await stderrData
+
+        // Cancellation takes precedence over timeout: if `cancel()` was called
+        // while the process was running, throw `.cancelled` so callers can
+        // distinguish a queue-pause from a real failure.
+        if self.cancelledFlag {
+            throw DiarizeError.cancelled
+        }
 
         if await firedTimeout.value {
             throw DiarizeError.timedOut(seconds: timeoutSeconds)
@@ -324,3 +396,9 @@ public actor Diarizer {
         }
     }
 }
+
+// MARK: - RefinementCancellable
+
+extension Diarizer: RefinementCancellable {}
+// `cancel()` is sync on `Diarizer`; async protocol methods accept sync
+// implementations, so no wrapper is needed.

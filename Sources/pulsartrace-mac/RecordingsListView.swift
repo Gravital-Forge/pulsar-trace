@@ -11,17 +11,31 @@ import SwiftUI
 /// list plus a toolbar refresh action.
 struct RecordingsListView: View {
     @Environment(RecordingsScanner.self) private var scanner
+    @Environment(RefinementJobQueueViewModel.self) private var queueVM
+    @Environment(MenuBarSettings.self) private var settings
 
     /// The recording whose transcript is being viewed in a sheet (#4), if any.
     @State private var viewing: RecordingEntry?
 
     var body: some View {
-        Group {
-            if scanner.recordings.isEmpty {
-                emptyState
-            } else {
-                List(scanner.recordings) { recording in
-                    row(recording)
+        VStack(spacing: 0) {
+            if let err = queueVM.lastEnqueueError {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange)
+            }
+            Group {
+                if scanner.recordings.isEmpty {
+                    emptyState
+                } else {
+                    List(scanner.recordings) { recording in
+                        row(recording)
+                    }
                 }
             }
         }
@@ -54,35 +68,99 @@ struct RecordingsListView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// True when this recording has any queue-state representation
+    /// (running, queued, or recent). When true, RefineBadge already
+    /// surfaces the relevant state and the "Not yet refined" fallback
+    /// must not be rendered alongside it.
+    private func hasQueueSignal(_ recordingId: String) -> Bool {
+        if queueVM.running?.recordingId == recordingId { return true }
+        if queueVM.queued.contains(where: { $0.recordingId == recordingId }) { return true }
+        if queueVM.recent.contains(where: { $0.recordingId == recordingId }) { return true }
+        return false
+    }
+
     private func row(_ recording: RecordingEntry) -> some View {
         HStack {
             VStack(alignment: .leading) {
                 Text(recording.displayName)
                 if recording.isRefined {
-                    Text("\(recording.speakers.count) speaker(s) · "
-                        + "\(Int(recording.durationSeconds))s")
+                    let count = recording.speakers.count
+                    let word = count == 1 ? "speaker" : "speakers"
+                    Text("\(count) \(word) · \(Int(recording.durationSeconds))s")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
-                    // FIX 3 — a just-recorded / failed-to-refine folder: no
-                    // metadata.json yet. Show the state explicitly.
+                } else if !hasQueueSignal(recording.id) {
+                    // Shows only when there is no queue signal — RefineBadge
+                    // handles running/queued/recent states.
                     Label("Not yet refined", systemImage: "clock.badge")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+                RefineBadge(recordingId: recording.id)
             }
             Spacer()
             Button("View") { viewing = recording }
             Button("Reveal") {
                 NSWorkspace.shared.activateFileViewerSelecting([recording.folderURL])
             }
-            // "Refine" for both states — running it again on a refined
-            // recording simply re-refines it (the "not yet refined" label
-            // already conveys which is which).
+            // "Refine" enqueues into the refinement job queue (E3). Disabled
+            // while a job for this recording is already running or queued.
             Button("Refine") {
-                Task { await scanner.reRefine(recording) }
+                Task {
+                    let model = ModelCatalog.model(named: settings.refineModelName)
+                        ?? ModelCatalog.base
+                    await queueVM.enqueueManual(
+                        folderURL: recording.folderURL,
+                        recordingId: recording.id,
+                        modelName: model.name,
+                        modelSHA256: model.sha256)
+                }
             }
-            .disabled(scanner.isScanning)
+            .disabled(jobInFlight(recording.id))
+        }
+    }
+
+    /// True when a refinement job for this recording is already running or
+    /// waiting in the queue — used to disable the Refine button.
+    private func jobInFlight(_ recordingId: String) -> Bool {
+        if queueVM.running?.recordingId == recordingId { return true }
+        return queueVM.queued.contains { $0.recordingId == recordingId }
+    }
+}
+
+/// A one-line badge below a recordings-list row showing the current queue
+/// state for this recording (E3).
+///
+/// Shows nothing when the recording is not in the queue or recent history.
+/// The badge is intentionally minimal — secondary text only, no separate
+/// affordance — because the Refine button disabled state already conveys
+/// whether a job is in flight.
+private struct RefineBadge: View {
+    let recordingId: String
+    @Environment(RefinementJobQueueViewModel.self) private var queueVM
+
+    var body: some View {
+        if queueVM.running?.recordingId == recordingId {
+            Label("Refining…", systemImage: "gear")
+                .font(.caption2)
+                .foregroundStyle(.blue)
+        } else if queueVM.queued.contains(where: { $0.recordingId == recordingId }) {
+            Label("Queued", systemImage: "clock")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else if let recent = queueVM.recent.first(where: { $0.recordingId == recordingId }) {
+            switch recent.state {
+            case .completed:
+                Label("Refined", systemImage: "checkmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+            case .failed:
+                Label("Failed", systemImage: "exclamationmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            default:
+                EmptyView()
+            }
         }
     }
 }
