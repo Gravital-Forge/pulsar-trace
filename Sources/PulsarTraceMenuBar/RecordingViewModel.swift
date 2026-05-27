@@ -340,7 +340,12 @@ public final class RecordingViewModel {
 
     /// Production binary resolver: `.build/debug/<name>` relative to the repo
     /// root derived from `#filePath`. A future change swaps this to `Bundle.main`.
-    nonisolated static let defaultBinaryURLResolver: @Sendable (String) -> URL = { name in
+    ///
+    /// `public` so `pulsartrace-mac`'s `AppEnvironment` can reuse this exact
+    /// resolver to locate `pulsartrace-whisper` when building the refinement
+    /// queue — one source of truth for binary paths across the live engine
+    /// (via `RecordOrchestrator`'s `engineEnvironment`) and refinement.
+    public nonisolated static let defaultBinaryURLResolver: @Sendable (String) -> URL = { name in
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // PulsarTraceMenuBar
             .deletingLastPathComponent()   // Sources
@@ -349,6 +354,11 @@ public final class RecordingViewModel {
     }
 
     /// Production orchestrator factory — a real `RecordOrchestrator`.
+    ///
+    /// `engineEnvironment` threads `PULSARTRACE_WHISPER_BINARY` to the engine
+    /// subprocess so it can locate `pulsartrace-whisper` without falling back
+    /// to the resolver's `/usr/local/bin/` last-resort branch — the mac app
+    /// already knows the correct `.build/debug/...` path via `resolve`.
     nonisolated static let defaultOrchestratorFactory:
         @Sendable (RecordPlan, @escaping @Sendable (String) -> URL) -> RecordingOrchestrating
     = { plan, resolve in
@@ -356,6 +366,9 @@ public final class RecordingViewModel {
             captureBinary: resolve("pulsartrace-capture"),
             captureArguments: plan.captureArguments,
             engineBinary: resolve("pulsartrace-engine"),
-            engineArguments: plan.engineArguments))
+            engineArguments: plan.engineArguments,
+            engineEnvironment: [
+                "PULSARTRACE_WHISPER_BINARY": resolve("pulsartrace-whisper").path,
+            ]))
     }
 }

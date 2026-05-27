@@ -301,7 +301,19 @@ final class AppEnvironment {
     /// `init()` synchronous while allowing the expensive async setup to run
     /// once the MainActor is free after initialization.
     func bootstrap() async {
-        let q = await RefinementJobQueue.makeStandard(events: events, paths: paths)
+        // Resolve the whisper binary once, from the mac-app's known
+        // `.build/debug/...` layout (via `#filePath`). The same resolver is
+        // threaded into the engine subprocess as `PULSARTRACE_WHISPER_BINARY`
+        // by `defaultOrchestratorFactory`, so refinement and live decode
+        // share a single source of truth for the binary path — and the
+        // resolver's `argv[0]`-sibling fallback never gets a chance to
+        // silently mis-locate it in the mac-app process.
+        let whisperBinaryURL =
+            RecordingViewModel.defaultBinaryURLResolver("pulsartrace-whisper")
+        let q = await RefinementJobQueue.makeStandard(
+            events: events,
+            whisperBinaryURL: whisperBinaryURL,
+            paths: paths)
         self.queue = q
         await queueVM.setQueue(q)
         queueVM.onJobsTerminated = { [weak self] _ in

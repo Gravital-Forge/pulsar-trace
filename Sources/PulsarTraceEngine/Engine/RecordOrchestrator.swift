@@ -20,17 +20,32 @@ public actor RecordOrchestrator {
         public let captureArguments: [String]
         public let engineBinary: URL
         public let engineArguments: [String]
+        /// Extra environment variables merged onto the parent process's
+        /// environment before the engine subprocess is spawned (caller wins
+        /// on duplicate keys). `nil` leaves the engine with the unmodified
+        /// inherited environment.
+        ///
+        /// Used in production to set `PULSARTRACE_WHISPER_BINARY` so the
+        /// engine subprocess can locate `pulsartrace-whisper` explicitly
+        /// rather than guessing from `argv[0]`'s sibling — the mac-app
+        /// process knows the correct `.build/debug/...` path (via
+        /// `RecordingViewModel.defaultBinaryURLResolver`), the engine
+        /// subprocess does not, and the `argv[0]` sibling lookup is
+        /// unreliable in dev (Xcode DerivedData paths etc.).
+        public let engineEnvironment: [String: String]?
 
         public init(
             captureBinary: URL,
             captureArguments: [String],
             engineBinary: URL,
-            engineArguments: [String]
+            engineArguments: [String],
+            engineEnvironment: [String: String]? = nil
         ) {
             self.captureBinary = captureBinary
             self.captureArguments = captureArguments
             self.engineBinary = engineBinary
             self.engineArguments = engineArguments
+            self.engineEnvironment = engineEnvironment
         }
     }
 
@@ -128,6 +143,16 @@ public actor RecordOrchestrator {
         let engine = Process()
         engine.executableURL = configuration.engineBinary
         engine.arguments = configuration.engineArguments
+        // If the caller supplied extra env vars, merge them onto the parent's
+        // environment so the engine subprocess still inherits HOME, PATH, USER,
+        // etc. Assigning `engine.environment` to a bare dict REPLACES the
+        // parent env wholesale, which would strip out essentials. Leaving
+        // `engine.environment = nil` (no extras supplied) inherits everything.
+        if let extra = configuration.engineEnvironment {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in extra { merged[key] = value }
+            engine.environment = merged
+        }
         let engineOut = Pipe()
         let engineErr = Pipe()
         engine.standardOutput = engineOut

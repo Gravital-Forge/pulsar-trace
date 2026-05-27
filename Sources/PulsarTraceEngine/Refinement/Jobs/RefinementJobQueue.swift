@@ -394,8 +394,19 @@ extension RefinementJobQueue {
     /// `modelName` and `modelSHA256` to `enqueueManualRefine` /
     /// `enqueueAutoRefine` / `enqueueCrashRecovery`. The queue reads these
     /// fields from each `RefinementJob` at run time.
+    ///
+    /// `whisperBinaryURL` must be resolved by the caller — this method does
+    /// **not** consult `WhisperBinaryResolver.defaultBinaryURL()` itself.
+    /// The mac-app process's `argv[0]` is the mac-app's own launch path
+    /// (Xcode DerivedData etc.), so the resolver's sibling lookup would
+    /// silently fall through to its `/usr/local/bin/` last-resort branch
+    /// and refinement would fail at decode time with
+    /// `WhisperTranscribeError.modelLoadFailed`. The caller (e.g.
+    /// `AppEnvironment.bootstrap()`) passes the same path it threads to
+    /// the engine subprocess via `PULSARTRACE_WHISPER_BINARY`.
     public static func makeStandard(
         events: EventWriter,
+        whisperBinaryURL: URL,
         paths: AppPaths = .standard
     ) async -> RefinementJobQueue {
         let store = RefinementJobStore.standard(paths: paths)
@@ -455,7 +466,7 @@ extension RefinementJobQueue {
             // checkpointed regions.
             let sharedTranscriber = SharedTranscriberBox<any RegionTranscribing> {
                 let remoteConfig = RemoteRegionTranscriber.Configuration(
-                    binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
+                    binaryURL: whisperBinaryURL,
                     modelURL: modelURL,
                     socketDirectory: AppPaths.standard.socketDirectory)
                 return RemoteRegionTranscriber(

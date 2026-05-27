@@ -10,13 +10,20 @@ import Foundation
 /// `CommandLine.arguments[0]` (the engine's own path) and looks for a
 /// sibling `pulsartrace-whisper`.
 ///
-/// `PULSARTRACE_WHISPER_BINARY` overrides the resolution outright — used
-/// by dev runs that want to point at a binary built under a different
-/// path and by tests that exercise a sentinel "hang" build.
+/// `PULSARTRACE_WHISPER_BINARY` overrides the resolution outright. In
+/// production both real callers — `pulsartrace-mac` (via
+/// `RecordOrchestrator.Configuration.engineEnvironment`) and `pulsartrace
+/// record` (via the same path in `RecordCommand`) — **always** set this
+/// env var explicitly, because the `argv[0]` sibling lookup is unreliable
+/// when the calling process lives outside `.build/<config>/` (mac-app
+/// process, Xcode DerivedData, etc.). The refinement path in
+/// `RefinementJobQueue.makeStandard` takes the URL as a required
+/// parameter for the same reason and does not call this resolver at all.
 ///
-/// If neither the env override nor the sibling lookup yields an
-/// executable, the resolver falls back to `/usr/local/bin/pulsartrace-whisper`.
-/// `RemoteWindowTranscriber` will then surface a clean
+/// As a result, the `/usr/local/bin/pulsartrace-whisper` fallback below
+/// is effectively a dev-only safety net for ad-hoc invocations that
+/// forget the env var. The code path stays in place because
+/// `RemoteWindowTranscriber` surfaces a clean
 /// `WhisperTranscribeError.modelLoadFailed("pulsartrace-whisper not
 /// found: …")` from its host's `binaryNotFound` mapping — better than
 /// guessing somewhere the binary almost certainly isn't.
