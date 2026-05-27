@@ -21,6 +21,16 @@ import Darwin
 ///
 /// Usage:
 ///   pulsartrace-whisper --socket-path <path> [--lock-path <path>] [--cpu]
+///                       [--hang-on-sentinel]
+///
+/// `--hang-on-sentinel` is **test-only**: it makes every `decode_window` /
+/// `decode_region` request block the (single) request-loop thread in a
+/// long `Thread.sleep`, simulating an unrecoverable whisper wedge. Init
+/// still completes normally so the parent's lifecycle code goes through
+/// its usual `.ready` path; only the first decode hangs, exactly like
+/// the production wedge we are testing recovery from. The flag exists
+/// solely for the Phase 7 acceptance suite (`WhisperSubprocessAcceptanceTests`)
+/// and is never set in production.
 ///
 /// Exit codes (spec §5/§8):
 ///   0  — clean shutdown (peer disconnected or `.shutdown` request)
@@ -139,7 +149,10 @@ struct WhisperSubprocessMain {
 
         // Run the request/response loop until the peer disconnects,
         // shutdown is requested, or a fatal error occurs.
-        var session = Session(forceCPU: parsed.forceCPU, logger: logger)
+        var session = Session(
+            forceCPU: parsed.forceCPU,
+            hangOnSentinel: parsed.hangOnSentinel,
+            logger: logger)
         let exitCode = session.run(fd: clientFD)
         // `lock` is held until the end of this function; the deinit
         // releases it as we return to `main` and exit.
@@ -236,11 +249,18 @@ private struct ParsedArgs {
     let socketPath: URL
     let lockPath: URL
     let forceCPU: Bool
+    /// Test-only: when true, every decode request blocks indefinitely on
+    /// `Thread.sleep`, simulating an unrecoverable whisper wedge so the
+    /// parent's watchdog/SIGKILL/respawn path can be exercised end-to-end
+    /// by `WhisperSubprocessAcceptanceTests`. Init still works normally;
+    /// only `decode_window` / `decode_region` hang.
+    let hangOnSentinel: Bool
 
     init(_ args: [String]) throws {
         var socketPath: String?
         var lockPath: String?
         var cpu = false
+        var hangOnSentinel = false
         var i = 0
         while i < args.count {
             let arg = args[i]
@@ -260,6 +280,9 @@ private struct ParsedArgs {
             case "--cpu":
                 cpu = true
                 i += 1
+            case "--hang-on-sentinel":
+                hangOnSentinel = true
+                i += 1
             case "--help", "-h":
                 throw UsageError(message: usage)
             default:
@@ -274,6 +297,7 @@ private struct ParsedArgs {
             ?? AppPaths.standard.applicationSupport
                 .appendingPathComponent("whisper.lock", isDirectory: false)
         self.forceCPU = cpu
+        self.hangOnSentinel = hangOnSentinel
     }
 }
 
@@ -283,6 +307,11 @@ private struct UsageError: Error {
 
 private let usage = """
 usage: pulsartrace-whisper --socket-path <path> [--lock-path <path>] [--cpu]
+                           [--hang-on-sentinel]
+
+  --hang-on-sentinel    Test-only: hang inside every decode request to
+                        simulate an unrecoverable whisper wedge. Used by
+                        the Phase 7 acceptance suite.
 """
 
 // MARK: - Session
@@ -294,11 +323,16 @@ usage: pulsartrace-whisper --socket-path <path> [--lock-path <path>] [--cpu]
 /// and then exits. The parent kills + respawns to recover from wedges.
 private struct Session {
     let forceCPU: Bool
+    /// Test-only: when true, every decode request blocks on
+    /// `Thread.sleep` forever (Phase 7 acceptance suite). The parent's
+    /// watchdog SIGKILLs the wedged subprocess; the kernel reaps it.
+    let hangOnSentinel: Bool
     let logger: Logger
     var transcriber: WhisperTranscriber?
 
-    init(forceCPU: Bool, logger: Logger) {
+    init(forceCPU: Bool, hangOnSentinel: Bool, logger: Logger) {
         self.forceCPU = forceCPU
+        self.hangOnSentinel = hangOnSentinel
         self.logger = logger
         self.transcriber = nil
     }
@@ -411,6 +445,19 @@ private struct Session {
     private func handleDecodeWindow(
         _ req: WhisperIPCDecodeWindow, fd: Int32
     ) {
+        if hangOnSentinel {
+            // Test mode: hang forever to simulate a wedged decode. The
+            // parent's per-decode `select(2)` deadline expires, the
+            // parent SIGKILLs us, the kernel reaps the zombie. Used by
+            // the Phase 7 acceptance suite — never set in production.
+            // `Thread.sleep` blocks the (only) request-loop thread,
+            // matching the production wedge shape (a graph compute step
+            // that ignores the cooperative abort token).
+            logger.warning(
+                "--hang-on-sentinel: blocking decode_window forever to simulate a wedge")
+            Thread.sleep(forTimeInterval: 60 * 60 * 24)  // until SIGKILL
+            return  // unreachable
+        }
         guard let transcriber else {
             let err = WhisperIPCError(
                 requestId: req.requestId,
@@ -470,6 +517,13 @@ private struct Session {
     private func handleDecodeRegion(
         _ req: WhisperIPCDecodeRegion, fd: Int32
     ) {
+        if hangOnSentinel {
+            // See `handleDecodeWindow` — same test-only wedge.
+            logger.warning(
+                "--hang-on-sentinel: blocking decode_region forever to simulate a wedge")
+            Thread.sleep(forTimeInterval: 60 * 60 * 24)  // until SIGKILL
+            return  // unreachable
+        }
         guard let transcriber else {
             let err = WhisperIPCError(
                 requestId: req.requestId,

@@ -64,6 +64,12 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
         /// How long to wait for `.ready` after sending `.initSession`.
         /// Past this, SIGKILL + throw `.initRefused`.
         public var initTimeout: Duration
+        /// Extra CLI arguments appended after the host's own
+        /// `--socket-path` / `--lock-path` / `--cpu` flags. Defaults to
+        /// empty. Used by the Phase 7 acceptance suite to pass
+        /// `--hang-on-sentinel` to a test-only build; production callers
+        /// leave this empty.
+        public var extraArgs: [String]
 
         public init(
             binaryURL: URL,
@@ -71,7 +77,8 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
             lockPath: URL? = nil,
             forceCPU: Bool = false,
             spawnTimeout: Duration = .seconds(10),
-            initTimeout: Duration = .seconds(60)
+            initTimeout: Duration = .seconds(60),
+            extraArgs: [String] = []
         ) {
             self.binaryURL = binaryURL
             self.socketDirectory = socketDirectory
@@ -79,6 +86,7 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
             self.forceCPU = forceCPU
             self.spawnTimeout = spawnTimeout
             self.initTimeout = initTimeout
+            self.extraArgs = extraArgs
         }
     }
 
@@ -215,6 +223,9 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
         if configuration.forceCPU {
             args.append("--cpu")
         }
+        // Optional extras (e.g. `--hang-on-sentinel`) used by the Phase 7
+        // acceptance suite; empty in production.
+        args.append(contentsOf: configuration.extraArgs)
 
         let process = Process()
         process.executableURL = configuration.binaryURL
