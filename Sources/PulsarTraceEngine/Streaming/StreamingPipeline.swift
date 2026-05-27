@@ -109,10 +109,12 @@ public struct StreamingPipeline: Sendable {
     ///
     /// - Parameters:
     ///   - configuration: inputs + tunables.
-    ///   - systemTranscriber: a model-resident `WhisperTranscriber` for the
-    ///     system stream (one context per stream — D8).
-    ///   - micTranscriber: a separate transcriber for the mic stream, when a
-    ///     `micSource` is supplied.
+    ///   - systemTranscriber: a `WindowTranscribing` conformer for the system
+    ///     stream — the in-process `WhisperTranscriber` for tests, or
+    ///     `RemoteWindowTranscriber` in production live runs (one transcriber
+    ///     per stream — D8).
+    ///   - micTranscriber: a separate `WindowTranscribing` for the mic stream,
+    ///     when a `micSource` is supplied.
     ///   - systemSource: the system-audio `AudioFrameSource` (any conforming
     ///     source — fixture, pipe, socket).
     ///   - micSource: optional mic `AudioFrameSource` (paired-stream mode).
@@ -120,8 +122,8 @@ public struct StreamingPipeline: Sendable {
     ///     lookup (R18). `nil` → generic `Them` labels only.
     public func run(
         configuration: Configuration,
-        systemTranscriber: WhisperTranscriber,
-        micTranscriber: WhisperTranscriber? = nil,
+        systemTranscriber: any WindowTranscribing,
+        micTranscriber: (any WindowTranscribing)? = nil,
         systemSource: some AudioFrameSource,
         micSource: (any AudioFrameSource)? = nil,
         library: SpeakerLibrary? = nil

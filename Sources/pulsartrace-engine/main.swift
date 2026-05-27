@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import PulsarTraceEngine
 
 /// `pulsartrace-engine` — the streaming engine binary.
@@ -168,12 +169,39 @@ struct EngineMain {
         }
         let modelURL = try await ModelStore(events: lifecycle.events)
             .ensureAvailable(model)
-        let transcriber = try WhisperTranscriber(modelURL: modelURL)
-        // A paired mic stream needs its own resident whisper context — one
-        // context per stream (D8); the Metal lock serializes their creation.
-        let micTranscriber: WhisperTranscriber? = micSource != nil
-            ? try WhisperTranscriber(modelURL: modelURL)
-            : nil
+        // Live engine: whisper runs in a subprocess so a wedged decode can be
+        // recovered (SIGKILL + respawn) without killing this engine — capture,
+        // WAV writers, live.md, events all stay live. The parent-side
+        // watchdog lives inside `RemoteWindowTranscriber`; the old in-process
+        // `DecodeWatchdog` is gone (the abort_callback path it relied on is
+        // structurally insufficient — see the 2026-05-26 wedge case).
+        // See docs/specs/2026-05-26-whisper-subprocess-design.md §6/§7.
+        let whisperConfig = RemoteWindowTranscriber.Configuration(
+            binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
+            modelURL: modelURL,
+            socketDirectory: AppPaths.standard.socketDirectory,
+            forceCPU: !WhisperOptions.defaultGPUEnabled,
+            // 10 s matches the prior in-process `DecodeWatchdog.deadline`.
+            decodeDeadline: .seconds(10),
+            respawnDeadline: .seconds(60))
+        let transcriber: any WindowTranscribing = RemoteWindowTranscriber(
+            configuration: whisperConfig,
+            logger: Logger(label: LogSubsystem.engine))
+        // Mic stream stays **in-process** for now (Phase 4 Option A): the
+        // `pulsartrace-whisper` binary takes a process-wide `flock` (spec §4
+        // Layer 2), so a second subprocess for the mic would exit with code 75.
+        // The dominant wedge surface — system audio — is covered by the
+        // subprocess; the mic path is a known smaller-surface follow-up
+        // pending a shared-host proxy (spec §4 / §9, see project-docs/PLAN.md).
+        // The mic stream is therefore still vulnerable to an in-graph whisper
+        // wedge until the shared-host design lands; in practice the mic stream
+        // is short and bursty so the exposure is small.
+        let micTranscriber: (any WindowTranscribing)?
+        if micSource != nil {
+            micTranscriber = try WhisperTranscriber(modelURL: modelURL)
+        } else {
+            micTranscriber = nil
+        }
 
         // --- live diarization config (dev venv + .env, like RefineCommand) --
         let liveDiarizerConfig: LiveDiarizer.Configuration?

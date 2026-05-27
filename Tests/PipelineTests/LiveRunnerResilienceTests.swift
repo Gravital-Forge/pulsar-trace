@@ -56,9 +56,7 @@ struct LiveRunnerResilienceTests {
         silenceGapThreshold: Duration = .milliseconds(250),
         tickInterval: Duration = .milliseconds(40),
         queueCapacity: Duration = .seconds(30),
-        workerDrainTimeout: Duration = .seconds(10),
-        decodeDeadline: Duration = .seconds(10),
-        abortGrace: Duration = .seconds(5)
+        workerDrainTimeout: Duration = .seconds(10)
     ) -> (LiveRunner, LiveMarkdownWriter, StreamingPipeline.Configuration) {
         let config = StreamingPipeline.Configuration(
             recordingFolder: folder,
@@ -75,9 +73,7 @@ struct LiveRunnerResilienceTests {
             silenceGapThreshold: silenceGapThreshold,
             tickInterval: tickInterval,
             queueCapacity: queueCapacity,
-            workerDrainTimeout: workerDrainTimeout,
-            decodeDeadline: decodeDeadline,
-            abortGrace: abortGrace)
+            workerDrainTimeout: workerDrainTimeout)
         return (runner, writer, config)
     }
 
@@ -473,68 +469,18 @@ struct LiveRunnerResilienceTests {
         #expect(text.contains("_(recording paused)_"))
     }
 
-    // MARK: - Phase 2 — per-decode watchdog recovers a one-shot hung decode
-
-    @Test("the watchdog aborts a hung decode and the worker keeps going")
-    func watchdogAbortsHungDecodeAndResumes() async throws {
-        let folder = tempFolder()
-        defer { try? FileManager.default.removeItem(at: folder) }
-
-        // First decode hangs until aborted; later decodes return text.
-        let flaky = HangThenRecoverTranscriber(hangCount: 1)
-        let source = ControllableSource()
-        let (runner, writer, _) = makeRunner(
-            folder: folder, decodeDeadline: .milliseconds(150), abortGrace: .seconds(10))
-        try await writer.start()
-
-        let runTask = Task {
-            try await runner.run(
-                systemTranscriber: flaky, micTranscriber: nil,
-                systemSource: source, micSource: nil, liveDiarizer: nil)
-        }
-        for i in 0..<400 { await source.yieldFrame(tone(sequenceIndex: i)) }
-        try await Task.sleep(for: .milliseconds(800))
-        await source.finish()
-        let out = try await runTask.value
-        await writer.finish()
-
-        #expect(out.utteranceLines > 0)
-        #expect(await flaky.decodesAttempted >= 2)
-    }
-
-    @Test("a decode that ignores the abort is monitored with an escalating warning")
-    func unrecoverableHangIsMonitored() async throws {
-        let folder = tempFolder()
-        defer { try? FileManager.default.removeItem(at: folder) }
-
-        let capture = CaptureLog()
-        let ignorer = IgnoresAbortTranscriber()
-        let source = ControllableSource()
-        let (runner, writer, _) = makeRunner(
-            folder: folder,
-            logger: Logger(label: "test") { _ in capture },
-            workerDrainTimeout: .milliseconds(300),
-            decodeDeadline: .milliseconds(100),
-            abortGrace: .milliseconds(150))
-        try await writer.start()
-
-        let runTask = Task {
-            try await runner.run(
-                systemTranscriber: ignorer, micTranscriber: nil,
-                systemSource: source, micSource: nil, liveDiarizer: nil)
-        }
-        // Feed enough non-silent frames to trigger a decode (>= one 2 s window
-        // = 100 frames), then let the wedge run while the monitor warns.
-        for i in 0..<200 { await source.yieldFrame(tone(sequenceIndex: i)) }
-        try await Task.sleep(for: .milliseconds(800))
-        await source.finish()
-        _ = await withTimeoutOrNil(seconds: 5) { try await runTask.value }
-        await writer.finish()
-        ignorer.release()   // let the abandoned decode thread exit
-
-        let warnings = capture.messages.filter { $0.contains("did not honor abort") }
-        #expect(!warnings.isEmpty, "monitor did not warn; got \(capture.messages)")
-    }
+    // MARK: - Phase 4 — wedge recovery moved out of LiveRunner
+    //
+    // The pre-Phase-4 `DecodeWatchdog` lived in-process and flipped an
+    // `AbortToken` on a hung decode. Phase 4 deleted that watchdog: wedge
+    // recovery now lives inside `RemoteWindowTranscriber`, which SIGKILLs +
+    // respawns its `pulsartrace-whisper` subprocess past the deadline (spec
+    // §6). The two Phase-2 tests that exercised the in-process watchdog
+    // (`watchdogAbortsHungDecodeAndResumes`, `unrecoverableHangIsMonitored`)
+    // were therefore removed in Phase 4 — the recovery behavior they pinned
+    // is now covered by `RemoteWindowTranscriberTests`, and the
+    // `decodeDeadline` / `abortGrace` knobs they used no longer exist on
+    // `LiveRunner.init`.
 }
 
 // MARK: - Test doubles
@@ -629,8 +575,11 @@ actor DoneFlag {
 }
 
 /// A `WindowTranscribing` whose every decode blocks forever — the live wedge.
-/// Honors the abort token (set by the watchdog in a later task); until then it
-/// spin-sleeps until cancelled.
+/// Will honor an abort token if one is passed, but since Phase 4 deleted the
+/// in-process `DecodeWatchdog` the runner now passes `abort: nil`, so in
+/// these tests this block is unbounded — exactly the wedge condition being
+/// stress-tested (recording-safety: WAV keeps growing through the wedge).
+/// The surrounding tests bound the wait themselves via `withTimeoutOrNil`.
 final class BlockingWindowTranscriber: WindowTranscribing, @unchecked Sendable {
     func transcribeWindow(
         _ samples: [Float],
@@ -642,58 +591,6 @@ final class BlockingWindowTranscriber: WindowTranscribing, @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.02)
         }
         throw WhisperTranscribeError.transcriptionFailed(-999)
-    }
-}
-
-/// Hangs (honoring the abort token) for its first `hangCount` decodes, then
-/// returns a real-looking utterance — a decode that wedges once, then recovers.
-final class HangThenRecoverTranscriber: WindowTranscribing, @unchecked Sendable {
-    private let hangCount: Int
-    private let lock = NSLock(); private var _attempted = 0
-    init(hangCount: Int) { self.hangCount = hangCount }
-    var decodesAttempted: Int { get async { lock.withLock { _attempted } } }
-    func transcribeWindow(
-        _ samples: [Float], windowStart: Duration,
-        options: WhisperOptions, abort: AbortToken?
-    ) throws -> TranscriptionResult {
-        let n = lock.withLock { _attempted += 1; return _attempted }
-        if n <= hangCount {
-            while abort?.isCancelled != true { Thread.sleep(forTimeInterval: 0.02) }
-            throw WhisperTranscribeError.transcriptionFailed(-999)
-        }
-        return TranscriptionResult(
-            segments: [TranscriptSegment(start: windowStart, end: windowStart, text: "ok")],
-            language: "en")
-    }
-}
-
-/// Ignores the abort token completely — the true single-kernel GPU-hang
-/// analogue: nothing the watchdog does interrupts it. Released explicitly by the
-/// test so the abandoned dispatch thread can exit at end of test.
-final class IgnoresAbortTranscriber: WindowTranscribing, @unchecked Sendable {
-    private let lock = NSLock(); private var released = false
-    func release() { lock.withLock { released = true } }
-    func transcribeWindow(
-        _ samples: [Float], windowStart: Duration,
-        options: WhisperOptions, abort: AbortToken?
-    ) throws -> TranscriptionResult {
-        while !(lock.withLock { released }) { Thread.sleep(forTimeInterval: 0.02) }
-        return TranscriptionResult(segments: [], language: "en")
-    }
-}
-
-/// Lock-protected log sink that records every message, for asserting on log
-/// output in an integration test.
-final class CaptureLog: LogHandler, @unchecked Sendable {
-    private let lock = NSLock(); private var _m: [String] = []
-    var logLevel: Logger.Level = .trace
-    var metadata: Logger.Metadata = [:]
-    subscript(metadataKey k: String) -> Logger.Metadata.Value? {
-        get { metadata[k] } set { metadata[k] = newValue } }
-    var messages: [String] { lock.withLock { _m } }
-    func log(level: Logger.Level, message: Logger.Message, metadata: Logger.Metadata?,
-             source: String, file: String, function: String, line: UInt) {
-        lock.withLock { _m.append("\(message)") }
     }
 }
 
