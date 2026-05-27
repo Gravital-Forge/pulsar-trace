@@ -219,13 +219,25 @@ final class AppEnvironment {
         let pauseBox = AsyncCallBox()
         let resumeBox = AsyncCallBox()
 
+        // Phase 6 / Layer B: probe the binary-level `whisper.lock` between
+        // pauseRefinement and the orchestrator's start. `pauseRefinement`
+        // terminates the refinement-whisper subprocess (Layer A); this
+        // probe is the defence-in-depth that catches the rare slow-teardown
+        // window before the engine subprocess hits the flock.
+        let lockProbePath = paths.applicationSupport
+            .appendingPathComponent("whisper.lock", isDirectory: false)
         self.recording = RecordingViewModel(
             settings: settings, paths: paths, events: events,
             enqueueAutoRefine: { url, recordingId in
                 await enqueueBox.call(url, recordingId)
             },
             pauseRefinement: { await pauseBox.call() },
-            resumeRefinement: { await resumeBox.call() })
+            resumeRefinement: { await resumeBox.call() },
+            waitForWhisperLockFree: {
+                try await WhisperLockProbe.waitUntilFree(
+                    lockPath: lockProbePath,
+                    timeout: .seconds(5))
+            })
         self.scanner = RecordingsScanner(settings: settings)
         self.liveWatcher = LiveTranscriptWatcher()
         self.onboarding = OnboardingTourViewModel()

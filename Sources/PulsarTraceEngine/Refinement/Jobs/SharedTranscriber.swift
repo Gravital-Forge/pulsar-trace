@@ -34,4 +34,22 @@ public final class SharedTranscriberBox<T>: @unchecked Sendable {
         cached = made
         return made
     }
+
+    /// Drop the cached instance. ARC plus the type's `deinit` do the
+    /// cleanup — e.g. `RemoteRegionTranscriber.deinit` calls `shutdown()`,
+    /// which terminates the `pulsartrace-whisper` subprocess and releases
+    /// the binary-level `whisper.lock`. A subsequent `get()` rebuilds the
+    /// instance via the factory.
+    ///
+    /// Used by `RefinementJobQueue.pauseForRecording` (Phase 6) to make
+    /// the refinement-whisper subprocess release the lock *before* the
+    /// engine's whisper subprocess tries to acquire it. Without this hook
+    /// the in-flight region decode would complete normally, the engine
+    /// subprocess would race the `flock`, and recording-start would fail
+    /// with the silent `exit 75` (`EX_TEMPFAIL`) mode (spec §4 Layer 2).
+    public func release() {
+        lock.lock()
+        defer { lock.unlock() }
+        cached = nil
+    }
 }

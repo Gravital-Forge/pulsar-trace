@@ -90,6 +90,14 @@ public final class RecordingViewModel {
     /// the `RefinementJobQueue`. Default is a no-op.
     private let resumeRefinement: @Sendable () async -> Void
 
+    /// Defence-in-depth check between `pauseRefinement` and orchestration
+    /// start (Phase 6): waits for the binary-level `whisper.lock` to be free
+    /// so the engine's `pulsartrace-whisper` does not race the refinement
+    /// subprocess's lock release. Throws on timeout — the VM surfaces that
+    /// as a user-facing `.error` and reverts to `.idle`. Default is a no-op
+    /// for unit tests + the CLI; the mac-app injects the real probe.
+    private let waitForWhisperLockFree: @Sendable () async throws -> Void
+
     /// The orchestrator for the in-flight session, if any.
     private var orchestrator: RecordingOrchestrating?
     /// The crash-watch task started after a successful `start()`.
@@ -116,6 +124,12 @@ public final class RecordingViewModel {
     ///     ask the queue to yield resources to the live pass. Default is a no-op.
     ///   - resumeRefinement: called after recording stops or on a start failure.
     ///     Default is a no-op so unit tests and CLI usage stay simple.
+    ///   - waitForWhisperLockFree: called between `pauseRefinement` and the
+    ///     orchestrator's `start()` to confirm the binary-level
+    ///     `whisper.lock` is free (Phase 6 / Layer B). Throws on timeout —
+    ///     the VM surfaces a "refinement is still finishing up" `.error`.
+    ///     Default is a no-op (unit tests + CLI); the mac-app injects the
+    ///     real probe pointing at `paths.applicationSupport/whisper.lock`.
     public init(
         settings: MenuBarSettings,
         paths: AppPaths = .standard,
@@ -126,7 +140,8 @@ public final class RecordingViewModel {
             -> RecordingOrchestrating)? = nil,
         enqueueAutoRefine: (@Sendable (URL, String) async -> Void)? = nil,
         pauseRefinement: (@Sendable () async -> Void)? = nil,
-        resumeRefinement: (@Sendable () async -> Void)? = nil
+        resumeRefinement: (@Sendable () async -> Void)? = nil,
+        waitForWhisperLockFree: (@Sendable () async throws -> Void)? = nil
     ) {
         self.settings = settings
         self.paths = paths
@@ -138,6 +153,7 @@ public final class RecordingViewModel {
         self.enqueueAutoRefine = enqueueAutoRefine ?? { _, _ in }
         self.pauseRefinement = pauseRefinement ?? {}
         self.resumeRefinement = resumeRefinement ?? {}
+        self.waitForWhisperLockFree = waitForWhisperLockFree ?? {}
     }
 
     // MARK: - Start
@@ -186,6 +202,25 @@ public final class RecordingViewModel {
         // prompt. Deliberately left as-is; the first-run wizard will
         // request and confirm grants up front, before the first start.
         await pauseRefinement()
+
+        // Phase 6 / Layer B: defence-in-depth wait for the binary-level
+        // `whisper.lock` to actually be free before the engine spawns its
+        // own `pulsartrace-whisper`. `pauseRefinement` already terminated
+        // the refinement subprocess (Layer A in `RefinementJobQueue`); the
+        // probe catches the rare slow-teardown case so we surface a
+        // user-readable error instead of the silent "engine subprocess
+        // exit 75 → model_load_failed" mode.
+        do {
+            try await waitForWhisperLockFree()
+        } catch {
+            self.orchestrator = nil
+            await resumeRefinement()
+            status = .error(
+                message: "Refinement is still finishing up. Try again in a moment.")
+            progressMessage = ""
+            return
+        }
+
         do {
             try await orchestrator.start(readyTimeout: .seconds(20))
         } catch {

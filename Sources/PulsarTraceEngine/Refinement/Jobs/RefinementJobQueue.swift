@@ -31,6 +31,12 @@ public actor RefinementJobQueue {
     private var pausedForRecording = false
     private var worker: Task<Void, Never>?
     private var inflightCancellable: RefinementCancellable?
+    /// A hook the in-flight worker registers (via `setInflightTranscriberRelease`)
+    /// pointing at its `SharedTranscriberBox.release`. `pauseForRecording`
+    /// fires it after cancelling the diarizer so the refinement-whisper
+    /// subprocess terminates *before* the engine starts (Phase 6). Cleared
+    /// synchronously alongside `inflightCancellable` after each job runs.
+    private var inflightTranscriberRelease: (@Sendable () -> Void)?
 
     /// Cap on the in-memory `recent` list. Older terminal jobs still exist
     /// on disk until `pruneTerminal` reaps them; this just bounds memory
@@ -60,6 +66,18 @@ public actor RefinementJobQueue {
     /// passes a `Diarizer`; tests pass a spy. Pass `nil` to clear.
     func setInflightCancellable(_ cancellable: RefinementCancellable?) {
         inflightCancellable = cancellable
+    }
+
+    /// Register a hook for releasing the in-flight job's shared transcriber.
+    /// `pauseForRecording` invokes it after cancelling the diarizer so the
+    /// refinement-whisper subprocess (`RemoteRegionTranscriber`) terminates
+    /// promptly, releasing the binary-level `whisper.lock` before the
+    /// engine's whisper subprocess tries to acquire it (Phase 6 /
+    /// `docs/specs/2026-05-26-whisper-subprocess-design.md` §4 Layer 2).
+    /// Production `runJob` binds it to `SharedTranscriberBox.release`;
+    /// tests pass a spy. Pass `nil` to clear.
+    func setInflightTranscriberRelease(_ release: (@Sendable () -> Void)?) {
+        inflightTranscriberRelease = release
     }
 
     /// Restore persisted jobs and kick the worker.
@@ -178,6 +196,29 @@ public actor RefinementJobQueue {
     /// lastStage:)` so the UI reflects the suspension rather than showing
     /// stale "Diarizing 2/7" text. Also signals the diarizer to terminate its
     /// subprocess if one is currently running (D-Q7 / Task D3).
+    ///
+    /// **Phase 6 behaviour change.** Previously this method only closed the
+    /// pause gate (the in-flight region decode ran to completion before the
+    /// refiner stalled at the next checkpoint). With the refinement path now
+    /// going through a `pulsartrace-whisper` subprocess, "complete the current
+    /// region" can be many seconds, during which the subprocess holds the
+    /// binary-level `whisper.lock` (spec §4 Layer 2). A recording-start
+    /// arriving in that window would race the lock and the engine's whisper
+    /// subprocess would exit 75. To prevent that, this method now:
+    ///
+    /// 1. Fires the in-flight transcriber-release hook (if registered),
+    ///    which drops the `SharedTranscriberBox`'s cached
+    ///    `RemoteRegionTranscriber`. ARC + `deinit` terminate the subprocess
+    ///    and the lock is released within sub-second.
+    /// 2. Awaits the worker task's exit (the in-flight `transcribeRegion`
+    ///    throws once the subprocess dies; `ResumableRefiner.run` propagates
+    ///    the throw; the worker exits). A 5-second timeout caps the wait —
+    ///    if exceeded, a warning is logged and the method returns; the
+    ///    caller's lock probe (Layer B) provides the final guard.
+    ///
+    /// The killed region is *not* lost: `ResumableRefiner` resumes from the
+    /// previous completed checkpoint on the next `resumeAfterRecording`,
+    /// repeating the killed region. A few seconds of recompute, no data loss.
     public func pauseForRecording() async {
         pausedForRecording = true
         await pauseGate.close()
@@ -189,6 +230,51 @@ public actor RefinementJobQueue {
             catch { logger.warning("pause upsert failed: \(PathRedactor.redactHome("\(error)"))") }
         }
         if let c = inflightCancellable { await c.cancel() }
+
+        // Phase 6: fire the transcriber-release hook so the refinement
+        // `pulsartrace-whisper` subprocess terminates promptly. The hook
+        // calls `SharedTranscriberBox.release`; the box's `deinit`-driven
+        // tear-down (`RemoteRegionTranscriber.shutdown`) SIGTERMs the host
+        // with a 2s grace and the kernel releases the `whisper.lock`.
+        //
+        // Only if a release hook was registered do we then await the
+        // worker's exit: the await is a "I expect the in-flight decode to
+        // throw and the worker to unwind because I just terminated its
+        // subprocess." Without a release hook, there's no such signal —
+        // historical tests with `gate.waitOpen()` + `Task.sleep(60s)`
+        // runJobs would otherwise pay a needless 5s timeout on every
+        // pauseForRecording. Production wires the hook in `makeStandard`.
+        let hadRelease = inflightTranscriberRelease != nil
+        if let release = inflightTranscriberRelease {
+            release()
+        }
+
+        // Phase 6: wait for the worker task to actually exit so the
+        // caller has happens-before with "the refinement subprocess is
+        // gone". The transcriber release above unwedges the in-flight
+        // decode (the IPC read sees EOF / subprocessGone, the
+        // `RemoteRegionTranscriber` throws `transcriptionFailed`, the
+        // refiner surfaces the throw, the worker exits). 5s is generous
+        // — subprocess teardown is normally sub-second.
+        if hadRelease, let w = worker {
+            let exited = await withTaskGroup(of: Bool.self) { group in
+                group.addTask {
+                    await w.value
+                    return true
+                }
+                group.addTask {
+                    try? await Task.sleep(for: .seconds(5))
+                    return false
+                }
+                let first = await group.next() ?? false
+                group.cancelAll()
+                return first
+            }
+            if !exited {
+                logger.warning(
+                    "pauseForRecording: refinement worker did not exit within 5s; recording will rely on lock probe")
+            }
+        }
     }
 
     /// Resume the queue: opens the gate so the in-flight refiner picks up at
@@ -271,6 +357,11 @@ public actor RefinementJobQueue {
         // potentially seeing the *previous* job's cancellable if the
         // fire-and-forget cleanup Task lost the race (D-Q7 lost-cancel fix).
         inflightCancellable = nil
+        // Same reasoning for the transcriber-release hook (Phase 6): clear
+        // it synchronously so a between-jobs pauseForRecording does not
+        // see (and try to invoke) a stale hook bound to the previous job's
+        // already-released transcriber box.
+        inflightTranscriberRelease = nil
         try? await store.upsert(job)
         recent.append(job)
         trimRecent()
@@ -370,6 +461,17 @@ extension RefinementJobQueue {
                 return RemoteRegionTranscriber(
                     configuration: remoteConfig,
                     logger: Logger(label: LogSubsystem.engine))
+            }
+
+            // Phase 6: register a release hook so pauseForRecording() can
+            // terminate the refinement-whisper subprocess (and free the
+            // binary-level `whisper.lock`) before the engine subprocess
+            // starts. Dropping the box's cached instance is enough —
+            // `RemoteRegionTranscriber.deinit` calls `shutdown()`, which
+            // SIGTERMs the host. The hook is cleared in `runNext`'s cleanup
+            // path so it does not leak across jobs.
+            await queue.setInflightTranscriberRelease { [sharedTranscriber] in
+                sharedTranscriber.release()
             }
             let refiner = ResumableRefiner(
                 transcribe: { samples, region, options in
