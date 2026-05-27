@@ -175,7 +175,30 @@ struct EngineMain {
         // watchdog lives inside `RemoteWindowTranscriber`; the old in-process
         // `DecodeWatchdog` is gone (the abort_callback path it relied on is
         // structurally insufficient — see the 2026-05-26 wedge case).
-        // See docs/specs/2026-05-26-whisper-subprocess-design.md §6/§7.
+        //
+        // Both the system and mic streams share **one** subprocess via a
+        // `SerializingHostProxy` (Phase 4-fix). The `pulsartrace-whisper`
+        // binary takes a process-wide `flock` (spec §4 Layer 2), so two
+        // independent subprocesses would have one exit with code 75. The
+        // proxy serializes every `decode`/`startAndInitialize` call behind
+        // a single `NSLock` — that lock-around-decode is the IPC equivalent
+        // of the in-process `metalLock` `WhisperTranscriber` used and the
+        // same single-decode-at-a-time invariant the binary's flock enforces.
+        // Both `RemoteWindowTranscriber` instances are constructed with
+        // `hostFactory: { _, _ in proxy }` so they share the inner host;
+        // a wedge in either stream sigkills the shared inner and the
+        // first follow-up decode on either transcriber respawns it.
+        // See docs/specs/2026-05-26-whisper-subprocess-design.md §6/§7/§9.
+        let whisperHostConfig = WhisperSubprocessHost.Configuration(
+            binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
+            socketDirectory: AppPaths.standard.socketDirectory,
+            lockPath: nil,
+            forceCPU: !WhisperOptions.defaultGPUEnabled,
+            spawnTimeout: .seconds(10),
+            initTimeout: .seconds(60))
+        let sharedHostProxy = SerializingHostProxy(
+            configuration: whisperHostConfig,
+            logger: Logger(label: LogSubsystem.engine))
         let whisperConfig = RemoteWindowTranscriber.Configuration(
             binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
             modelURL: modelURL,
@@ -184,21 +207,19 @@ struct EngineMain {
             // 10 s matches the prior in-process `DecodeWatchdog.deadline`.
             decodeDeadline: .seconds(10),
             respawnDeadline: .seconds(60))
+        let sharedHostFactory: RemoteWindowTranscriber.HostFactory = { _, _ in
+            sharedHostProxy
+        }
         let transcriber: any WindowTranscribing = RemoteWindowTranscriber(
             configuration: whisperConfig,
-            logger: Logger(label: LogSubsystem.engine))
-        // Mic stream stays **in-process** for now (Phase 4 Option A): the
-        // `pulsartrace-whisper` binary takes a process-wide `flock` (spec §4
-        // Layer 2), so a second subprocess for the mic would exit with code 75.
-        // The dominant wedge surface — system audio — is covered by the
-        // subprocess; the mic path is a known smaller-surface follow-up
-        // pending a shared-host proxy (spec §4 / §9, see project-docs/PLAN.md).
-        // The mic stream is therefore still vulnerable to an in-graph whisper
-        // wedge until the shared-host design lands; in practice the mic stream
-        // is short and bursty so the exposure is small.
+            logger: Logger(label: LogSubsystem.engine),
+            hostFactory: sharedHostFactory)
         let micTranscriber: (any WindowTranscribing)?
         if micSource != nil {
-            micTranscriber = try WhisperTranscriber(modelURL: modelURL)
+            micTranscriber = RemoteWindowTranscriber(
+                configuration: whisperConfig,
+                logger: Logger(label: LogSubsystem.engine),
+                hostFactory: sharedHostFactory)
         } else {
             micTranscriber = nil
         }
