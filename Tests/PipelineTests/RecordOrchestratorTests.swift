@@ -85,4 +85,107 @@ struct RecordOrchestratorTests {
         #expect(outcome.engineExitCode != 0)   // killed by signal, not a clean exit
         #expect(await !orchestrator.isEngineRunning())
     }
+
+    // MARK: - engineEnvironment merge behavior
+    //
+    // The orchestrator's `engineEnvironment` field — added with the
+    // `PULSARTRACE_WHISPER_BINARY` thread-through fix — must merge onto the
+    // parent process's environment (caller-wins) before being assigned to the
+    // engine subprocess. Replacing rather than merging would strip HOME, PATH,
+    // USER, etc. and break anything downstream that depends on them. These
+    // tests assert the observable contract by spawning a stand-in engine
+    // script that echoes the env it actually receives.
+
+    /// Builds a config whose capture is a vanilla ready+idle script and whose
+    /// engine is the supplied shell snippet (typically an `echo` reading env
+    /// vars), then exits 0.
+    private func engineEnvConfig(
+        engine: String, engineEnvironment: [String: String]?
+    ) -> RecordOrchestrator.Configuration {
+        RecordOrchestrator.Configuration(
+            captureBinary: sh,
+            captureArguments: ["-c", "echo ready; exec sleep 10"],
+            engineBinary: sh,
+            engineArguments: ["-c", engine],
+            engineEnvironment: engineEnvironment)
+    }
+
+    @Test("engineEnvironment nil leaves the engine inheriting parent env (HOME present)")
+    func engineEnvironmentNilInheritsParent() async throws {
+        // With no caller-supplied env, the orchestrator must leave
+        // `engine.environment = nil` so the subprocess inherits the parent's
+        // full env. HOME is virtually guaranteed to exist in the test host.
+        let orchestrator = RecordOrchestrator(configuration: engineEnvConfig(
+            engine: #"echo "HOME=$HOME"; exit 0"#,
+            engineEnvironment: nil))
+
+        try await orchestrator.start(readyTimeout: .seconds(5))
+        await orchestrator.waitForEngineExit()
+        let outcome = await orchestrator.stop()
+
+        #expect(outcome.engineExitCode == 0)
+        #expect(outcome.engineSummary.hasPrefix("HOME="))
+        let value = String(outcome.engineSummary.dropFirst("HOME=".count))
+        #expect(!value.isEmpty)
+    }
+
+    @Test("engineEnvironment non-nil makes the caller key visible to the engine")
+    func engineEnvironmentPopulatesCallerKey() async throws {
+        let orchestrator = RecordOrchestrator(configuration: engineEnvConfig(
+            engine: #"echo "KEY=$PULSARTRACE_TEST_KEY"; exit 0"#,
+            engineEnvironment: ["PULSARTRACE_TEST_KEY": "test-value-42"]))
+
+        try await orchestrator.start(readyTimeout: .seconds(5))
+        await orchestrator.waitForEngineExit()
+        let outcome = await orchestrator.stop()
+
+        #expect(outcome.engineExitCode == 0)
+        #expect(outcome.engineSummary == "KEY=test-value-42")
+    }
+
+    @Test("engineEnvironment non-nil still preserves parent env (merge, not replace)")
+    func engineEnvironmentPreservesParentEnv() async throws {
+        // The bug we are guarding against: assigning `engine.environment` to
+        // just the caller dict would drop HOME/PATH/USER. The script echoes
+        // both the new key and HOME on a single delimited line so the assert
+        // can verify both in one summary read.
+        let orchestrator = RecordOrchestrator(configuration: engineEnvConfig(
+            engine: #"echo "KEY=$PULSARTRACE_TEST_KEY|HOME=$HOME"; exit 0"#,
+            engineEnvironment: ["PULSARTRACE_TEST_KEY": "x"]))
+
+        try await orchestrator.start(readyTimeout: .seconds(5))
+        await orchestrator.waitForEngineExit()
+        let outcome = await orchestrator.stop()
+
+        #expect(outcome.engineExitCode == 0)
+        let parts = outcome.engineSummary.split(separator: "|", maxSplits: 1)
+        #expect(parts.count == 2)
+        guard parts.count == 2 else { return }
+        #expect(parts[0] == "KEY=x")
+        #expect(parts[1].hasPrefix("HOME="))
+        let homeValue = parts[1].dropFirst("HOME=".count)
+        #expect(!homeValue.isEmpty)
+    }
+
+    @Test("engineEnvironment caller value overrides the parent's value on duplicate keys")
+    func engineEnvironmentCallerWinsOnDuplicateKeys() async throws {
+        // Seed a process-level env var first so the parent env carries it,
+        // then pass a different value for the same key in engineEnvironment.
+        // The caller's value must win. Unset on the way out to keep this test
+        // hermetic w.r.t. anything else in the suite.
+        let key = "PULSARTRACE_TEST_OVERRIDE"
+        setenv(key, "parent-value", 1)
+        defer { unsetenv(key) }
+
+        let orchestrator = RecordOrchestrator(configuration: engineEnvConfig(
+            engine: #"echo "OVERRIDE=$PULSARTRACE_TEST_OVERRIDE"; exit 0"#,
+            engineEnvironment: [key: "caller-value"]))
+
+        try await orchestrator.start(readyTimeout: .seconds(5))
+        await orchestrator.waitForEngineExit()
+        let outcome = await orchestrator.stop()
+
+        #expect(outcome.engineExitCode == 0)
+        #expect(outcome.engineSummary == "OVERRIDE=caller-value")
+    }
 }
