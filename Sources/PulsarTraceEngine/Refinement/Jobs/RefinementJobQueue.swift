@@ -349,18 +349,27 @@ extension RefinementJobQueue {
             // would have introduced.
             await queue.setInflightCancellable(diarizer)
 
-            // One WhisperTranscriber per *job*, not per region. `whisper_init_
-            // from_file_with_params` rebuilds the Metal pipeline state object
-            // on every call — multi-second on Apple Silicon for `large-v3` —
-            // so per-region construction was the dominant cost of a refinement
-            // pass (DECISIONS.md D36, reopened). The transcriber is non-
-            // `Sendable` (it wraps `whisper_context`, which is not thread-safe),
-            // so the `SharedTranscriberBox` lock + the `metalLock` inside
-            // `WhisperTranscriber` together serialise every touch; the queue's
-            // single-worker invariant means there is never more than one job's
-            // box alive at once.
-            let sharedTranscriber = SharedTranscriberBox {
-                try WhisperTranscriber(modelURL: modelURL)
+            // One transcriber per *job*, not per region. The historical
+            // cost driver was `whisper_init_from_file_with_params` rebuilding
+            // the Metal pipeline state on every call (DECISIONS.md D36,
+            // reopened); the remote variant keeps the same shape — one
+            // subprocess spawned on first region, reused across every region
+            // of the job. The queue's single-worker invariant + the host's
+            // single-connection lifecycle together serialise every touch.
+            //
+            // Phase 5 (docs/specs/2026-05-26-whisper-subprocess-design.md
+            // §6/§7): the in-process `WhisperTranscriber` is replaced by
+            // `RemoteRegionTranscriber` so a wedged refinement decode is
+            // recoverable via SIGKILL + respawn without losing already-
+            // checkpointed regions.
+            let sharedTranscriber = SharedTranscriberBox<any RegionTranscribing> {
+                let remoteConfig = RemoteRegionTranscriber.Configuration(
+                    binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
+                    modelURL: modelURL,
+                    socketDirectory: AppPaths.standard.socketDirectory)
+                return RemoteRegionTranscriber(
+                    configuration: remoteConfig,
+                    logger: Logger(label: LogSubsystem.engine))
             }
             let refiner = ResumableRefiner(
                 transcribe: { samples, region, options in
