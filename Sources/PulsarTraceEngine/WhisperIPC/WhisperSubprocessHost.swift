@@ -209,12 +209,30 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
             at: configuration.socketDirectory,
             withIntermediateDirectories: true)
 
+        // Keep this filename short — `sockaddr_un.sun_path` on macOS is 104
+        // bytes (incl. NUL). The socket directory (production:
+        // `~/Library/Application Support/PulsarTrace/sockets/`) already eats
+        // ~63 bytes, so a long filename overflows bind(2) and the subprocess
+        // dies before the handshake. 8 hex chars of randomness is enough for a
+        // per-spawn UDS label — the flock + spawn pattern already enforces
+        // "at most one whisper subprocess at a time".
+        let shortID = UUID().uuidString.prefix(8)
         let socketPath = configuration.socketDirectory
-            .appendingPathComponent(
-                "whisper-\(getpid())-\(UUID().uuidString).sock",
-                isDirectory: false)
+            .appendingPathComponent("w-\(shortID).sock", isDirectory: false)
         // Stale-socket cleanup is the subprocess's responsibility (it
         // `unlink`s before bind); we only ensure the directory exists.
+
+        // `sun_path` is 104 bytes including the NUL terminator on Darwin —
+        // so the path itself must be < 104 bytes. A path that overflows here
+        // would make the subprocess exit early on bind(2), and the parent's
+        // handshake reader would see EOF before `exitStatus` latches,
+        // producing a misleading `handshakeTimedOut`. Surface the real cause.
+        let sunPathCapacity = MemoryLayout.size(ofValue: sockaddr_un().sun_path)
+        guard socketPath.path.utf8.count < sunPathCapacity else {
+            throw HostError.spawnFailed(
+                "socket path too long: \(socketPath.path.utf8.count) bytes "
+                + "(max \(sunPathCapacity - 1)) — \(socketPath.path)")
+        }
 
         var args: [String] = ["--socket-path", socketPath.path]
         if let lockPath = configuration.lockPath {

@@ -412,7 +412,7 @@ private enum AcceptanceTestError: Error, CustomStringConvertible {
 ///      `/var/folders/.../T/` on macOS).
 ///
 /// Unix-domain-socket paths have a ~104 byte limit on Darwin; the
-/// per-test directory must be short enough that any `whisper-<pid>-<uuid>.sock`
+/// per-test directory must be short enough that any `w-<8hex>.sock`
 /// minted under it still fits. The tag is intentionally short.
 private func makeTempDir(tag: String) -> URL {
     let base: URL
