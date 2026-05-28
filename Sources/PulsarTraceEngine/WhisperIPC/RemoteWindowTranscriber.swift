@@ -57,7 +57,11 @@ public final class RemoteWindowTranscriber: WindowTranscribing, @unchecked Senda
             lockPath: URL? = nil,
             forceCPU: Bool = false,
             decodeDeadline: Duration = .seconds(10),
-            respawnDeadline: Duration = .seconds(60),
+            // 180 s — see `WhisperSubprocessHost.Configuration.initTimeout`
+            // for the rationale; this value is plumbed straight through
+            // there. The throttled backoff logger keeps the operator in
+            // the loop while we wait (`respawnWithBackoffLog`).
+            respawnDeadline: Duration = .seconds(180),
             spawnTimeout: Duration = .seconds(10),
             logBackoffInitial: Duration = .seconds(5),
             logBackoffCap: Duration = .seconds(600)
@@ -173,6 +177,13 @@ public final class RemoteWindowTranscriber: WindowTranscribing, @unchecked Senda
             case "empty_audio":
                 throw WhisperTranscribeError.emptyAudio
             default:
+                // The fallthrough error collapses to `transcriptionFailed(-1)`
+                // on the wire, but the subprocess's `kind` + `message`
+                // (e.g. `transcription_failed: whisper_full returned -3`
+                // or `decode_internal: ...`) is the only thing that
+                // identifies the real cause. Log it so a wedge is
+                // diagnosable from the engine log alone.
+                logger.error("whisper subprocess returned error [\(err.kind)]: \(err.message)")
                 throw WhisperTranscribeError.transcriptionFailed(-1)
             }
         case .ready:
@@ -264,11 +275,16 @@ public final class RemoteWindowTranscriber: WindowTranscribing, @unchecked Senda
     ) throws {
         switch error {
         case .readTimedOut, .readEOF, .writeFailed, .subprocessGone:
-            // Keep the message close to the old `DecodeWatchdog`'s
-            // "exceeded deadline; aborting" so existing log-greps
-            // still find a hit.
+            // Interpolate the actual `HostError` variant — the previous
+            // hardcoded "exceeded deadline" message claimed a timeout
+            // even when the subprocess crashed within seconds of a
+            // 120-second budget. The variant identifies whether it
+            // was a true deadline (`readTimedOut`), a peer crash
+            // (`readEOF` / `subprocessGone`), or a write failure
+            // (`writeFailed`). Keeps "exceeded deadline" in the
+            // message so existing log-greps still match.
             logger.warning(
-                "whisper decode exceeded deadline; killing subprocess for respawn stream=remote")
+                "whisper decode exceeded deadline; killing subprocess for respawn stream=remote (\(error))")
             sigkillCurrentHost()
             try respawnWithBackoffLog()
         case .binaryNotFound, .spawnFailed, .initRefused,
@@ -320,7 +336,12 @@ public final class RemoteWindowTranscriber: WindowTranscribing, @unchecked Senda
         do {
             try startHost()
         } catch {
-            // Surface model-load-failed; the engine logs and exits.
+            // Log the actual spawn failure before propagating. Without
+            // this, the engine sees `streaming window decode failed;
+            // skipping window` (caller's catch) with no further
+            // context — the live-transcription wedge of 2026-05-27
+            // hid every respawn error this way.
+            logger.error("whisper subprocess respawn failed: \(error)")
             throw error
         }
     }

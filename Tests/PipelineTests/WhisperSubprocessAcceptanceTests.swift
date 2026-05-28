@@ -241,6 +241,147 @@ struct WhisperSubprocessAcceptanceTests {
     // structural guarantee; observability of that invariant in a
     // live pipeline test is tracked separately if/when it becomes
     // worth automating.
+
+    // MARK: - Test 4: stderr drainer is wired into a real spawn
+
+    /// Regression for the 2026-05-28 model-load stall: when
+    /// `pulsartrace-whisper` got past handshake + UDS connect and then
+    /// stalled inside `whisper_init_state` / `ggml_metal_init`, every
+    /// stderr line that would have explained why was silently dropped —
+    /// the engine launcher (`RecordOrchestrator`) inherits + discards
+    /// the engine's stderr, and the subprocess inherits the engine's.
+    /// `WhisperSubprocessHost.startAndInitialize` now sets a Pipe + a
+    /// background drainer (`drainStderrLines`) so every whisper.cpp /
+    /// ggml / Metal line flows through the parent logger with a
+    /// `[whisper-subprocess]` prefix. This test exercises the wire-up
+    /// against a tiny fake-whisper shell script (so it doesn't need the
+    /// model cache like the suite's other tests) and runs in the
+    /// `.serialized` acceptance suite so its subprocess fork doesn't
+    /// interfere with the tight-budget timing tests in the parallel
+    /// unit suites.
+    @Test(
+        "WhisperSubprocessAcceptance: startAndInitialize forwards the subprocess's stderr through the parent logger",
+        .timeLimit(.minutes(1)))
+    func startAndInitializeDrainsStderrFromRealSubprocess() async throws {
+        let shortTag = UUID().uuidString.prefix(6)
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("wh-\(shortTag)")
+        try FileManager.default.createDirectory(
+            at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Fake whisper: print a distinctive marker to stderr, an
+        // intentionally malformed handshake to stdout, then exit. The
+        // malformed handshake makes `startAndInitialize` throw
+        // `.handshakeMalformed` quickly; the assertion is about stderr
+        // capture, not the failure mode.
+        let scriptURL = tempDir.appendingPathComponent("fake-whisper")
+        let script = """
+        #!/bin/sh
+        printf 'whisper-stderr-marker-9F3A\\n' 1>&2
+        printf 'not the ready line\\n'
+        exit 0
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+        let marker = "whisper-stderr-marker-9F3A"
+        let capture = SignallingLogHandler(signalOn: marker)
+        let logger = Logger(label: "test") { _ in capture }
+
+        let host = WhisperSubprocessHost(
+            configuration: .init(
+                binaryURL: scriptURL,
+                socketDirectory: tempDir,
+                spawnTimeout: .seconds(2),
+                initTimeout: .seconds(2)),
+            logger: logger)
+
+        do {
+            try host.startAndInitialize(model: "/tmp/fake-model.bin")
+            Issue.record("expected throw — fake binary writes a malformed handshake")
+        } catch {
+            // Any host-side error is fine.
+        }
+
+        let signalled = await capture.waitAsync(timeout: .seconds(5))
+        #expect(signalled, "drainer must forward subprocess stderr through the parent logger; saw: \(capture.messages)")
+        #expect(capture.messages.contains {
+            $0.contains("[whisper-subprocess]") && $0.contains(marker)
+        }, "expected `[whisper-subprocess]` prefix; saw: \(capture.messages)")
+    }
+}
+
+// MARK: - Helpers used by Test 4
+
+/// Log handler that resumes a `CheckedContinuation` the instant a log
+/// message contains a caller-chosen substring. Lets the wire-up test
+/// `await` the marker without burning a real thread on
+/// `DispatchSemaphore.wait` / `Thread.sleep` (both pin pool threads
+/// and were observed flaking the heartbeat and respawn-backoff
+/// timing tests in adjacent unit suites under parallel load).
+private final class SignallingLogHandler: LogHandler, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _m: [String] = []
+    private let needle: String
+    private var fired = false
+    /// Resumed exactly once — either the handler signals on seeing the
+    /// needle, or `waitAsync`'s timeout Task signals timeout.
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private var pendingFire = false  // needle landed before `waitAsync` registered
+
+    var logLevel: Logger.Level = .trace
+    var metadata: Logger.Metadata = [:]
+    subscript(metadataKey k: String) -> Logger.Metadata.Value? {
+        get { metadata[k] } set { metadata[k] = newValue }
+    }
+    var messages: [String] { lock.withLock { _m } }
+    init(signalOn needle: String) { self.needle = needle }
+
+    func log(level: Logger.Level, message: Logger.Message,
+             metadata: Logger.Metadata?, source: String,
+             file: String, function: String, line: UInt) {
+        let text = "\(message)"
+        let cont: CheckedContinuation<Bool, Never>? = lock.withLock {
+            _m.append(text)
+            guard !fired, text.contains(needle) else { return nil }
+            fired = true
+            let c = continuation
+            continuation = nil
+            if c == nil { pendingFire = true }
+            return c
+        }
+        cont?.resume(returning: true)
+    }
+
+    /// Suspends until the needle is seen or `timeout` elapses. Returns
+    /// `true` on the first marker hit, `false` on timeout. Single-use.
+    func waitAsync(timeout: Duration) async -> Bool {
+        await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            let resumeNow: Bool = lock.withLock {
+                if pendingFire {
+                    pendingFire = false
+                    return true
+                }
+                continuation = cont
+                return false
+            }
+            if resumeNow {
+                cont.resume(returning: true)
+                return
+            }
+            Task {
+                try? await Task.sleep(for: timeout)
+                let toResume: CheckedContinuation<Bool, Never>? = self.lock.withLock {
+                    let c = self.continuation
+                    self.continuation = nil
+                    return c
+                }
+                toResume?.resume(returning: false)
+            }
+        }
+    }
 }
 
 // MARK: - Skip-gate helper

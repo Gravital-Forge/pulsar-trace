@@ -213,6 +213,36 @@ struct RemoteWindowTranscriberTests {
         #expect(factory.callCount == 1)
     }
 
+    @Test(".error with an unknown kind logs kind+message before collapsing to transcriptionFailed(-1)")
+    func subprocessUnknownErrorLogsPayload() throws {
+        let fake = FakeHost()
+        fake.cannedDecode = .error(WhisperIPCError(
+            requestId: UUID(),
+            kind: "decode_internal",
+            message: "samples decode failed: bad base64"))
+        let factory = SingleHostFactory(host: fake)
+        let capture = CapturingLogHandler()
+        let trans = makeTranscriber(
+            factory: factory.factory,
+            logger: Logger(label: "test") { _ in capture })
+
+        do {
+            _ = try trans.transcribeWindow(
+                [0.1], windowStart: .seconds(1),
+                options: WhisperOptions(), abort: nil)
+            Issue.record("expected throw")
+        } catch WhisperTranscribeError.transcriptionFailed {
+            // expected
+        } catch {
+            Issue.record("unexpected: \(error)")
+        }
+        let payloadMatches = capture.messages.filter {
+            $0.contains("decode_internal") && $0.contains("bad base64")
+        }
+        #expect(payloadMatches.count >= 1,
+                "expected subprocess error kind/message to be logged; saw: \(capture.messages)")
+    }
+
     @Test(".error with kind=model_not_found maps to WhisperTranscribeError.modelNotFound")
     func subprocessModelNotFoundMapped() throws {
         let fake = FakeHost()
@@ -254,6 +284,69 @@ struct RemoteWindowTranscriberTests {
         } catch {
             Issue.record("unexpected: \(error)")
         }
+    }
+
+    @Test("handleHostError log identifies the specific HostError variant, not 'exceeded deadline' for all 4 cases")
+    func handleHostErrorLogIdentifiesVariant() throws {
+        // Mirrors the refinement counterpart: the warning has to
+        // identify whether the failure was a true `decodeDeadline`
+        // expiry vs a `readEOF` / `writeFailed` / `subprocessGone`
+        // crash. Today's log lied with "exceeded deadline" for all
+        // four variants — even a 12-second subprocess crash with a
+        // 120-second deadline.
+        let wedged = FakeHost()
+        wedged.cannedDecodeError = .subprocessGone(exitStatus: 134)
+        let fresh = FakeHost()
+        fresh.cannedDecode = decodedResponse()
+        let factory = SequencedHostFactory(hosts: [wedged, fresh])
+        let capture = CapturingLogHandler()
+        let trans = makeTranscriber(
+            factory: factory.factory,
+            logger: Logger(label: "test") { _ in capture },
+            logBackoffInitial: .milliseconds(10))
+
+        _ = try? trans.transcribeWindow(
+            [0.1], windowStart: .seconds(1),
+            options: WhisperOptions(), abort: nil)
+
+        let variantMatches = capture.messages.filter {
+            $0.contains("killing subprocess for respawn")
+                && ($0.contains("subprocessGone") || $0.contains("exited (status=134)"))
+        }
+        #expect(variantMatches.count >= 1,
+                "expected HostError variant in warning; saw: \(capture.messages)")
+    }
+
+    @Test("respawn that fails to start the replacement host logs the spawn error before rethrowing")
+    func respawnFailureLogsSpawnError() throws {
+        let wedged = FakeHost()
+        wedged.cannedDecodeError = .readTimedOut
+
+        let factory = SequencedHostFactory(
+            hosts: [wedged],
+            // Second factory call (the respawn) throws.
+            startErrors: [nil, .binaryNotFound("/gone")])
+        let capture = CapturingLogHandler()
+        let trans = makeTranscriber(
+            factory: factory.factory,
+            logger: Logger(label: "test") { _ in capture },
+            logBackoffInitial: .milliseconds(10))
+
+        _ = try? trans.transcribeWindow(
+            [0.1], windowStart: .seconds(1),
+            options: WhisperOptions(), abort: nil)
+
+        // Before 2026-05-27 the respawn's catch did `throw error` with
+        // no logger call — so a wedge that hit a real spawn failure
+        // (binary missing, lock held, handshake timed out) left no
+        // trace beyond "still waiting" backoff lines. The fix adds an
+        // explicit error log when the respawn cannot bring a host back.
+        let respawnFailure = capture.messages.filter {
+            $0.contains("whisper subprocess respawn failed")
+                && $0.contains("/gone")
+        }
+        #expect(respawnFailure.count >= 1,
+                "expected respawn-failure log; saw: \(capture.messages)")
     }
 
     @Test("respawn fails with .binaryNotFound — surfaced as modelLoadFailed on the wedged window")

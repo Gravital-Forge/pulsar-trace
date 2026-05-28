@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Logging
 @testable import PulsarTraceEngine
 
 /// Pure-Swift coverage of `WhisperSubprocessHost`'s value types.
@@ -20,10 +21,12 @@ struct WhisperSubprocessHostTests {
         // 10 s matches `DecodeWatchdog.deadline` and the spec §6
         // budget for handshake propagation.
         #expect(config.spawnTimeout == .seconds(10))
-        // 60 s is a generous cap on model-load time; large-v3 takes
-        // ~5–15 s in practice but bounding it prevents an unbounded
-        // hang on a corrupted model.
-        #expect(config.initTimeout == .seconds(60))
+        // 180 s — see `Configuration.init` doc. Base-model cold load
+        // is sub-second; the headroom is for a warm respawn whose
+        // GPU/CoreML state from a SIGKILLed predecessor takes seconds
+        // to release (2026-05-28 incident — the prior 60 s default
+        // tripped `init refused` and the live pass never recovered).
+        #expect(config.initTimeout == .seconds(180))
         #expect(config.forceCPU == false)
         #expect(config.lockPath == nil)
     }
@@ -60,6 +63,65 @@ struct WhisperSubprocessHostTests {
                 != WhisperSubprocessHost.HostError.subprocessGone(exitStatus: 0))
     }
 
+    /// Verifies the stderr drainer: each newline-terminated line that
+    /// arrives on a pipe's read end becomes one `notice` log call with a
+    /// `[whisper-subprocess]` prefix. Without this, whisper.cpp's
+    /// pre-death stderr (Metal errors, ggml assertions, OOM aborts) is
+    /// invisible from `~/Library/Logs/PulsarTrace/*.log` — exactly the
+    /// gap the 2026-05-27 12-second crash exposed.
+    @Test("drainStderrLines forwards each newline-delimited stderr line as a notice and exits on EOF")
+    func drainStderrLinesForwardsLines() {
+        let pipe = Pipe()
+        let capture = CapturingDrainLogHandler()
+        let logger = Logger(label: "test") { _ in capture }
+
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            WhisperSubprocessHost.drainStderrLines(
+                from: pipe.fileHandleForReading, logger: logger)
+            done.signal()
+        }
+
+        let payload = "whisper_init: failed to init Metal backend\nfatal: GGML_ASSERT(false)\n"
+        pipe.fileHandleForWriting.write(Data(payload.utf8))
+        try? pipe.fileHandleForWriting.close()
+        // The drainer must exit on EOF — otherwise the subprocess's
+        // teardown task leaks.
+        let result = done.wait(timeout: .now() + .seconds(2))
+        #expect(result == .success, "drainer must exit promptly on EOF")
+
+        let messages = capture.messages
+        #expect(messages.contains {
+            $0.contains("[whisper-subprocess]") && $0.contains("Metal backend")
+        }, "saw: \(messages)")
+        #expect(messages.contains {
+            $0.contains("[whisper-subprocess]") && $0.contains("GGML_ASSERT")
+        }, "saw: \(messages)")
+    }
+
+    @Test("drainStderrLines flushes a trailing partial line (no terminating newline) at EOF")
+    func drainStderrLinesFlushesTrailingPartial() {
+        let pipe = Pipe()
+        let capture = CapturingDrainLogHandler()
+        let logger = Logger(label: "test") { _ in capture }
+
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            WhisperSubprocessHost.drainStderrLines(
+                from: pipe.fileHandleForReading, logger: logger)
+            done.signal()
+        }
+
+        // No trailing newline — subprocess killed mid-line.
+        pipe.fileHandleForWriting.write(Data("partial death rattle".utf8))
+        try? pipe.fileHandleForWriting.close()
+        _ = done.wait(timeout: .now() + .seconds(2))
+
+        #expect(capture.messages.contains {
+            $0.contains("[whisper-subprocess]") && $0.contains("death rattle")
+        }, "trailing partial line must be flushed; saw: \(capture.messages)")
+    }
+
     @Test("startAndInitialize on a nonexistent binary throws .binaryNotFound without spawning")
     func nonexistentBinary() throws {
         let config = WhisperSubprocessHost.Configuration(
@@ -82,4 +144,33 @@ struct WhisperSubprocessHostTests {
         #expect(host.isAlive == false)
         #expect(host.exitStatus == nil)
     }
+
+    // NOTE: the real-spawn "wire-up" test for `startAndInitialize`'s
+    // stderr drainer lives in `WhisperSubprocessAcceptanceTests`
+    // (`startAndInitializeDrainsStderrFromRealSubprocess`). It is in
+    // the serialized acceptance suite because the subprocess fork
+    // imposes kernel-scheduling latency that flakes the tight-budget
+    // timing tests in adjacent unit suites (the 80 ms heartbeat / the
+    // 30 ms respawn-backoff log) when run in parallel.
 }
+
+/// Lock-protected log sink used by the stderr-drainer tests. Same
+/// shape as the helper in the other WhisperIPC tests but kept private
+/// to this file so the unit-tests target doesn't grow yet another
+/// transitive symbol.
+private final class CapturingDrainLogHandler: LogHandler, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _m: [String] = []
+    var logLevel: Logger.Level = .trace
+    var metadata: Logger.Metadata = [:]
+    subscript(metadataKey k: String) -> Logger.Metadata.Value? {
+        get { metadata[k] } set { metadata[k] = newValue }
+    }
+    var messages: [String] { lock.withLock { _m } }
+    func log(level: Logger.Level, message: Logger.Message,
+             metadata: Logger.Metadata?, source: String,
+             file: String, function: String, line: UInt) {
+        lock.withLock { _m.append("\(message)") }
+    }
+}
+

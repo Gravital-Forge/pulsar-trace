@@ -209,13 +209,31 @@ public final class StreamingTranscriber {
             // the anchor — whisper cannot keep up — skip the anchor forward so
             // the buffer and the lag stay bounded. The skipped audio is lost
             // to the live pass (coarser commits); the post-pass recovers it.
+            //
+            // Cap the backpressure target at `recordingSampleCount −
+            // windowSamples` so the anchor never advances past where
+            // `windowSamples` of audio remains. Without this cap a wedge
+            // big enough to make `realSample − windowSamples` exceed
+            // `recordingSampleCount` lets `advanceAnchor` clamp to
+            // `recordingSampleCount`, which empties the sample buffer;
+            // `runWindow` then hits its `guard hi > lo` and returns
+            // without calling `transcribeWindow`. The streamer keeps
+            // logging backpressure but never asks whisper to decode
+            // anything, so a transient subprocess failure permanently
+            // silences live (2026-05-28 incident). With the cap the
+            // next `runWindow` always has the most recent `windowSamples`
+            // of audio to decode, so the next attempt re-enters whisper
+            // and can recover the moment the subprocess does.
             if let realTimeElapsed {
                 let realSample = durationToSamples(realTimeElapsed)
                 let lagSamples = realSample - windowAnchorSample
                 if lagSamples > 2 * windowSamples {
                     logger.warning(
                         "streaming transcription backpressure: decode lag exceeds two windows; advancing anchor to catch up")
-                    advanceAnchor(to: realSample - windowSamples)
+                    let safeTarget = min(
+                        realSample - windowSamples,
+                        recordingSampleCount - windowSamples)
+                    advanceAnchor(to: safeTarget)
                 }
             }
 
@@ -251,7 +269,12 @@ public final class StreamingTranscriber {
                 options: configuration.whisperOptions,
                 abort: abort)
         } catch {
-            logger.error("streaming window decode failed; skipping window")
+            // Interpolate the underlying error so log-greppers see the
+            // real cause (model_load_failed, subprocess wedge, etc.).
+            // Before 2026-05-27 this catch dropped the payload and any
+            // diagnostic chain that ran into it dead-ended at "skipping
+            // window" with no further context.
+            logger.error("streaming window decode failed; skipping window: \(error)")
             return
         }
         // Record what whisper detected so the live pass's Output.language is

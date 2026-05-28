@@ -125,6 +125,19 @@ public enum RefinementJobError: Error {
             }
         }
 
+        // The queue's `ResumableRefiner.run` (Phase 5) calls the remote
+        // transcriber directly and rethrows `WhisperTranscribeError`
+        // un-wrapped — i.e. it does not pass through
+        // `RefinementPipeline.RefineError.transcription`. Without this
+        // arm those failures collapsed to `.io`, hiding their true cause
+        // in the `refinement_failed` event log. Every variant of
+        // `WhisperTranscribeError` is a transcription failure; the model-
+        // load and not-found variants are still transient at the queue
+        // level because a respawn / re-fetch can recover them.
+        if error is WhisperTranscribeError {
+            return .transcribeFailed
+        }
+
         return .io
     }
 }

@@ -64,7 +64,9 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
             socketDirectory: URL,
             forceCPU: Bool = !WhisperOptions.defaultGPUEnabled,
             decodeDeadline: Duration = .seconds(120),
-            respawnDeadline: Duration = .seconds(60),
+            // 180 s — see `WhisperSubprocessHost.Configuration.initTimeout`
+            // for the rationale; plumbed straight through there.
+            respawnDeadline: Duration = .seconds(180),
             logBackoffInitial: Duration = .seconds(5),
             logBackoffCap: Duration = .seconds(600)
         ) {
@@ -119,6 +121,13 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
     // MARK: - RegionTranscribing
 
     /// Decode one VAD region via the remote whisper.
+    ///
+    /// `samples` is the *whole* recording, the same shape the in-process
+    /// `WhisperTranscriber.transcribeRegion` accepts. The slice is taken
+    /// here and only the slice goes over the wire — passing the whole
+    /// buffer would make every region's IPC frame O(recording duration),
+    /// which on a long meeting blows past the frame ceiling and surfaces
+    /// as "frame payload exceeds maximum" (2026-05-28 incident).
     public func transcribeRegion(
         _ samples: [Float],
         region: SpeechRegion,
@@ -128,17 +137,30 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
             throw WhisperTranscribeError.emptyAudio
         }
 
+        let lo = Self.sampleIndex(of: region.start, sampleCount: samples.count)
+        let hi = Self.sampleIndex(of: region.end, sampleCount: samples.count)
+        guard lo < hi else {
+            // Region falls outside the buffer — match the in-process
+            // contract (empty result, no host spawned).
+            return TranscriptionResult(segments: [], language: "unknown")
+        }
+        let slice = Array(samples[lo..<hi])
+        let sliceDurationMs = Int64(lo.distance(to: hi) * 1000 / AudioFormat.sampleRate)
+
         // Lazy-start the host on first call so a `RemoteRegionTranscriber`
         // constructed at queue-job boot but never reached (e.g. a job
         // cancelled before any region runs) doesn't spawn a subprocess.
         try ensureHostStarted()
 
+        // Wire format: the subprocess only sees [0..sliceDurationMs)
+        // because that's all we sent. The recording-absolute shift is
+        // applied below, on this side, after the response comes back.
         let request = WhisperIPCRequest.decodeRegion(
             WhisperIPCDecodeRegion(
                 requestId: UUID(),
-                samplesBase64: WhisperIPCSamples.encode(samples),
-                regionStartMs: millis(region.start),
-                regionEndMs: millis(region.end),
+                samplesBase64: WhisperIPCSamples.encode(slice),
+                regionStartMs: 0,
+                regionEndMs: sliceDurationMs,
                 options: WhisperIPCOptions(from: options)))
 
         let response: WhisperIPCResponse
@@ -156,12 +178,12 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
 
         switch response {
         case .decoded(let payload):
-            // Segment timestamps come back from the subprocess in
-            // *recording-absolute* milliseconds (the subprocess applied
-            // the regionStartMs shift internally — same contract as
-            // the in-process `WhisperTranscriber.transcribeRegion`),
-            // so no further shift is needed here.
-            return Self.makeResult(from: payload)
+            // Subprocess sees regionStartMs=0 → returns region-relative
+            // segment times. Shift them back onto the recording
+            // timeline by the *original* region.start so callers see
+            // the same recording-absolute timestamps the in-process
+            // `WhisperTranscriber.transcribeRegion` produces.
+            return Self.makeResult(from: payload, shiftedBy: region.start)
         case .error(let err):
             // Subprocess-reported error: surface as a transcribe error.
             switch err.kind {
@@ -172,6 +194,13 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
             case "empty_audio":
                 throw WhisperTranscribeError.emptyAudio
             default:
+                // The fallthrough error collapses to `transcriptionFailed(-1)`
+                // on the wire, but the subprocess's `kind` + `message`
+                // is the only thing that identifies the real cause.
+                // Log it so a wedged region is diagnosable from the
+                // operational log alone (mac-app refinement: see
+                // `LogSystem.bootstrap` wired into `PulsarTraceMacApp`).
+                logger.error("whisper subprocess returned error [\(err.kind)]: \(err.message)")
                 throw WhisperTranscribeError.transcriptionFailed(-1)
             }
         case .ready:
@@ -264,11 +293,14 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
         switch error {
         case .readTimedOut, .readEOF, .writeFailed, .subprocessGone:
             // Refinement-specific wording so log greps disambiguate
-            // refinement from live. No request-id plumbed through —
-            // not easily available at this layer and the request UUID
-            // is meaningful only between client and subprocess.
+            // refinement from live. Interpolate the actual `HostError`
+            // variant — the 2026-05-27 incident showed a 12-second
+            // failure logged as "exceeded deadline" with a 120-second
+            // budget configured: the underlying error was a
+            // `subprocessGone` / `readEOF`, not a real timeout. The
+            // variant turns that ambiguity into one log line.
             logger.warning(
-                "whisper region decode exceeded deadline; killing subprocess for respawn")
+                "whisper region decode exceeded deadline; killing subprocess for respawn (\(error))")
             sigkillCurrentHost()
             try respawnWithBackoffLog()
         case .binaryNotFound, .spawnFailed, .initRefused,
@@ -320,8 +352,13 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
         do {
             try startHost()
         } catch {
-            // Surface model-load-failed; the refinement job logs and
-            // exits, leaving `ResumableRefiner` to surface the failure.
+            // Log the actual spawn failure before propagating. The
+            // refinement-failed event uses `errorClass = transcribeFailed`
+            // (per `RefinementJobError.classify`) and the queue surfaces
+            // only that coarse class to the UI; this log line is the
+            // only place the *cause* (binary-not-found, lock-held,
+            // handshake-timed-out, etc.) is preserved.
+            logger.error("whisper subprocess respawn failed: \(error)")
             throw error
         }
     }
@@ -350,19 +387,32 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
     }
 
     /// Convert a `WhisperIPCDecoded` payload into the engine's
-    /// `TranscriptionResult`. The subprocess returns
-    /// recording-absolute segment timestamps, so we just pass them
-    /// through.
-    static func makeResult(from payload: WhisperIPCDecoded) -> TranscriptionResult {
+    /// `TranscriptionResult`, shifting region-relative segment times by
+    /// `shiftedBy` so callers see recording-absolute timestamps.
+    static func makeResult(
+        from payload: WhisperIPCDecoded,
+        shiftedBy shift: Duration
+    ) -> TranscriptionResult {
         let segments = payload.segments.map { seg in
             TranscriptSegment(
-                start: .milliseconds(Int(seg.startMs)),
-                end: .milliseconds(Int(seg.endMs)),
+                start: .milliseconds(Int(seg.startMs)) + shift,
+                end: .milliseconds(Int(seg.endMs)) + shift,
                 text: seg.text)
         }
         return TranscriptionResult(
             segments: segments,
             language: payload.language)
+    }
+
+    /// Clamp a recording-relative time to a valid sample index in
+    /// `[0, count]`. Same contract as
+    /// `WhisperTranscriber.sampleIndex`, kept private to this file so
+    /// the two implementations stay independent.
+    private static func sampleIndex(
+        of time: Duration, sampleCount: Int
+    ) -> Int {
+        let idx = Int((time.seconds * Double(AudioFormat.sampleRate)).rounded())
+        return min(max(idx, 0), sampleCount)
     }
 }
 

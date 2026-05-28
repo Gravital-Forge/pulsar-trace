@@ -189,13 +189,28 @@ struct EngineMain {
         // a wedge in either stream sigkills the shared inner and the
         // first follow-up decode on either transcriber respawns it.
         // See docs/specs/2026-05-26-whisper-subprocess-design.md §6/§7/§9.
+        // `lockPath: <standard path>` — both live (here) and refinement
+        // (`RefinementJobQueue.makeStandard`) point at the *same*
+        // `~/Library/Application Support/PulsarTrace/whisper.lock`
+        // because the design's single-instance invariant (spec §4 G4 /
+        // Layer 2) is one whisper subprocess globally, not one per
+        // workload. The mac-app's pause-for-recording dance enforces
+        // mutual exclusion at the queue layer; the shared flock is the
+        // OS-level backstop. Passing `nil` here used to imply "no lock,"
+        // but the subprocess defaults the path internally
+        // (`pulsartrace-whisper/main.swift`'s `ParsedArgs.lockPath`
+        // fallback) — so this is now explicit instead of misleading.
         let whisperHostConfig = WhisperSubprocessHost.Configuration(
             binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
             socketDirectory: AppPaths.standard.socketDirectory,
-            lockPath: nil,
+            lockPath: AppPaths.standard.applicationSupport
+                .appendingPathComponent("whisper.lock", isDirectory: false),
             forceCPU: !WhisperOptions.defaultGPUEnabled,
             spawnTimeout: .seconds(10),
-            initTimeout: .seconds(60))
+            // 180 s — generous warm-restart budget so a transient GPU /
+            // CoreML stall after a wedge SIGKILL doesn't trip
+            // `init refused`. See WhisperSubprocessHost.Configuration.
+            initTimeout: .seconds(180))
         let sharedHostProxy = SerializingHostProxy(
             configuration: whisperHostConfig,
             logger: Logger(label: LogSubsystem.engine))
@@ -206,7 +221,7 @@ struct EngineMain {
             forceCPU: !WhisperOptions.defaultGPUEnabled,
             // 10 s matches the prior in-process `DecodeWatchdog.deadline`.
             decodeDeadline: .seconds(10),
-            respawnDeadline: .seconds(60))
+            respawnDeadline: .seconds(180))
         let sharedHostFactory: RemoteWindowTranscriber.HostFactory = { _, _ in
             sharedHostProxy
         }

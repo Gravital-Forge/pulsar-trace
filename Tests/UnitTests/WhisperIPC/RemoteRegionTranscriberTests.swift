@@ -16,14 +16,16 @@ struct RemoteRegionTranscriberTests {
     @Test("happy path: decode returns a TranscriptionResult with recording-absolute segment times")
     func happyPath() throws {
         let fake = FakeHost()
-        // Subprocess returns recording-absolute segment timestamps (it
-        // applied the regionStartMs shift internally), matching the
-        // in-process `WhisperTranscriber.transcribeRegion` contract.
+        // Subprocess sees only the region's slice (regionStartMs=0),
+        // so its segment timestamps are region-relative. The client
+        // shifts them by `region.start` to recover recording-absolute
+        // times — same contract as the in-process
+        // `WhisperTranscriber.transcribeRegion`.
         fake.cannedDecode = .decoded(WhisperIPCDecoded(
             requestId: UUID(),
             segments: [
-                WhisperIPCSegment(text: "hello", startMs: 12_000, endMs: 13_500),
-                WhisperIPCSegment(text: "world", startMs: 13_500, endMs: 15_000),
+                WhisperIPCSegment(text: "hello", startMs: 0, endMs: 1_500),
+                WhisperIPCSegment(text: "world", startMs: 1_500, endMs: 3_000),
             ],
             language: "en"))
         let factory = SingleHostFactory(host: fake)
@@ -31,7 +33,7 @@ struct RemoteRegionTranscriberTests {
         let trans = makeTranscriber(factory: factory.factory)
         let region = SpeechRegion(start: .seconds(12), end: .seconds(15))
         let result = try trans.transcribeRegion(
-            [0.1, 0.2, 0.3],
+            sixteenSeconds,
             region: region,
             options: WhisperOptions())
 
@@ -41,6 +43,8 @@ struct RemoteRegionTranscriberTests {
         #expect(result.segments[0].start == .seconds(12))
         #expect(result.segments[0].end == .milliseconds(13_500))
         #expect(result.segments[1].text == "world")
+        #expect(result.segments[1].start == .milliseconds(13_500))
+        #expect(result.segments[1].end == .seconds(15))
         #expect(fake.startCalls == 1)
         #expect(fake.decodeCalls == 1)
         // Lazy-init: only one host built so far.
@@ -60,7 +64,7 @@ struct RemoteRegionTranscriberTests {
         let region = SpeechRegion(start: .zero, end: .seconds(1))
         for _ in 0..<3 {
             _ = try trans.transcribeRegion(
-                [0.1], region: region, options: WhisperOptions())
+                sixteenSeconds, region: region, options: WhisperOptions())
         }
         #expect(fake.startCalls == 1)
         #expect(fake.decodeCalls == 3)
@@ -69,7 +73,7 @@ struct RemoteRegionTranscriberTests {
 
     // MARK: - Request shape
 
-    @Test("transcribeRegion sends a decodeRegion request carrying region bounds")
+    @Test("transcribeRegion sends a decodeRegion request whose bounds match the slice (regionStartMs=0)")
     func sendsDecodeRegionRequest() throws {
         let fake = FakeHost()
         fake.cannedDecode = decodedResponse()
@@ -80,15 +84,90 @@ struct RemoteRegionTranscriberTests {
             start: .milliseconds(2_500),
             end: .milliseconds(7_750))
         _ = try trans.transcribeRegion(
-            [0.1, 0.2], region: region, options: WhisperOptions())
+            sixteenSeconds, region: region, options: WhisperOptions())
 
         let captured = fake.lastRequest
         guard case .decodeRegion(let payload) = captured else {
             Issue.record("expected a decodeRegion request, got: \(String(describing: captured))")
             return
         }
-        #expect(payload.regionStartMs == 2_500)
-        #expect(payload.regionEndMs == 7_750)
+        // After client-side slicing the subprocess sees only the slice;
+        // recording-absolute bounds are applied on the client when the
+        // result comes back.
+        #expect(payload.regionStartMs == 0)
+        #expect(payload.regionEndMs == 5_250)
+    }
+
+    @Test("transcribeRegion only sends the region's samples in the IPC payload, not the entire recording")
+    func sendsOnlyRegionSamples() throws {
+        // 2026-05-28 incident: a ~99-minute recording sent the entire
+        // 364 MB sample buffer in the IPC payload for *every* region
+        // decode, because the client encoded `samples` (the whole
+        // recording) instead of the region's slice. The subprocess's
+        // IPC frame limit caught it as "frame payload exceeds maximum"
+        // before any decode could complete. Fix: slice on the client
+        // — payload size must scale with region duration, not
+        // recording duration.
+        let fake = FakeHost()
+        fake.cannedDecode = .decoded(WhisperIPCDecoded(
+            requestId: UUID(),
+            segments: [],
+            language: "en"))
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        // 2-second buffer at 16 kHz = 32_000 samples.
+        let samples = [Float](repeating: 0.0, count: 32_000)
+        // Region 1.0s → 1.5s = exactly 8_000 samples.
+        let region = SpeechRegion(
+            start: .milliseconds(1_000),
+            end: .milliseconds(1_500))
+
+        _ = try trans.transcribeRegion(
+            samples, region: region, options: WhisperOptions())
+
+        guard case .decodeRegion(let payload) = fake.lastRequest else {
+            Issue.record("expected decodeRegion request")
+            return
+        }
+        let decoded = try WhisperIPCSamples.decode(payload.samplesBase64)
+        #expect(decoded.count == 8_000,
+                "wire payload must contain only the region's samples; got \(decoded.count) of \(samples.count)")
+        // After client-side slicing, the subprocess only ever sees a
+        // [0..sliceDuration) region — recording-absolute bounds are
+        // applied on the client.
+        #expect(payload.regionStartMs == 0)
+        #expect(payload.regionEndMs == 500)
+    }
+
+    @Test("region-relative segment times from the subprocess are shifted to recording-absolute on the client")
+    func shiftsSegmentTimesToRecordingAbsolute() throws {
+        // After client-side slicing, the subprocess sees regionStartMs=0
+        // (it only knows about the slice). Its segment timestamps are
+        // therefore region-relative. The client must shift by the
+        // original region.start so callers see recording-absolute
+        // times — same contract as the in-process
+        // WhisperTranscriber.transcribeRegion.
+        let fake = FakeHost()
+        fake.cannedDecode = .decoded(WhisperIPCDecoded(
+            requestId: UUID(),
+            segments: [
+                WhisperIPCSegment(text: "hello", startMs: 100, endMs: 200),
+            ],
+            language: "en"))
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        let samples = [Float](repeating: 0, count: 32_000)
+        let region = SpeechRegion(
+            start: .seconds(1),
+            end: .milliseconds(1_500))
+        let result = try trans.transcribeRegion(
+            samples, region: region, options: WhisperOptions())
+
+        #expect(result.segments.count == 1)
+        #expect(result.segments[0].start == .milliseconds(1_100))
+        #expect(result.segments[0].end == .milliseconds(1_200))
     }
 
     // MARK: - Empty audio
@@ -137,7 +216,7 @@ struct RemoteRegionTranscriberTests {
         // checkpoint on the next attempt.
         do {
             _ = try trans.transcribeRegion(
-                [0.1], region: region, options: WhisperOptions())
+                sixteenSeconds, region: region, options: WhisperOptions())
             Issue.record("expected throw")
         } catch WhisperTranscribeError.transcriptionFailed(let code) {
             #expect(code == -1)
@@ -150,7 +229,7 @@ struct RemoteRegionTranscriberTests {
         // Second decode (the "retry" in ResumableRefiner's flow)
         // succeeds on the fresh host.
         let result = try trans.transcribeRegion(
-            [0.1], region: region, options: WhisperOptions())
+            sixteenSeconds, region: region, options: WhisperOptions())
         #expect(result.segments.first?.text == "recovered")
         #expect(fresh.decodeCalls == 1)
     }
@@ -169,7 +248,7 @@ struct RemoteRegionTranscriberTests {
             logBackoffInitial: .milliseconds(10))
 
         _ = try? trans.transcribeRegion(
-            [0.1],
+            sixteenSeconds,
             region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
             options: WhisperOptions())
 
@@ -194,7 +273,7 @@ struct RemoteRegionTranscriberTests {
 
         do {
             _ = try trans.transcribeRegion(
-                [0.1],
+                sixteenSeconds,
                 region: SpeechRegion(start: .zero, end: .seconds(2)),
                 options: WhisperOptions())
             Issue.record("expected throw")
@@ -231,7 +310,7 @@ struct RemoteRegionTranscriberTests {
             logBackoffInitial: .milliseconds(30))
 
         _ = try? trans.transcribeRegion(
-            [0.1],
+            sixteenSeconds,
             region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
             options: WhisperOptions())
 
@@ -256,7 +335,7 @@ struct RemoteRegionTranscriberTests {
 
         do {
             _ = try trans.transcribeRegion(
-                [0.1],
+                sixteenSeconds,
                 region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
                 options: WhisperOptions())
             Issue.record("expected throw")
@@ -271,6 +350,37 @@ struct RemoteRegionTranscriberTests {
         #expect(factory.callCount == 1)
     }
 
+    @Test(".error with an unknown kind logs kind+message before collapsing to transcriptionFailed(-1)")
+    func subprocessUnknownErrorLogsPayload() throws {
+        let fake = FakeHost()
+        fake.cannedDecode = .error(WhisperIPCError(
+            requestId: UUID(),
+            kind: "decode_internal",
+            message: "samples decode failed: bad base64"))
+        let factory = SingleHostFactory(host: fake)
+        let capture = CapturingLogHandler()
+        let trans = makeTranscriber(
+            factory: factory.factory,
+            logger: Logger(label: "test") { _ in capture })
+
+        do {
+            _ = try trans.transcribeRegion(
+                sixteenSeconds,
+                region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
+                options: WhisperOptions())
+            Issue.record("expected throw")
+        } catch WhisperTranscribeError.transcriptionFailed {
+            // expected
+        } catch {
+            Issue.record("unexpected: \(error)")
+        }
+        let payloadMatches = capture.messages.filter {
+            $0.contains("decode_internal") && $0.contains("bad base64")
+        }
+        #expect(payloadMatches.count >= 1,
+                "expected subprocess error kind/message to be logged; saw: \(capture.messages)")
+    }
+
     @Test(".error with kind=model_not_found maps to WhisperTranscribeError.modelNotFound")
     func subprocessModelNotFoundMapped() throws {
         let fake = FakeHost()
@@ -283,7 +393,7 @@ struct RemoteRegionTranscriberTests {
 
         do {
             _ = try trans.transcribeRegion(
-                [0.1],
+                sixteenSeconds,
                 region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
                 options: WhisperOptions())
             Issue.record("expected throw")
@@ -306,7 +416,7 @@ struct RemoteRegionTranscriberTests {
 
         do {
             _ = try trans.transcribeRegion(
-                [0.1],
+                sixteenSeconds,
                 region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
                 options: WhisperOptions())
             Issue.record("expected throw")
@@ -328,7 +438,7 @@ struct RemoteRegionTranscriberTests {
 
         do {
             _ = try trans.transcribeRegion(
-                [0.1],
+                sixteenSeconds,
                 region: SpeechRegion(start: .zero, end: .seconds(1)),
                 options: WhisperOptions())
             Issue.record("expected throw")
@@ -337,6 +447,68 @@ struct RemoteRegionTranscriberTests {
         } catch {
             Issue.record("unexpected: \(error)")
         }
+    }
+
+    @Test("handleHostError log identifies the specific HostError variant, not 'exceeded deadline' for all 4 cases")
+    func handleHostErrorLogIdentifiesVariant() throws {
+        // The 2026-05-27 incident: subprocess died ~12s into the first
+        // region decode. The 120s `decodeDeadline` was nowhere near
+        // expiring — but the warning said "exceeded deadline" because
+        // the message was hardcoded for *every* HostError variant. The
+        // fix interpolates the variant (subprocessGone / readEOF /
+        // writeFailed / readTimedOut), so post-mortem reading the log
+        // tells you whether it was a true timeout vs a subprocess
+        // crash.
+        let wedged = FakeHost()
+        wedged.cannedDecodeError = .subprocessGone(exitStatus: 134)
+        let fresh = FakeHost()
+        fresh.cannedDecode = decodedResponse()
+        let factory = SequencedHostFactory(hosts: [wedged, fresh])
+        let capture = CapturingLogHandler()
+        let trans = makeTranscriber(
+            factory: factory.factory,
+            logger: Logger(label: "test") { _ in capture },
+            logBackoffInitial: .milliseconds(10))
+
+        _ = try? trans.transcribeRegion(
+            sixteenSeconds,
+            region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
+            options: WhisperOptions())
+
+        let variantMatches = capture.messages.filter {
+            $0.contains("killing subprocess for respawn")
+                && ($0.contains("subprocessGone") || $0.contains("exited (status=134)"))
+        }
+        #expect(variantMatches.count >= 1,
+                "expected HostError variant in warning; saw: \(capture.messages)")
+    }
+
+    @Test("respawn that fails to start the replacement host logs the spawn error before rethrowing")
+    func respawnFailureLogsSpawnError() throws {
+        let wedged = FakeHost()
+        wedged.cannedDecodeError = .readTimedOut
+
+        let factory = SequencedHostFactory(
+            hosts: [wedged],
+            // Second factory call (the respawn) throws.
+            startErrors: [nil, .binaryNotFound("/gone")])
+        let capture = CapturingLogHandler()
+        let trans = makeTranscriber(
+            factory: factory.factory,
+            logger: Logger(label: "test") { _ in capture },
+            logBackoffInitial: .milliseconds(10))
+
+        _ = try? trans.transcribeRegion(
+            sixteenSeconds,
+            region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
+            options: WhisperOptions())
+
+        let respawnFailure = capture.messages.filter {
+            $0.contains("whisper subprocess respawn failed")
+                && $0.contains("/gone")
+        }
+        #expect(respawnFailure.count >= 1,
+                "expected respawn-failure log; saw: \(capture.messages)")
     }
 
     @Test("respawn fails with .binaryNotFound — surfaced as modelLoadFailed on the wedged region")
@@ -354,7 +526,7 @@ struct RemoteRegionTranscriberTests {
 
         do {
             _ = try trans.transcribeRegion(
-                [0.1],
+                sixteenSeconds,
                 region: SpeechRegion(start: .seconds(1), end: .seconds(5)),
                 options: WhisperOptions())
             Issue.record("expected throw")
@@ -374,7 +546,7 @@ struct RemoteRegionTranscriberTests {
         let trans = makeTranscriber(factory: factory.factory)
         do {
             _ = try trans.transcribeRegion(
-                [0.1],
+                sixteenSeconds,
                 region: SpeechRegion(start: .zero, end: .seconds(1)),
                 options: WhisperOptions())
             Issue.record("expected throw")
@@ -395,7 +567,7 @@ struct RemoteRegionTranscriberTests {
         let trans = makeTranscriber(factory: factory.factory)
 
         _ = try trans.transcribeRegion(
-            [0.1],
+            sixteenSeconds,
             region: SpeechRegion(start: .zero, end: .seconds(1)),
             options: WhisperOptions())
 
@@ -429,6 +601,13 @@ private func makeTranscriber(
         logger: logger,
         hostFactory: factory)
 }
+
+/// 16 seconds of silence (256_000 samples at 16 kHz) — big enough to
+/// cover every region used by the tests in this file after the
+/// client-side slicing fix landed. Without this, tests that pass
+/// `[0.1]` with multi-second regions short-circuit to an empty
+/// `TranscriptionResult` before ever touching the IPC layer.
+private let sixteenSeconds: [Float] = [Float](repeating: 0, count: 256_000)
 
 private func decodedResponse() -> WhisperIPCResponse {
     .decoded(WhisperIPCDecoded(

@@ -301,6 +301,18 @@ final class AppEnvironment {
     /// `init()` synchronous while allowing the expensive async setup to run
     /// once the MainActor is free after initialization.
     func bootstrap() async {
+        // Wire `swift-log` into the daily-rotated `FileLogHandler` and
+        // `OSLogHandler` — the *engine subprocess* bootstraps these via
+        // `AppLifecycle.start()`, but the mac-app process never calls
+        // `AppLifecycle`. Without this call the in-process refinement
+        // queue's `Logger(label: LogSubsystem.engine)` lines fell into
+        // swift-log's default `StreamLogHandler` (stderr → launchd),
+        // making refinement failures undebuggable from `~/Library/Logs/
+        // PulsarTrace/*.log` (verified empty for the 2026-05-27 incident).
+        // `LogSystem.bootstrap` is idempotent — see
+        // `LoggingTests.bootstrapIsIdempotent`.
+        _ = await LogSystem.bootstrap(paths: paths)
+
         // Resolve the whisper binary once, from the mac-app's known
         // `.build/debug/...` layout (via `#filePath`). The same resolver is
         // threaded into the engine subprocess as `PULSARTRACE_WHISPER_BINARY`

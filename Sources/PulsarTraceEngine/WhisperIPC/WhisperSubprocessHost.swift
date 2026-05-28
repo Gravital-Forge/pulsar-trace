@@ -77,7 +77,13 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
             lockPath: URL? = nil,
             forceCPU: Bool = false,
             spawnTimeout: Duration = .seconds(10),
-            initTimeout: Duration = .seconds(60),
+            // 180 s gives a warm respawn enough headroom when GPU /
+            // CoreML state from a SIGKILLed predecessor takes seconds
+            // to release. The base-model cold load is sub-second on a
+            // hot dev box; the 60 s prior default was tight enough
+            // that one Metal cleanup stall (2026-05-28 incident)
+            // tripped `init refused` and the live pass never recovered.
+            initTimeout: Duration = .seconds(180),
             extraArgs: [String] = []
         ) {
             self.binaryURL = binaryURL
@@ -157,6 +163,11 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
     private let lock = NSLock()
     private var process: Process?
     private var stdoutPipe: Pipe?
+    /// Retained so the subprocess's stderr fd stays alive for the
+    /// background drainer (`drainStderrLines`) kicked off by
+    /// `startAndInitialize`. The drainer returns on EOF when the
+    /// subprocess exits, so there is no explicit teardown.
+    private var stderrPipe: Pipe?
     /// The UDS path we minted for this host; cleaned up at terminate.
     private var socketPath: URL?
     /// Client fd. `-1` when not connected.
@@ -250,11 +261,19 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
         process.arguments = args
         let stdoutPipe = Pipe()
         process.standardOutput = stdoutPipe
-        // Stderr inherits the parent's fd 2 so subprocess log lines
-        // (whisper.cpp diagnostics, our own warnings) surface in the
-        // engine's log stream rather than getting buffered in a Pipe
-        // we'd have to drain manually.
-        process.standardError = FileHandle.standardError
+        // Capture the subprocess's stderr into a Pipe so the parent
+        // can drain it line-by-line into its logger
+        // (`drainStderrLines` below). Inheriting the parent's fd 2
+        // (the pre-2026-05-28 default) loses the stderr trail wherever
+        // the engine's own stderr is dropped — production runs go
+        // through `RecordOrchestrator`, which drains the engine's
+        // stderr to /dev/null, so a model-load stall or whisper.cpp
+        // assertion was effectively invisible from the daily log
+        // (2026-05-28 incident). The drainer is started after
+        // `process.run()` succeeds and returns on EOF when the
+        // subprocess exits, so there is no teardown to manage.
+        let stderrPipe = Pipe()
+        process.standardError = stderrPipe
 
         process.terminationHandler = { [weak self] proc in
             guard let self else { return }
@@ -272,8 +291,25 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
         lock.withLock {
             self.process = process
             self.stdoutPipe = stdoutPipe
+            self.stderrPipe = stderrPipe
             self.socketPath = socketPath
             self.deliberatelyKilled = false
+        }
+
+        // Drain the subprocess's stderr into the parent logger. The
+        // drainer reads until EOF, which only fires once *every* copy
+        // of the write fd is closed — so close the parent's copy here
+        // (Foundation does not do it for us). After this close, EOF
+        // arrives the instant the subprocess's own fd 2 closes
+        // (exit / SIGKILL), and the drainer returns — no teardown to
+        // manage. Every line gets a `[whisper-subprocess]` prefix
+        // (`drainStderrLines`); the Phase 7 acceptance suite uses real
+        // spawns and exercises this path end-to-end.
+        try? stderrPipe.fileHandleForWriting.close()
+        let drainerFD = stderrPipe.fileHandleForReading
+        let drainerLogger = logger
+        DispatchQueue.global(qos: .utility).async {
+            Self.drainStderrLines(from: drainerFD, logger: drainerLogger)
         }
 
         // Phase 1: read the `ready: <path>\n` handshake with a
@@ -614,6 +650,55 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
             throw SocketSource.SocketError.connectFailed(errno: e)
         }
         return fd
+    }
+
+    /// Drain a subprocess's stderr `FileHandle` line-by-line into
+    /// `logger.notice`. Each newline-terminated line is forwarded as
+    /// one log call with a `[whisper-subprocess]` prefix; a trailing
+    /// partial line (e.g. the subprocess was killed mid-write) is
+    /// flushed at EOF.
+    ///
+    /// Before this drainer, the parent set
+    /// `process.standardError = FileHandle.standardError`, which
+    /// inherited the parent's stderr — for the engine subprocess
+    /// that's the engine's own stderr (visible in `pulsartrace-engine`
+    /// stdio capture), for the mac-app it's launchd's stderr (visible
+    /// nowhere in the daily log file). When the subprocess crashed
+    /// mid-decode (the 2026-05-27 12-second failure), the whisper.cpp
+    /// / ggml death rattle on stderr was effectively lost. Routing
+    /// stderr through this drainer puts those lines in the engine log
+    /// the same as the parent's own log calls.
+    ///
+    /// Runs synchronously on the calling thread until EOF; callers
+    /// invoke it via a detached `DispatchQueue.global` async so the
+    /// drain happens off the main `startAndInitialize` path.
+    internal static func drainStderrLines(
+        from readFD: FileHandle, logger: Logger
+    ) {
+        var buffer = Data()
+        while true {
+            let chunk = readFD.availableData
+            if chunk.isEmpty {
+                // EOF — flush any unterminated trailing line so a
+                // subprocess SIGKILLed mid-write still leaves a hint
+                // (`whisper_full: assertion failed at line …` etc.).
+                if !buffer.isEmpty {
+                    let line = String(decoding: buffer, as: UTF8.self)
+                    logger.notice("[whisper-subprocess] \(line)")
+                }
+                return
+            }
+            buffer.append(chunk)
+            // Emit every complete line in the accumulated buffer.
+            while let nl = buffer.firstIndex(of: 0x0a) {
+                let lineData = buffer[buffer.startIndex..<nl]
+                let line = String(decoding: lineData, as: UTF8.self)
+                if !line.isEmpty {
+                    logger.notice("[whisper-subprocess] \(line)")
+                }
+                buffer.removeSubrange(buffer.startIndex...nl)
+            }
+        }
     }
 }
 

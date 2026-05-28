@@ -105,6 +105,38 @@ struct RefinementJobErrorTests {
         #expect(classified.retryAvailable == true)
     }
 
+    @Test("WhisperTranscribeError.transcriptionFailed → transcribeFailed, retryable")
+    func classifiesWhisperTranscriptionFailed() {
+        let classified = RefinementJobError.classify(
+            WhisperTranscribeError.transcriptionFailed(-1))
+        #expect(classified.errorClass == "transcribeFailed")
+        #expect(classified.retryAvailable == true)
+    }
+
+    @Test("WhisperTranscribeError.modelLoadFailed → transcribeFailed, retryable")
+    func classifiesWhisperModelLoadFailed() {
+        let classified = RefinementJobError.classify(
+            WhisperTranscribeError.modelLoadFailed("oom"))
+        #expect(classified.errorClass == "transcribeFailed")
+        #expect(classified.retryAvailable == true)
+    }
+
+    @Test("WhisperTranscribeError.modelNotFound → transcribeFailed, retryable")
+    func classifiesWhisperModelNotFound() {
+        let classified = RefinementJobError.classify(
+            WhisperTranscribeError.modelNotFound("/no/model"))
+        #expect(classified.errorClass == "transcribeFailed")
+        #expect(classified.retryAvailable == true)
+    }
+
+    @Test("WhisperTranscribeError.emptyAudio → transcribeFailed, retryable")
+    func classifiesWhisperEmptyAudio() {
+        let classified = RefinementJobError.classify(
+            WhisperTranscribeError.emptyAudio)
+        #expect(classified.errorClass == "transcribeFailed")
+        #expect(classified.retryAvailable == true)
+    }
+
     // MARK: - Queue integration: stub runJob produces correct .failed state
 
     private func tempDir() -> URL {
