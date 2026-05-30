@@ -131,7 +131,17 @@ struct LiveRunnerPhaseTrackerTests {
                 threshold: .milliseconds(50),
                 logger: logger)
         }
-        try await Task.sleep(for: .milliseconds(500))
+        // Poll until we've observed at least 2 heartbeats. A fixed sleep
+        // window was brittle under parallel test load (one tick fits in
+        // 500ms when the scheduler is busy); polling waits the actual
+        // signal with a generous ceiling.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if capture.messages.compactMap(extractAge(from:)).count >= 2 {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(40))
+        }
         heartbeat.cancel()
         await heartbeat.value
 

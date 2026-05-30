@@ -23,8 +23,8 @@ public struct CommittedUtterance: Sendable, Equatable {
 ///
 /// Consumes any `AudioFrameSource` at whatever pace the source delivers frames
 /// (real-time for a device / `ffmpeg -re` pipe / `FixturePlaybackSource`
-/// realtime mode) and emits **committed** utterances with ≤ 5 s lag behind real
-/// time.
+/// realtime mode) and emits **committed** utterances within ~one `stepInterval`
+/// of real time, plus per-window decode latency.
 ///
 /// ## Anchored-window whisper + LocalAgreement-2
 ///
@@ -83,8 +83,8 @@ public final class StreamingTranscriber {
         public var whisperOptions: WhisperOptions
 
         public init(
-            windowDuration: Duration = .seconds(8),
-            stepInterval: Duration = .seconds(2),
+            windowDuration: Duration = .seconds(10),
+            stepInterval: Duration = .seconds(4),
             silencePeakThreshold: Float = 0.01,
             utteranceGap: Duration = .milliseconds(800),
             whisperOptions: WhisperOptions = .init()
