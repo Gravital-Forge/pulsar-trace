@@ -87,26 +87,21 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
-    /// User-typed allow list of ISO-639-1 language codes the live pass is
-    /// allowed to detect, e.g. `"en, pl"`. Empty (default) → unrestricted
+    /// Allow list of ISO-639-1 language codes the live pass is allowed to
+    /// detect, e.g. `["en", "pl"]`. Empty (default) → unrestricted
     /// auto-detect (the legacy behaviour). When non-empty, the engine is
     /// launched with `--allowed-languages` and pre-detects per window,
     /// forcing the highest-probability **allowed** code. This is what
     /// stops the `nn` (Norwegian Nynorsk) misfires the user observed on
     /// English audio from poisoning the committer.
     ///
-    /// Stored raw so the SwiftUI `TextField` can bind to it directly
-    /// without round-trip parse-corruption during typing. The parsed
-    /// canonical form is `allowedLanguages` (computed).
-    public var allowedLanguagesRaw: String {
-        didSet { save() }
-    }
-
-    /// The parsed, canonical allow list — what callers feed downstream
-    /// (e.g. `RecordPlan.make(allowedLanguages:)`). Empty when the user
-    /// hasn't typed anything.
+    /// The Settings UI multi-select toggles entries in/out of this array;
+    /// callers downstream (`RecordingViewModel` → `RecordPlan`) consume
+    /// it as-is. Order isn't meaningful — the engine picks argmax over
+    /// the set — so the UI stores codes in catalog (display-name) order
+    /// for determinism.
     public var allowedLanguages: [String] {
-        Self.parseAllowedLanguages(allowedLanguagesRaw)
+        didSet { save() }
     }
 
     // MARK: - Derived
@@ -209,8 +204,8 @@ public final class MenuBarSettings {
             self.globalHotkey = nil
         }
 
-        self.allowedLanguagesRaw = store.string(forKey: Key.allowedLanguages)
-            ?? ""
+        self.allowedLanguages = store.array(forKey: Key.allowedLanguages)
+            as? [String] ?? []
 
         // Persist whatever the load resolved to — including the D29/D30
         // migrations above. Pre-2026-05-29 this happened implicitly via an
@@ -230,25 +225,13 @@ public final class MenuBarSettings {
         defaults.set(outputFolderPath, forKey: Key.outputFolderPath)
         defaults.set(systemAudioEnabled, forKey: Key.systemAudioEnabled)
         defaults.set(previousFolderPaths, forKey: Key.previousFolderPaths)
-        defaults.set(allowedLanguagesRaw, forKey: Key.allowedLanguages)
+        defaults.set(allowedLanguages, forKey: Key.allowedLanguages)
         if let hotkey = globalHotkey,
            let data = try? JSONEncoder().encode(hotkey) {
             defaults.set(data, forKey: Key.globalHotkey)
         } else {
             defaults.removeObject(forKey: Key.globalHotkey)
         }
-    }
-
-    // MARK: - Allowed-languages helpers
-
-    /// Parse a human-typed list of language codes (e.g. `"en, pl"`) into the
-    /// canonical storage form: lowercase, whitespace-trimmed, empties
-    /// dropped, original order preserved. Used by the Settings TextField so
-    /// "en, PL" and " en ,pl " both land as `["en", "pl"]`.
-    public static func parseAllowedLanguages(_ raw: String) -> [String] {
-        raw.split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
-            .filter { !$0.isEmpty }
     }
 
     // MARK: - Legacy migration

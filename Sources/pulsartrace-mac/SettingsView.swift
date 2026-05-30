@@ -12,6 +12,9 @@ import SwiftUI
 /// and fills the detail column.
 struct SettingsView: View {
     @Environment(MenuBarSettings.self) private var settings
+    /// Drives the "Restrict to languages" disclosure. Defaults closed so
+    /// the form is compact for the common case (no restriction).
+    @State private var languageSectionExpanded = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -44,13 +47,24 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                TextField("Restrict to languages",
-                          text: $settings.allowedLanguagesRaw,
-                          prompt: Text("e.g., en, pl"))
-                Text("Comma-separated ISO-639-1 codes. Leave empty to let "
-                    + "whisper auto-detect freely. With a list, every "
-                    + "window's language is forced to the highest-"
-                    + "probability code from your list.")
+                DisclosureGroup(isExpanded: $languageSectionExpanded) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(WhisperLanguageCatalog.all) { lang in
+                                Toggle(lang.displayName,
+                                       isOn: languageBinding(for: lang.code))
+                                    .toggleStyle(.checkbox)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 220)
+                } label: {
+                    Text("Restrict to languages — \(allowedLanguagesSummary)")
+                }
+                Text("Leave empty to let whisper auto-detect freely. With "
+                    + "a selection, every window's language is forced to "
+                    + "the highest-probability code from your list.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -95,6 +109,33 @@ struct SettingsView: View {
         Binding(
             get: { settings.selectedMicDeviceID },
             set: { settings.selectedMicDeviceID = $0 })
+    }
+
+    /// Per-language `Toggle` binding: reads membership in
+    /// `settings.allowedLanguages`, writes by adding or removing the code.
+    /// The stored array is rewritten in catalog order on every change so
+    /// the persisted list stays deterministic regardless of click order.
+    private func languageBinding(for code: String) -> Binding<Bool> {
+        Binding(
+            get: { settings.allowedLanguages.contains(code) },
+            set: { isOn in
+                var selected = Set(settings.allowedLanguages)
+                if isOn { selected.insert(code) } else { selected.remove(code) }
+                settings.allowedLanguages = WhisperLanguageCatalog.all
+                    .map(\.code)
+                    .filter { selected.contains($0) }
+            })
+    }
+
+    /// Header summary of the language picker: either "any (auto-detect)"
+    /// or the comma-joined display names of the selected codes.
+    private var allowedLanguagesSummary: String {
+        let selected = Set(settings.allowedLanguages)
+        if selected.isEmpty { return "any (auto-detect)" }
+        let names = WhisperLanguageCatalog.all
+            .filter { selected.contains($0.code) }
+            .map(\.displayName)
+        return names.joined(separator: ", ")
     }
 
     /// Open an `NSOpenPanel`, store the chosen folder as a plain filesystem
