@@ -11,6 +11,13 @@ public struct WhisperOptions: Sendable, Equatable {
     /// forces that language. The default multilingual `base`/`large-v3`
     /// models support auto-detect.
     public var language: String?
+    /// Optional allow-list of ISO-639-1 language codes (e.g. `["en", "pl"]`).
+    /// When non-empty, the streaming/window decode runs a pre-pass language
+    /// detection on each window, picks the highest-probability **allowed**
+    /// code, and forces that as `params.language`. Empty (default) →
+    /// unrestricted auto-detect (the legacy behaviour). Ignored for
+    /// English-only (`.en`) models, which only support English anyway.
+    public var allowedLanguages: [String]
     /// Decoder threads. 1 keeps output deterministic and is plenty for the
     /// offline path on a fixture; bump for large recordings.
     public var threadCount: Int
@@ -43,6 +50,7 @@ public struct WhisperOptions: Sendable, Equatable {
 
     public init(
         language: String? = nil,
+        allowedLanguages: [String] = [],
         threadCount: Int = 1,
         noSpeechThreshold: Float = 0.6,
         temperature: Float = 0.2,
@@ -50,6 +58,7 @@ public struct WhisperOptions: Sendable, Equatable {
         vadModelURL: URL? = nil
     ) {
         self.language = language
+        self.allowedLanguages = allowedLanguages
         self.threadCount = threadCount
         self.noSpeechThreshold = noSpeechThreshold
         self.temperature = temperature

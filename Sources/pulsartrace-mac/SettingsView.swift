@@ -43,6 +43,16 @@ struct SettingsView: View {
                     + "first use if not already cached.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                TextField("Restrict to languages",
+                          text: $settings.allowedLanguagesRaw,
+                          prompt: Text("e.g., en, pl"))
+                Text("Comma-separated ISO-639-1 codes. Leave empty to let "
+                    + "whisper auto-detect freely. With a list, every "
+                    + "window's language is forced to the highest-"
+                    + "probability code from your list.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Output") {

@@ -171,6 +171,7 @@ public struct WhisperIPCDecodeRegion: Sendable, Codable, Equatable {
 /// defaults match `WhisperOptions.init`.
 public struct WhisperIPCOptions: Sendable, Codable, Equatable {
     public var language: String?
+    public var allowedLanguages: [String]
     public var threadCount: Int
     public var noSpeechThreshold: Float
     public var temperature: Float
@@ -179,6 +180,7 @@ public struct WhisperIPCOptions: Sendable, Codable, Equatable {
 
     public init(
         language: String? = nil,
+        allowedLanguages: [String] = [],
         threadCount: Int = 1,
         noSpeechThreshold: Float = 0.6,
         temperature: Float = 0.2,
@@ -186,6 +188,7 @@ public struct WhisperIPCOptions: Sendable, Codable, Equatable {
         vadModelPath: String? = nil
     ) {
         self.language = language
+        self.allowedLanguages = allowedLanguages
         self.threadCount = threadCount
         self.noSpeechThreshold = noSpeechThreshold
         self.temperature = temperature
@@ -198,6 +201,7 @@ public struct WhisperIPCOptions: Sendable, Codable, Equatable {
     /// `whisper_vad_init_from_file_with_params`.
     public init(from options: WhisperOptions) {
         self.language = options.language
+        self.allowedLanguages = options.allowedLanguages
         self.threadCount = options.threadCount
         self.noSpeechThreshold = options.noSpeechThreshold
         self.temperature = options.temperature
@@ -211,6 +215,7 @@ public struct WhisperIPCOptions: Sendable, Codable, Equatable {
     public func toWhisperOptions() -> WhisperOptions {
         WhisperOptions(
             language: language,
+            allowedLanguages: allowedLanguages,
             threadCount: threadCount,
             noSpeechThreshold: noSpeechThreshold,
             temperature: temperature,
@@ -218,8 +223,26 @@ public struct WhisperIPCOptions: Sendable, Codable, Equatable {
             vadModelURL: vadModelPath.map { URL(fileURLWithPath: $0) })
     }
 
+    /// Older peers (no `allowedLanguages` field) decode as empty, preserving
+    /// the unrestricted-auto-detect default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.language = try c.decodeIfPresent(String.self, forKey: .language)
+        self.allowedLanguages = try c.decodeIfPresent(
+            [String].self, forKey: .allowedLanguages) ?? []
+        self.threadCount = try c.decode(Int.self, forKey: .threadCount)
+        self.noSpeechThreshold = try c.decode(
+            Float.self, forKey: .noSpeechThreshold)
+        self.temperature = try c.decode(Float.self, forKey: .temperature)
+        self.temperatureFallbackStep = try c.decode(
+            Float.self, forKey: .temperatureFallbackStep)
+        self.vadModelPath = try c.decodeIfPresent(
+            String.self, forKey: .vadModelPath)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case language
+        case allowedLanguages = "allowed_languages"
         case threadCount = "thread_count"
         case noSpeechThreshold = "no_speech_threshold"
         case temperature

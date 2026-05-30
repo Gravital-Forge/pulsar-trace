@@ -36,12 +36,18 @@ public struct RecordPlan: Sendable, Equatable {
     ///     engine then reads a single stream from the mic socket and no system
     ///     socket is wired.
     ///   - modelName: whisper model for both the live pass and the post-pass.
+    ///   - allowedLanguages: optional ISO-639-1 allow list for the live
+    ///     pass's per-window language detection. Empty (the default) →
+    ///     unrestricted auto-detect. When non-empty, the engine is launched
+    ///     with `--allowed-languages a,b,...` and pre-detects per window,
+    ///     forcing the highest-probability allowed code.
     public static func make(
         outputFolder: URL,
         paths: AppPaths,
         micDeviceID: String?,
         systemAudioEnabled: Bool,
-        modelName: String
+        modelName: String,
+        allowedLanguages: [String] = []
     ) -> RecordPlan {
         let recordingId = RecordingFolder.recordingId(
             forName: outputFolder.lastPathComponent)
@@ -78,6 +84,10 @@ public struct RecordPlan: Sendable, Equatable {
         } else {
             // Mic-only: the engine reads a single stream from the mic socket.
             engineArgs += ["--mic-socket", micSocket.path]
+        }
+        if !allowedLanguages.isEmpty {
+            engineArgs += ["--allowed-languages",
+                           allowedLanguages.joined(separator: ",")]
         }
 
         return RecordPlan(
