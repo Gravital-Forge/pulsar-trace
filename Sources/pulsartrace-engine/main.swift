@@ -129,6 +129,15 @@ struct EngineMain {
             // Realtime mode so the live pass runs at wall-clock pace (R10).
             source = FixturePlaybackSource(
                 file: URL(fileURLWithPath: path), realtime: true)
+            // `--mic-fixture <path>` pairs a second realtime fixture as the
+            // mic stream so a one-WAV repro can exercise the dual-stream
+            // contention on the shared SerializingHostProxy that the real
+            // live pass produces — pass the same WAV to drive 2× decode
+            // load on one whisper subprocess.
+            if let micPath = value(after: "--mic-fixture", in: args) {
+                micSource = FixturePlaybackSource(
+                    file: URL(fileURLWithPath: micPath), realtime: true)
+            }
             stemName = URL(fileURLWithPath: path)
                 .deletingPathExtension().lastPathComponent
         } else if let systemSocket = value(after: "--system-socket", in: args)
@@ -146,7 +155,7 @@ struct EngineMain {
         } else {
             throw UsageError(message: """
                 usage: pulsartrace-engine --live \
-                [--stdin | --source fixture <wav> | --system-socket <path> [--mic-socket <path>]] \
+                [--stdin | --source fixture <wav> [--mic-fixture <wav>] | --system-socket <path> [--mic-socket <path>]] \
                 [--out <dir>] [--recording-id <id>] [--model base|large-v3] [--no-live-diarization]
                 """)
         }
