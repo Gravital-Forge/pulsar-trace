@@ -83,21 +83,12 @@ final class LiveRunner: Sendable {
     /// queue holds more than this much un-decoded audio (Phase 1).
     private let queueCapacity: Duration
     /// Bounded wait on the whisper worker at teardown. A wedged decode that
-    /// ignores its abort (a stall inside a single encode/decode step) cannot
-    /// make the run hang past this — the recording is already safe on disk
-    /// regardless.
+    /// would otherwise outlive the run cannot make the run hang past this —
+    /// the recording is already safe on disk regardless. With the Phase 4
+    /// subprocess transcriber, a hung decode is recovered earlier still
+    /// (`RemoteWindowTranscriber` SIGKILLs + respawns its subprocess), so the
+    /// teardown bound exists only as a defensive cap.
     private let workerDrainTimeout: Duration
-    /// Per-decode watchdog deadline (Phase 2). A live-window decode that
-    /// overruns this has its `AbortToken` flipped so whisper bails at its next
-    /// decode-step boundary, the worker drops that window, and live
-    /// transcription resumes. The dropped audio is recovered by the post-pass.
-    private let decodeDeadline: Duration
-    /// Per-decode watchdog abort-grace (Phase 2). If a decode is still
-    /// outstanding this long *after* its abort was signalled, the abort did not
-    /// take (a stall inside a single encode/decode step where control never
-    /// reaches the next abort poll). The watchdog then emits an escalating
-    /// "did not honor abort" warning so the unrecoverable case is visible.
-    private let abortGrace: Duration
 
     init(
         configuration: StreamingPipeline.Configuration,
@@ -110,9 +101,7 @@ final class LiveRunner: Sendable {
         phaseHeartbeatInterval: Duration = LiveRunner.defaultPhaseHeartbeatInterval,
         phaseHeartbeatThreshold: Duration = LiveRunner.defaultPhaseHeartbeatThreshold,
         queueCapacity: Duration = .seconds(30),
-        workerDrainTimeout: Duration = .seconds(10),
-        decodeDeadline: Duration = .seconds(10),
-        abortGrace: Duration = .seconds(5)
+        workerDrainTimeout: Duration = .seconds(10)
     ) {
         self.configuration = configuration
         self.writer = writer
@@ -125,8 +114,6 @@ final class LiveRunner: Sendable {
         self.phaseHeartbeatThreshold = phaseHeartbeatThreshold
         self.queueCapacity = queueCapacity
         self.workerDrainTimeout = workerDrainTimeout
-        self.decodeDeadline = decodeDeadline
-        self.abortGrace = abortGrace
     }
 
     func run(
@@ -321,17 +308,16 @@ final class LiveRunner: Sendable {
         // The poll loop is the same cancellation-safe shape as `DiarGate.drain`.
         let workerResult = WorkerLanguageResult()
 
-        // Phase 2: the per-decode watchdog. It arms a fresh `AbortToken` before
-        // each per-frame `ingest` decode and, if that decode overruns
-        // `decodeDeadline`, flips the token so whisper bails at its next
-        // decode-step boundary — the worker drops that window and live
-        // transcription resumes. A decode that ignores the abort past
-        // `abortGrace` (a stall inside a single encode/decode step) is logged as
-        // an escalating "did not honor abort" warning. The watchdog runs as its
-        // own task, so it keeps observing while the worker is suspended awaiting
-        // the offloaded (blocking) decode.
-        let watchdog = DecodeWatchdog(
-            deadline: decodeDeadline, abortGrace: abortGrace, logger: logger)
+        // Phase 4: the per-decode watchdog is gone. Wedge recovery now lives
+        // **inside** the `WindowTranscribing` conformer. For the system
+        // stream that's `RemoteWindowTranscriber`, which SIGKILLs + respawns
+        // its `pulsartrace-whisper` subprocess past the deadline (spec §6).
+        // For the mic stream (still in-process per Phase 4 Option A) there is
+        // no in-process recovery — a wedged mic decode is a known smaller
+        // gap pending the shared-host proxy (spec §4 / §9). The
+        // `abort: nil` here is intentional: there is nothing useful for the
+        // remote transcriber to do with it (it ignores the token per its
+        // doc-comment) and nothing in-process arming it any more.
 
         // The whisper worker: owns the streamers, drains both queues, writes
         // committed utterances to the sink. Never blocks the drain — the queues
@@ -361,19 +347,15 @@ final class LiveRunner: Sendable {
                 guard let queue, let streamer else { return true }
                 while let frame = queue.tryDequeueNonSuspending() {
                     let elapsed = ContinuousClock.now - startWall
-                    // Arm the watchdog with a fresh token for this decode. If
-                    // the decode overruns the deadline the watchdog flips the
-                    // token; whisper bails at its next decode step, `offload`
-                    // returns (empty/throwing), and the worker drops this
-                    // window and continues — live transcription resumes.
-                    let token = AbortToken()
-                    await watchdog.beginDecode(
-                        token: token, stream: isMic ? "mic" : "system")
+                    // Phase 4: no per-decode in-process arming. The system
+                    // stream's `RemoteWindowTranscriber` recovers a wedge by
+                    // killing its subprocess; the mic stream is in-process
+                    // for now (Option A) and runs without an abort token —
+                    // pending the shared-host proxy.
                     let utterances = await Self.offload {
                         streamer.ingest(
-                            frame: frame, realTimeElapsed: elapsed, abort: token)
+                            frame: frame, realTimeElapsed: elapsed, abort: nil)
                     }
-                    await watchdog.endDecode()
                     await workerResult.noteProgress()
                     for utt in utterances {
                         if isMic {
@@ -616,12 +598,6 @@ final class LiveRunner: Sendable {
         }
         let detectedLanguage = await workerResult.language ?? "en"
         worker.cancel()  // abandon a still-wedged worker; recording is safe
-
-        // Stop the watchdog's poll task. On a healthy run this is a redundant
-        // no-op (already disarmed); on a wedged run whose decode never returned,
-        // `endDecode()` was never called from the worker, so this is what stops
-        // the abort-grace monitor from logging forever after the run returns.
-        await watchdog.endDecode()
 
         // Fix B: hand off any in-flight diarization task before returning —
         // bounded, so a wedged diarizer cannot make the run hang on exit.

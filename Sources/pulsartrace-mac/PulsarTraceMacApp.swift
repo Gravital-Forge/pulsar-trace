@@ -219,13 +219,25 @@ final class AppEnvironment {
         let pauseBox = AsyncCallBox()
         let resumeBox = AsyncCallBox()
 
+        // Phase 6 / Layer B: probe the binary-level `whisper.lock` between
+        // pauseRefinement and the orchestrator's start. `pauseRefinement`
+        // terminates the refinement-whisper subprocess (Layer A); this
+        // probe is the defence-in-depth that catches the rare slow-teardown
+        // window before the engine subprocess hits the flock.
+        let lockProbePath = paths.applicationSupport
+            .appendingPathComponent("whisper.lock", isDirectory: false)
         self.recording = RecordingViewModel(
             settings: settings, paths: paths, events: events,
             enqueueAutoRefine: { url, recordingId in
                 await enqueueBox.call(url, recordingId)
             },
             pauseRefinement: { await pauseBox.call() },
-            resumeRefinement: { await resumeBox.call() })
+            resumeRefinement: { await resumeBox.call() },
+            waitForWhisperLockFree: {
+                try await WhisperLockProbe.waitUntilFree(
+                    lockPath: lockProbePath,
+                    timeout: .seconds(5))
+            })
         self.scanner = RecordingsScanner(settings: settings)
         self.liveWatcher = LiveTranscriptWatcher()
         self.onboarding = OnboardingTourViewModel()
@@ -289,7 +301,31 @@ final class AppEnvironment {
     /// `init()` synchronous while allowing the expensive async setup to run
     /// once the MainActor is free after initialization.
     func bootstrap() async {
-        let q = await RefinementJobQueue.makeStandard(events: events, paths: paths)
+        // Wire `swift-log` into the daily-rotated `FileLogHandler` and
+        // `OSLogHandler` — the *engine subprocess* bootstraps these via
+        // `AppLifecycle.start()`, but the mac-app process never calls
+        // `AppLifecycle`. Without this call the in-process refinement
+        // queue's `Logger(label: LogSubsystem.engine)` lines fell into
+        // swift-log's default `StreamLogHandler` (stderr → launchd),
+        // making refinement failures undebuggable from `~/Library/Logs/
+        // PulsarTrace/*.log` (verified empty for the 2026-05-27 incident).
+        // `LogSystem.bootstrap` is idempotent — see
+        // `LoggingTests.bootstrapIsIdempotent`.
+        _ = await LogSystem.bootstrap(paths: paths)
+
+        // Resolve the whisper binary once, from the mac-app's known
+        // `.build/debug/...` layout (via `#filePath`). The same resolver is
+        // threaded into the engine subprocess as `PULSARTRACE_WHISPER_BINARY`
+        // by `defaultOrchestratorFactory`, so refinement and live decode
+        // share a single source of truth for the binary path — and the
+        // resolver's `argv[0]`-sibling fallback never gets a chance to
+        // silently mis-locate it in the mac-app process.
+        let whisperBinaryURL =
+            RecordingViewModel.defaultBinaryURLResolver("pulsartrace-whisper")
+        let q = await RefinementJobQueue.makeStandard(
+            events: events,
+            whisperBinaryURL: whisperBinaryURL,
+            paths: paths)
         self.queue = q
         await queueVM.setQueue(q)
         queueVM.onJobsTerminated = { [weak self] _ in

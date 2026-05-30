@@ -13,7 +13,7 @@ import Logging
 public actor ResumableRefiner {
 
     public typealias TranscribeRegion =
-        @Sendable ([Float], SpeechRegion, WhisperTranscriber.Options) async throws
+        @Sendable ([Float], SpeechRegion, WhisperOptions) async throws
         -> TranscriptionResult
     public typealias DetectRegions =
         @Sendable ([Float]) throws -> [SpeechRegion]
@@ -199,6 +199,49 @@ public actor ResumableRefiner {
             folder: folder)
     }
 
+    /// Maximum number of attempts per region before the failure is
+    /// allowed to bubble up and fail the whole job. Set to 3 so the
+    /// 2026-05-27 incident shape (subprocess died on attempt 1, parent
+    /// respawned cleanly, attempt 2 would succeed on the fresh host)
+    /// is recovered, while still bounding total work.
+    private static let regionMaxAttempts = 3
+
+    /// Backoff between region-transcribe attempts. The remote
+    /// transcriber's own `respawnWithBackoffLog` already waits on the
+    /// subprocess being healthy; this brief sleep is just to avoid
+    /// busy-spinning the loop if the failure mode is something the
+    /// in-process closure can't recover from on its own.
+    private static let regionRetryBackoff: Duration = .milliseconds(500)
+
+    /// Wrap one `transcribe` call in a bounded retry loop.
+    ///
+    /// `WhisperTranscribeError` covers the subprocess-decode-failed
+    /// shape (`transcriptionFailed`, `modelLoadFailed`, etc.) — those
+    /// can resolve on a respawn so we retry up to `regionMaxAttempts`.
+    /// Any other error (programmer bug, I/O fault inside the closure)
+    /// propagates immediately — these are not transient and a retry
+    /// would just hide them.
+    private func transcribeRegionWithRetry(
+        samples: [Float], region: SpeechRegion, options: WhisperOptions
+    ) async throws -> TranscriptionResult {
+        var lastError: WhisperTranscribeError?
+        for attempt in 1...Self.regionMaxAttempts {
+            do {
+                return try await transcribe(samples, region, options)
+            } catch let e as WhisperTranscribeError {
+                lastError = e
+                logger.warning(
+                    "region transcribe attempt \(attempt)/\(Self.regionMaxAttempts) failed: \(e)")
+                if attempt < Self.regionMaxAttempts {
+                    try? await Task.sleep(for: Self.regionRetryBackoff)
+                }
+            }
+        }
+        // Surface the most recent WhisperTranscribeError. The classifier
+        // bucket is `.transcribeFailed` (see RefinementJobError.classify).
+        throw lastError ?? WhisperTranscribeError.transcriptionFailed(-1)
+    }
+
     private func iterateRegions(
         samples: [Float],
         allRegions: [SpeechRegion],
@@ -211,7 +254,8 @@ public actor ResumableRefiner {
                        : progress.nextSystemRegionIndex) {
             await pauseGate.waitOpen()
             let region = allRegions[i]
-            let result = try await transcribe(samples, region, .init())
+            let result = try await transcribeRegionWithRetry(
+                samples: samples, region: region, options: .init())
             for seg in result.segments {
                 let partial = RefinementProgress.PartialSegment(
                     startMillis: Int(seg.start.seconds * 1000),

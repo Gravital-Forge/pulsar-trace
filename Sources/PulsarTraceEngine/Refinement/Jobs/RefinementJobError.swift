@@ -10,7 +10,7 @@ import Foundation
 /// - `OfflineRefiner.makeDiarizer` → `Diarizer.DiarizeError` (.pythonNotFound,
 ///   .launchFailed)
 /// - `ResumableRefiner.run` → `Diarizer.DiarizeError` (non-.cancelled variants),
-///   raw `WhisperTranscriber.TranscribeError`, I/O errors from `WAVReader` /
+///   raw `WhisperTranscribeError`, I/O errors from `WAVReader` /
 ///   `AtomicFile`.
 /// - `RefinementPipeline.assembleAndWrite` → `RefinementPipeline.RefineError`
 ///   (when the assemble step's reconciler / file writes wrap into the typed
@@ -123,6 +123,19 @@ public enum RefinementJobError: Error {
             case .diarization:   return .diarizeCrashed
             case .io, .input:    return .io
             }
+        }
+
+        // The queue's `ResumableRefiner.run` (Phase 5) calls the remote
+        // transcriber directly and rethrows `WhisperTranscribeError`
+        // un-wrapped — i.e. it does not pass through
+        // `RefinementPipeline.RefineError.transcription`. Without this
+        // arm those failures collapsed to `.io`, hiding their true cause
+        // in the `refinement_failed` event log. Every variant of
+        // `WhisperTranscribeError` is a transcription failure; the model-
+        // load and not-found variants are still transient at the queue
+        // level because a respawn / re-fetch can recover them.
+        if error is WhisperTranscribeError {
+            return .transcribeFailed
         }
 
         return .io

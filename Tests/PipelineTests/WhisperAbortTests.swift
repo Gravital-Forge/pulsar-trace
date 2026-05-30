@@ -28,7 +28,7 @@ struct WhisperAbortTests {
 
     /// Explicit language → whisper skips the un-abortable language-detect encode
     /// and decodes straight through, so the abort's effect is isolated.
-    private static let opts = WhisperTranscriber.Options(language: "en")
+    private static let opts = WhisperOptions(language: "en")
 
     /// A buffer long enough that a full decode spans many 30 s windows, so a
     /// pre-cancelled abort — which bails after the first window's encode — is an

@@ -25,6 +25,7 @@ let package = Package(
         .executable(name: "pulsartrace", targets: ["pulsartrace"]),
         .executable(name: "pulsartrace-capture", targets: ["pulsartrace-capture"]),
         .executable(name: "pulsartrace-mac", targets: ["pulsartrace-mac"]),
+        .executable(name: "pulsartrace-whisper", targets: ["pulsartrace-whisper"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
@@ -59,6 +60,18 @@ let package = Package(
         .executableTarget(
             name: "pulsartrace-engine",
             dependencies: ["PulsarTraceEngine"]
+        ),
+        // The whisper inference subprocess (docs/specs/2026-05-26-whisper-subprocess-design.md).
+        // One per concurrent transcription workload; SIGKILL'd by the
+        // parent to recover from a wedged decode. Depends on
+        // `PulsarTraceEngine` so it can reuse `WhisperTranscriber` and
+        // the shared IPC + lock types.
+        .executableTarget(
+            name: "pulsartrace-whisper",
+            dependencies: [
+                .product(name: "Logging", package: "swift-log"),
+                "PulsarTraceEngine",
+            ]
         ),
         // The user-facing CLI. `refine`/`speakers`, plus `record`, `doctor`,
         // and `events tail`. Depends on

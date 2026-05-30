@@ -482,6 +482,142 @@ struct RefinementJobQueueTests {
         #expect(stage == .diarizing, "lastStage should round-trip through resume")
     }
 
+    /// Phase 6 / Layer A: `pauseForRecording` fires the registered
+    /// transcriber-release hook so the refinement-whisper subprocess
+    /// terminates before the engine subprocess tries to acquire the
+    /// binary-level `whisper.lock`. The hook is set/cleared by the
+    /// worker; the queue invokes it inside `pauseForRecording` after
+    /// cancelling the diarizer.
+    @Test("pauseForRecording fires the transcriber-release hook")
+    func pauseFiresTranscriberRelease() async throws {
+        let store = RefinementJobStore(directory: tempDir())
+        let gate = PauseGate(initiallyOpen: true)
+        let started = Gate()
+        let pauseSignaled = Gate()    // test → runJob: "ok to proceed"
+        let releaseCounter = ReleaseCounter()
+
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in /* placeholder, replaced below */ },
+            pauseGate: gate)
+        await queue.setRunJob({ [queue] _ in
+            await queue.setInflightTranscriberRelease {
+                releaseCounter.increment()
+            }
+            await started.open()
+            await pauseSignaled.wait()
+            await gate.waitOpen()
+        })
+        try await queue.start()
+
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/x"),
+            recordingId: "rec_release", modelName: "base",
+            modelSHA256: "deadbeef")
+        await started.wait()
+
+        // The hook is registered now. pauseForRecording must invoke it.
+        // We start the pause-call in a task so we can unblock the
+        // runJob's `pauseSignaled` wait and let the worker exit (the
+        // hook in this test doesn't actually unwedge a real
+        // transcriber, so the worker stays parked until we let it go).
+        async let pauseDone: Void = queue.pauseForRecording()
+        // Give pauseForRecording() a turn to fire the release hook.
+        // The release counter is incremented synchronously inside the
+        // hook closure, so polling here is deterministic.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while releaseCounter.value() == 0,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(releaseCounter.value() == 1,
+                "pauseForRecording must fire the release hook exactly once")
+
+        // Unblock the parked runJob so the worker can exit; the
+        // pauseForRecording call has a 5s worker-exit timeout, but with
+        // the runJob now able to proceed we'll let it complete cleanly.
+        await pauseSignaled.open()
+        await queue.resumeAfterRecording()
+        await pauseDone
+    }
+
+    /// A small thread-safe counter — the release hook closure is
+    /// `@Sendable`-typed in the queue API, so we can't capture an actor
+    /// directly. Using `NSLock` + a class is the path of least
+    /// resistance and matches the `SharedTranscriberBox` pattern.
+    final class ReleaseCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func increment() {
+            lock.lock(); defer { lock.unlock() }
+            count += 1
+        }
+        func value() -> Int {
+            lock.lock(); defer { lock.unlock() }
+            return count
+        }
+    }
+
+    /// Phase 6 / Layer A: when a release hook is registered AND the
+    /// worker exits (which is what happens in production after the
+    /// hook unwedges the in-flight subprocess decode), `pauseForRecording`
+    /// returns only after the worker task has terminated. This test
+    /// drives that ordering: the release hook flips a flag and the
+    /// runJob then voluntarily exits.
+    @Test("pauseForRecording waits for the worker to exit after release fires")
+    func pauseAwaitsWorkerExitWhenReleaseRegistered() async throws {
+        let store = RefinementJobStore(directory: tempDir())
+        let gate = PauseGate(initiallyOpen: true)
+        let started = Gate()
+
+        // A `Sendable` flag the release hook flips and the runJob
+        // observes. Same NSLock-backed pattern as `ReleaseCounter` —
+        // simplest cross-isolation tool.
+        final class Flag: @unchecked Sendable {
+            private let lock = NSLock()
+            private var v = false
+            func set() { lock.lock(); defer { lock.unlock() }; v = true }
+            func isSet() -> Bool { lock.lock(); defer { lock.unlock() }; return v }
+        }
+        let killed = Flag()
+        let workerExited = Flag()
+
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in /* placeholder */ },
+            pauseGate: gate)
+        await queue.setRunJob({ [queue] _ in
+            await queue.setInflightTranscriberRelease { killed.set() }
+            await started.open()
+            // Spin until the release fires — analogous to a
+            // `transcribeRegion` call returning early because the
+            // subprocess died and the IPC read saw EOF.
+            while !killed.isSet() {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            workerExited.set()
+        })
+        try await queue.start()
+
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/x"),
+            recordingId: "rec_await", modelName: "base",
+            modelSHA256: "deadbeef")
+        await started.wait()
+
+        // pauseForRecording fires the hook, which unblocks the runJob's
+        // spin loop, which sets `workerExited`. The pause call must not
+        // return until that has happened.
+        await queue.pauseForRecording()
+        #expect(killed.isSet())
+        #expect(workerExited.isSet(),
+                "pauseForRecording returned before the worker exited")
+
+        // Clean up — resume so the queue actor is in a sensible state
+        // at test teardown.
+        await queue.resumeAfterRecording()
+    }
+
     @Test("recent list is capped at 100 entries")
     func recentListCapped() async throws {
         let dir = FileManager.default.temporaryDirectory

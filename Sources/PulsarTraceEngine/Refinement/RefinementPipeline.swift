@@ -103,7 +103,7 @@ public struct RefinementPipeline: Sendable {
         /// may embed a path — is deliberately dropped.
         private static func safeCause(_ error: Error) -> String {
             switch error {
-            case let e as WhisperTranscriber.TranscribeError:
+            case let e as WhisperTranscribeError:
                 switch e {
                 case .modelNotFound: return "modelNotFound"
                 case .modelLoadFailed: return "modelLoadFailed"
@@ -178,7 +178,7 @@ public struct RefinementPipeline: Sendable {
         whisperModelName: String,
         whisperModelSHA256: String,
         recordingStart: Date = Date(),
-        whisperOptions: WhisperTranscriber.Options = .init(),
+        whisperOptions: WhisperOptions = .init(),
         library: SpeakerLibrary? = nil,
         precomputedDiarization: DiarizationResult? = nil,
         progress: ProgressReporter? = nil
@@ -240,7 +240,7 @@ public struct RefinementPipeline: Sendable {
         whisperModelName: String,
         whisperModelSHA256: String,
         recordingStart: Date,
-        whisperOptions: WhisperTranscriber.Options,
+        whisperOptions: WhisperOptions,
         library: SpeakerLibrary?,
         precomputedDiarization: DiarizationResult?,
         startedAt: Date,
@@ -426,7 +426,7 @@ public struct RefinementPipeline: Sendable {
     private func transcribe(
         wav: URL,
         transcriberFactory: @Sendable () throws -> WhisperTranscriber,
-        options: WhisperTranscriber.Options
+        options: WhisperOptions
     ) async throws -> StreamTranscription {
         do {
             let transcriber = try transcriberFactory()

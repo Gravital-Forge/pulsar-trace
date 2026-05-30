@@ -11,7 +11,7 @@ struct WindowTranscribingTests {
         func transcribeWindow(
             _ samples: [Float],
             windowStart: Duration,
-            options: WhisperTranscriber.Options,
+            options: WhisperOptions,
             abort: AbortToken?
         ) throws -> TranscriptionResult {
             TranscriptionResult(

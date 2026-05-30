@@ -71,7 +71,7 @@ public struct OfflineRefiner: Sendable {
             progress?("VAD model unavailable (\(error)) — transcribing without VAD")
             vadModelURL = nil
         }
-        let whisperOptions = WhisperTranscriber.Options(vadModelURL: vadModelURL)
+        let whisperOptions = WhisperOptions(vadModelURL: vadModelURL)
 
         let diarizer = try Self.makeDiarizer()
 

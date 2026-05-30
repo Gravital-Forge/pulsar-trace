@@ -39,11 +39,24 @@ public struct AppPaths: Sendable {
         applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
     }
 
-    /// Directory for per-session capture sockets: `…/PulsarTrace/sockets/`.
-    /// `pulsartrace-capture` binds its Unix domain sockets here;
-    /// `pulsartrace-engine` connects to them via `SocketSource`.
+    /// Directory for per-session Unix domain sockets. Lives under
+    /// `$TMPDIR/PulsarTrace/` rather than `applicationSupport` because
+    /// `sockaddr_un.sun_path` is hard-capped at 104 bytes on Darwin
+    /// (incl. NUL) — and `~/Library/Application Support/PulsarTrace/`
+    /// alone consumes ~63 bytes for a 7-char username and grows with
+    /// username length. `$TMPDIR` resolves to `/var/folders/<2>/<28>/T/`
+    /// on macOS (~47 bytes, constant regardless of username), leaving
+    /// ~50 bytes of headroom for the longest filenames the code uses
+    /// (capture's `<recordingId>-system.sock` ≈ 33 bytes; whisper's
+    /// `w-<8hex>.sock` = 15 bytes).
+    ///
+    /// `home` is left in place because everything else under
+    /// `applicationSupport` (events, speakers DB, whisper.lock, etc.)
+    /// is persistent state that genuinely belongs in Application Support.
+    /// Only the sockets need short paths.
     public var socketDirectory: URL {
-        applicationSupport.appendingPathComponent("sockets", isDirectory: true)
+        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("PulsarTrace", isDirectory: true)
     }
 
     /// The system-audio capture socket for one recording session.

@@ -80,4 +80,33 @@ struct LoggingTests {
             logText: clean, forbidden: ["secret transcript", "/Users/alice/Meetings"])
         #expect(findings.isEmpty)
     }
+
+    /// `pulsartrace-mac` will call `LogSystem.bootstrap` from its
+    /// `AppEnvironment.bootstrap()` so the in-process refinement queue's
+    /// `Logger(label: LogSubsystem.engine)` lines reach the daily log
+    /// file. Some earlier subprocess in the same address space (or an
+    /// earlier in-test bootstrap from another suite) may have already
+    /// installed a factory — `LoggingSystem.bootstrap` traps on a second
+    /// global-factory install, so `LogSystem.bootstrap` must be
+    /// idempotent. This regression-guards that contract.
+    @Test("LogSystem.bootstrap can be called twice without trapping")
+    func bootstrapIsIdempotent() async {
+        let home1 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-boot1-\(UUID().uuidString)")
+        let home2 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-boot2-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: home1)
+            try? FileManager.default.removeItem(at: home2)
+        }
+        let paths1 = AppPaths(home: home1)
+        let paths2 = AppPaths(home: home2)
+        // Both calls return cleanly — no fatalError from
+        // `LoggingSystem.bootstrap` being called twice.
+        _ = await LogSystem.bootstrap(paths: paths1)
+        _ = await LogSystem.bootstrap(paths: paths2)
+        // After the second call, the shared `rotator` is non-nil and
+        // ready to flush — the bare minimum the mac-app relies on.
+        #expect(LogSystem.rotator != nil)
+    }
 }
