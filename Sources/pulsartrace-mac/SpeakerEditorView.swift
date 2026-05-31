@@ -1,3 +1,4 @@
+import AppKit
 import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
@@ -28,6 +29,10 @@ struct SpeakerEditorView: View {
     @State private var loadError: String?
     @State private var renameTarget: String?
     @State private var renameText = ""
+    /// Drives the rename `TextField`'s first-responder state — set on appear so
+    /// the cursor visibly lands in the field, paired with a select-all so the
+    /// existing name is highlighted and typing replaces it in one keystroke.
+    @FocusState private var renameFieldFocused: Bool
 
     // Merge sheet state.
     @State private var showMerge = false
@@ -183,13 +188,40 @@ struct SpeakerEditorView: View {
         HStack {
             if renameTarget == speaker.id {
                 TextField("Name", text: $renameText)
-                    .onSubmit {
-                        Task {
-                            await viewModel.rename(
-                                speakerId: speaker.id, to: renameText)
-                            renameTarget = nil
+                    .textFieldStyle(.roundedBorder)
+                    .focused($renameFieldFocused)
+                    .onAppear {
+                        renameFieldFocused = true
+                        // SwiftUI's TextField has no built-in "select all on
+                        // focus": the field editor (`NSText`) is the only
+                        // object that can do it, and AppKit doesn't install
+                        // the field editor until the focus change has been
+                        // processed — hence the async hop after setting
+                        // `renameFieldFocused`.
+                        DispatchQueue.main.async {
+                            (NSApp.keyWindow?.firstResponder as? NSText)?
+                                .selectAll(nil)
                         }
                     }
+                // Cancel + Save replace the Rename/Delete pair while editing —
+                // they make the "you are now editing" state visually obvious
+                // (Save is the blue default button) and give the click a
+                // discoverable target. Save owns Return (`.defaultAction`) and
+                // Cancel owns Escape (`.cancelAction`), so the previous
+                // `.onSubmit` / `.onExitCommand` modifiers are no longer needed
+                // — having both would double-fire on Return.
+                Button("Cancel") { renameTarget = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    Task {
+                        await viewModel.rename(
+                            speakerId: speaker.id, to: renameText)
+                        renameTarget = nil
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(renameText
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             } else {
                 Text(speaker.name)
                 Spacer()
