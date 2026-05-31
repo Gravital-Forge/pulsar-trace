@@ -81,12 +81,14 @@ struct RecordingsListView: View {
 
     private func row(_ recording: RecordingEntry) -> some View {
         HStack {
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(recording.displayName)
                 if recording.isRefined {
-                    let count = recording.speakers.count
-                    let word = count == 1 ? "speaker" : "speakers"
-                    Text("\(count) \(word) · \(Int(recording.durationSeconds))s")
+                    // Pills replace the older "N speakers · Ns" subtitle —
+                    // richer info (tinted per kind: You / Unknown #N / named)
+                    // wrapped onto multiple rows when there are many.
+                    SpeakerPillsView(speakers: recording.speakers)
+                    Text(RecordingEntry.formatDuration(recording.durationSeconds))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if !hasQueueSignal(recording.id) {
@@ -126,6 +128,7 @@ struct RecordingsListView: View {
         if queueVM.running?.recordingId == recordingId { return true }
         return queueVM.queued.contains { $0.recordingId == recordingId }
     }
+
 }
 
 /// A one-line badge below a recordings-list row showing the current queue

@@ -39,7 +39,8 @@ struct RecordingsScannerTests {
 
         #expect(scanner.recordings.count == 3)
         #expect(scanner.recordings.map(\.id) == ["rec_c", "rec_b", "rec_a"])
-        #expect(scanner.recordings.first?.speakers.contains("Steve") == true)
+        #expect(scanner.recordings.first?.speakers
+            .contains(where: { $0.label == "Steve" }) == true)
         #expect(scanner.recordings.first?.isRefined == true)
     }
 

@@ -1,6 +1,61 @@
 import Foundation
 import PulsarTraceEngine
 
+/// One speaker on a `RecordingEntry`, mirroring the richer
+/// `RefinementMetadata.Speaker` shape so the recordings-list UI can render
+/// pills (mic "You" / unknown placeholder / named) without re-decoding
+/// `metadata.json`.
+///
+/// `label` is the transcript-facing string as it appears in `final.md`;
+/// `speakerId` is the stable library id (`spk_<ulid>`, R83) when the speaker
+/// was reconciled against the library, `nil` for `You` (the mic stream) and
+/// for system-stream speakers that were never reconciled (no library, or
+/// diarization skipped). `isMicrophone` flags the single "You" speaker — that
+/// stream is never diarized (R17).
+public struct RecordingSpeaker: Identifiable, Sendable, Equatable, Hashable, Codable {
+
+    /// Display label as it appears in `final.md` (e.g. `Steve`,
+    /// `Unknown #1`, `You`, or `Speaker_2` when no library is configured).
+    public let label: String
+    /// Stable library id (`spk_<ulid>`) when reconciled; `nil` for `You` and
+    /// for un-reconciled system-stream speakers.
+    public let speakerId: String?
+    /// True for the mic-stream "You" speaker; that stream is never diarized.
+    public let isMicrophone: Bool
+
+    /// `ForEach` identity. `speakerId` is preferred — it survives a label
+    /// rename. When absent (mic, or un-reconciled) we synthesize an id from
+    /// the label + mic flag so two unreconciled speakers in the same
+    /// recording with *distinct* labels stay distinct. Two unreconciled
+    /// speakers sharing the same label collide — `SpeakerPillsView` defends
+    /// against that by feeding `ForEach` an enumerated index instead of
+    /// trusting this id alone (see comment there).
+    public var id: String { speakerId ?? "label:\(label):\(isMicrophone)" }
+
+    public init(label: String, speakerId: String?, isMicrophone: Bool) {
+        self.label = label
+        self.speakerId = speakerId
+        self.isMicrophone = isMicrophone
+    }
+
+    /// True when the label matches `Unknown #<ASCII digits>` — the
+    /// placeholder shape `SpeakerReconciler.nextUnknownName()` emits.
+    /// Drives the "unknown" pill tint in the UI; does NOT imply
+    /// `speakerId == nil` (a reconciled speaker can still carry an
+    /// `Unknown #N` name until the user renames it).
+    ///
+    /// Restricted to ASCII `0...9` on purpose — Unicode digit lookalikes
+    /// (fullwidth `１`, Arabic-Indic `٢`) are NOT placeholders we emit
+    /// and should keep the standard "named" tint.
+    public var isUnknownPlaceholder: Bool {
+        let prefix = "Unknown #"
+        guard label.hasPrefix(prefix) else { return false }
+        let suffix = label.dropFirst(prefix.count)
+        guard !suffix.isEmpty else { return false }
+        return suffix.allSatisfy { ("0"..."9").contains($0) }
+    }
+}
+
 /// One past recording, surfaced in the menubar recordings list (R31).
 ///
 /// Decoded from a recording folder's `metadata.json` sidecar — the
@@ -19,8 +74,11 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
     public let folderURL: URL
     /// Audio duration in seconds (the longer stream).
     public let durationSeconds: Double
-    /// Distinct speaker labels in the final transcript.
-    public let speakers: [String]
+    /// Distinct speakers in the final transcript — richer than just labels:
+    /// each carries `speakerId` and `isMicrophone` so the recordings-list
+    /// row can render pill chips ("You" / `Unknown #N` / named) with the
+    /// right tint without re-decoding `metadata.json`.
+    public let speakers: [RecordingSpeaker]
     /// Whether a `final.md` is present (the recording has been refined).
     public let isRefined: Bool
 
@@ -29,7 +87,7 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
         recordingStart: Date,
         folderURL: URL,
         durationSeconds: Double,
-        speakers: [String],
+        speakers: [RecordingSpeaker],
         isRefined: Bool
     ) {
         self.id = id
@@ -42,6 +100,24 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
 
     /// The display name shown in the list — the recording folder's basename.
     public var displayName: String { folderURL.lastPathComponent }
+
+    /// Format `durationSeconds` as `M:SS` when shorter than an hour, else
+    /// `H:MM:SS`. Truncates fractional seconds. Negative or NaN inputs
+    /// (defensive — `metadata.json` is trusted, but the field is `Double`)
+    /// collapse to `0:00`.
+    public static func formatDuration(_ durationSeconds: Double) -> String {
+        guard durationSeconds.isFinite, durationSeconds > 0 else {
+            return "0:00"
+        }
+        let total = Int(durationSeconds)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
+    }
 
     /// Decode a `RecordingEntry` from a recording folder.
     ///
@@ -75,7 +151,12 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
             recordingStart: start,
             folderURL: folderURL,
             durationSeconds: metadata.durationSeconds,
-            speakers: metadata.speakers.map(\.label),
+            speakers: metadata.speakers.map {
+                RecordingSpeaker(
+                    label: $0.label,
+                    speakerId: $0.speakerId,
+                    isMicrophone: $0.isMicrophone)
+            },
             isRefined: isRefined)
     }
 
