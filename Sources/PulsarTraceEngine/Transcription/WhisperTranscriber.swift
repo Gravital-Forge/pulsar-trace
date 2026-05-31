@@ -448,11 +448,11 @@ public final class WhisperTranscriber: WindowTranscribing, RegionTranscribing {
             params.abort_callback_user_data = Unmanaged.passUnretained(abort).toOpaque()
         }
 
-        let langString = options.language.flatMap { isEnglishOnlyModel ? nil : $0 }
-            ?? (isEnglishOnlyModel ? "en" : "auto")
-
         Self.metalLock.lock()
         defer { Self.metalLock.unlock() }
+
+        let langString = resolveLanguageStringLocked(
+            samples: samples, options: options)
 
         let code: Int32 = langString.withCString { langPtr -> Int32 in
             params.language = langPtr
@@ -517,9 +517,11 @@ public final class WhisperTranscriber: WindowTranscribing, RegionTranscribing {
         params.no_speech_thold = options.noSpeechThreshold
 
         // The chosen language string: a forced code, "en" for an *.en model,
-        // or "auto" for multilingual auto-detect.
-        let langString = options.language.flatMap { isEnglishOnlyModel ? nil : $0 }
-            ?? (isEnglishOnlyModel ? "en" : "auto")
+        // an allow-list pre-detect pick, or "auto" for unrestricted
+        // multilingual auto-detect. See `resolveLanguageStringLocked` for the
+        // branch order — the helper already holds the metalLock invariant.
+        let langString = resolveLanguageStringLocked(
+            samples: samples, options: options)
 
         // Decode under the (forced/auto) language. A nested func so it can be
         // invoked either directly or nested inside the VAD-path `withCString`
@@ -662,6 +664,86 @@ public final class WhisperTranscriber: WindowTranscribing, RegionTranscribing {
             ))
         }
         return out
+    }
+
+    /// Argmax of `probs` restricted to the subset of `allowed` codes that
+    /// `idForCode` resolves to a valid index. Returns `nil` when no allowed
+    /// code resolves (caller's policy: fall back to unrestricted auto).
+    ///
+    /// Pure (no whisper-context dependency) so the lookup table can be
+    /// stubbed in tests. The real caller passes a closure over
+    /// `whisper_lang_id(_:)`.
+    static func pickAllowedLanguage(
+        probs: [Float],
+        allowed: [String],
+        idForCode: (String) -> Int?
+    ) -> String? {
+        var best: (code: String, score: Float)?
+        for code in allowed {
+            guard let id = idForCode(code), id >= 0, id < probs.count else {
+                continue
+            }
+            let score = probs[id]
+            if best == nil || score > best!.score {
+                best = (code, score)
+            }
+        }
+        return best?.code
+    }
+
+    /// Resolve the language string to hand to `whisper_full` for a given
+    /// audio buffer. Three branches:
+    ///   1. English-only model → always `"en"` (model only supports English).
+    ///   2. `options.language` set → forced (caller-pinned).
+    ///   3. `options.allowedLanguages` non-empty → pre-detect via
+    ///      `whisper_pcm_to_mel` + `whisper_lang_auto_detect`, argmax over
+    ///      the allowed subset.
+    ///   4. Default → `"auto"` (legacy whisper auto-detect inside
+    ///      `whisper_full`).
+    ///
+    /// Caller must already hold `metalLock`. Mutates the resident context's
+    /// default state (mel + encoder) when (3) runs; that is fine because
+    /// `whisper_full` resets state at entry.
+    func resolveLanguageStringLocked(
+        samples: [Float],
+        options: WhisperOptions
+    ) -> String {
+        if isEnglishOnlyModel { return "en" }
+        if let forced = options.language { return forced }
+        let allowed = options.allowedLanguages
+        guard !allowed.isEmpty else { return "auto" }
+
+        // Pre-pass: encode the mel + run whisper's built-in language
+        // detector, then pick the argmax restricted to the allow list.
+        let melCode = samples.withUnsafeBufferPointer { buf in
+            whisper_pcm_to_mel(
+                ctx, buf.baseAddress, Int32(buf.count),
+                Int32(options.threadCount))
+        }
+        if melCode != 0 {
+            logger.warning(
+                "language pre-detect: whisper_pcm_to_mel returned \(melCode); falling back to auto")
+            return "auto"
+        }
+        let maxId = Int(whisper_lang_max_id())
+        var probs = [Float](repeating: 0, count: maxId + 1)
+        let topId = probs.withUnsafeMutableBufferPointer { buf -> Int32 in
+            whisper_lang_auto_detect(
+                ctx, 0, Int32(options.threadCount), buf.baseAddress)
+        }
+        if topId < 0 {
+            logger.warning(
+                "language pre-detect: whisper_lang_auto_detect returned \(topId); falling back to auto")
+            return "auto"
+        }
+        let picked = Self.pickAllowedLanguage(
+            probs: probs,
+            allowed: allowed,
+            idForCode: { code in
+                let id = whisper_lang_id(code)
+                return id >= 0 ? Int(id) : nil
+            })
+        return picked ?? "auto"
     }
 
     /// Mean per-token log-probability across a segment's tokens.

@@ -70,6 +70,26 @@ struct RecordPlanTests {
         #expect(value(after: "--model", in: plan.captureArguments) == "large-v3")
     }
 
+    @Test("allowedLanguages non-empty emits --allowed-languages a,b on the engine argv")
+    func allowedLanguagesEmitted() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: nil, systemAudioEnabled: true,
+            modelName: "base", allowedLanguages: ["en", "pl"])
+        #expect(value(after: "--allowed-languages", in: plan.engineArguments)
+            == "en,pl")
+        // Not a capture-side concern — the allow-list only affects whisper.
+        #expect(!plan.captureArguments.contains("--allowed-languages"))
+    }
+
+    @Test("empty allowedLanguages omits the flag entirely (legacy auto)")
+    func allowedLanguagesEmptyOmitsFlag() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: nil, systemAudioEnabled: true, modelName: "base")
+        #expect(!plan.engineArguments.contains("--allowed-languages"))
+    }
+
     @Test("socket paths live under the configured socket directory")
     func socketPathsUnderSocketDir() {
         let plan = RecordPlan.make(

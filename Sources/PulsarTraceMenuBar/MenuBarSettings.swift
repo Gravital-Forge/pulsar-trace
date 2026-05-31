@@ -87,6 +87,23 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
+    /// Allow list of ISO-639-1 language codes the live pass is allowed to
+    /// detect, e.g. `["en", "pl"]`. Empty (default) → unrestricted
+    /// auto-detect (the legacy behaviour). When non-empty, the engine is
+    /// launched with `--allowed-languages` and pre-detects per window,
+    /// forcing the highest-probability **allowed** code. This is what
+    /// stops the `nn` (Norwegian Nynorsk) misfires the user observed on
+    /// English audio from poisoning the committer.
+    ///
+    /// The Settings UI multi-select toggles entries in/out of this array;
+    /// callers downstream (`RecordingViewModel` → `RecordPlan`) consume
+    /// it as-is. Order isn't meaningful — the engine picks argmax over
+    /// the set — so the UI stores codes in catalog (display-name) order
+    /// for determinism.
+    public var allowedLanguages: [String] {
+        didSet { save() }
+    }
+
     // MARK: - Derived
 
     /// `outputFolderPath` as a file URL, or `nil` when no folder is chosen.
@@ -117,6 +134,7 @@ public final class MenuBarSettings {
         static let previousFolderPaths = "previousFolderPaths"
         /// Legacy bookmark-array key (pre-D30) — read once to migrate.
         static let legacyPreviousFolderBookmarks = "previousFolderBookmarks"
+        static let allowedLanguages = "allowedLanguages"
     }
 
     /// Load settings from `defaults` (default: the production suite).
@@ -185,6 +203,17 @@ public final class MenuBarSettings {
         } else {
             self.globalHotkey = nil
         }
+
+        self.allowedLanguages = store.array(forKey: Key.allowedLanguages)
+            as? [String] ?? []
+
+        // Persist whatever the load resolved to — including the D29/D30
+        // migrations above. Pre-2026-05-29 this happened implicitly via an
+        // `@Observable` macro quirk that fired `didSet` on the last stored
+        // property; adding a new last property silently broke that path.
+        // Making it explicit removes the dependency on macro details and
+        // guarantees migrated state survives the next load.
+        save()
     }
 
     /// Persist every property to the backing `UserDefaults`. Called by each
@@ -196,6 +225,7 @@ public final class MenuBarSettings {
         defaults.set(outputFolderPath, forKey: Key.outputFolderPath)
         defaults.set(systemAudioEnabled, forKey: Key.systemAudioEnabled)
         defaults.set(previousFolderPaths, forKey: Key.previousFolderPaths)
+        defaults.set(allowedLanguages, forKey: Key.allowedLanguages)
         if let hotkey = globalHotkey,
            let data = try? JSONEncoder().encode(hotkey) {
             defaults.set(data, forKey: Key.globalHotkey)

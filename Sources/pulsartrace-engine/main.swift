@@ -261,12 +261,26 @@ struct EngineMain {
         let library = try? await SpeakerLibrary(
             databaseURL: AppPaths.standard.speakersDatabaseURL)
 
+        // Optional per-window language allow-list (e.g.
+        // `--allowed-languages en,pl`). Empty → unrestricted auto-detect
+        // (the legacy behaviour); non-empty → the engine pre-detects per
+        // window and forces the highest-probability allowed code, so a
+        // `nn` misfire on English audio cannot poison the committer.
+        let allowedLanguages: [String] = value(
+            after: "--allowed-languages", in: args)
+            .map { $0.split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespaces).lowercased()
+            }.filter { !$0.isEmpty } } ?? []
+        let transcriberConfig = StreamingTranscriber.Configuration(
+            whisperOptions: WhisperOptions(allowedLanguages: allowedLanguages))
+
         let pipeline = StreamingPipeline(events: lifecycle.events)
         let output = try await pipeline.run(
             configuration: .init(
                 recordingFolder: recordingFolder,
                 recordingStart: recordingStart,
                 recordingId: recordingId,
+                transcriberConfig: transcriberConfig,
                 liveDiarizerConfig: liveDiarizerConfig),
             systemTranscriber: transcriber,
             micTranscriber: micTranscriber,
