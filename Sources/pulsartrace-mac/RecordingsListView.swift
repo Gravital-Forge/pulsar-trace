@@ -68,37 +68,28 @@ struct RecordingsListView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// True when this recording has any queue-state representation
-    /// (running, queued, or recent). When true, RefineBadge already
-    /// surfaces the relevant state and the "Not yet refined" fallback
-    /// must not be rendered alongside it.
-    private func hasQueueSignal(_ recordingId: String) -> Bool {
-        if queueVM.running?.recordingId == recordingId { return true }
-        if queueVM.queued.contains(where: { $0.recordingId == recordingId }) { return true }
-        if queueVM.recent.contains(where: { $0.recordingId == recordingId }) { return true }
-        return false
-    }
-
     private func row(_ recording: RecordingEntry) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(recording.displayName)
-                if recording.isRefined {
+                // Title line: name · duration (only when refined, since
+                // unrefined entries carry `durationSeconds == 0`) · the
+                // refinement status icon. The icon is hover-only — full
+                // text moved into `.help()` tooltips to keep the line tight.
+                HStack(spacing: 8) {
+                    Text(recording.displayName)
+                    if recording.isRefined {
+                        Text(RecordingEntry.formatDuration(recording.durationSeconds))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    RefineStatusIcon(recording: recording)
+                }
+                if recording.isRefined && !recording.speakers.isEmpty {
                     // Pills replace the older "N speakers · Ns" subtitle —
                     // richer info (tinted per kind: You / Unknown #N / named)
                     // wrapped onto multiple rows when there are many.
                     SpeakerPillsView(speakers: recording.speakers)
-                    Text(RecordingEntry.formatDuration(recording.durationSeconds))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if !hasQueueSignal(recording.id) {
-                    // Shows only when there is no queue signal — RefineBadge
-                    // handles running/queued/recent states.
-                    Label("Not yet refined", systemImage: "clock.badge")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
                 }
-                RefineBadge(recordingId: recording.id)
             }
             Spacer()
             Button("View") { viewing = recording }
@@ -131,40 +122,54 @@ struct RecordingsListView: View {
 
 }
 
-/// A one-line badge below a recordings-list row showing the current queue
-/// state for this recording (E3).
+/// One small icon next to the recording name conveying refinement status
+/// (queued, running, refined, failed, not-yet-refined). The full status text
+/// moved into a `.help(...)` tooltip — on hover the user sees e.g.
+/// "Refining…" or "Not yet refined".
 ///
-/// Shows nothing when the recording is not in the queue or recent history.
-/// The badge is intentionally minimal — secondary text only, no separate
-/// affordance — because the Refine button disabled state already conveys
-/// whether a job is in flight.
-private struct RefineBadge: View {
-    let recordingId: String
+/// Queue state wins over the intrinsic refined flag: a recording that
+/// completed weeks ago and is now mid-re-refine should show the spinner,
+/// not the green check. Recent terminal states (cancelled, or any unknown
+/// future case) fall through to the intrinsic state so the icon never
+/// disappears — a row without a status indicator looked broken in testing.
+private struct RefineStatusIcon: View {
+    let recording: RecordingEntry
     @Environment(RefinementJobQueueViewModel.self) private var queueVM
 
     var body: some View {
-        if queueVM.running?.recordingId == recordingId {
-            Label("Refining…", systemImage: "gear")
-                .font(.caption2)
-                .foregroundStyle(.blue)
-        } else if queueVM.queued.contains(where: { $0.recordingId == recordingId }) {
-            Label("Queued", systemImage: "clock")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        } else if let recent = queueVM.recent.first(where: { $0.recordingId == recordingId }) {
+        if queueVM.running?.recordingId == recording.id {
+            icon("gear", tint: .blue, help: "Refining…")
+        } else if queueVM.queued.contains(where: { $0.recordingId == recording.id }) {
+            icon("clock", tint: .secondary, help: "Queued for refinement")
+        } else if let recent = queueVM.recent.first(where: { $0.recordingId == recording.id }) {
             switch recent.state {
             case .completed:
-                Label("Refined", systemImage: "checkmark.circle")
-                    .font(.caption2)
-                    .foregroundStyle(.green)
+                icon("checkmark.circle.fill", tint: .green, help: "Refined")
             case .failed:
-                Label("Failed", systemImage: "exclamationmark.circle")
-                    .font(.caption2)
-                    .foregroundStyle(.red)
+                icon("exclamationmark.circle.fill", tint: .red,
+                     help: "Refinement failed")
             default:
-                EmptyView()
+                intrinsic
             }
+        } else {
+            intrinsic
         }
+    }
+
+    @ViewBuilder
+    private var intrinsic: some View {
+        if recording.isRefined {
+            icon("checkmark.circle.fill", tint: .green, help: "Refined")
+        } else {
+            icon("clock.badge", tint: .orange, help: "Not yet refined")
+        }
+    }
+
+    private func icon(_ name: String, tint: Color, help: String) -> some View {
+        Image(systemName: name)
+            .font(.caption)
+            .foregroundStyle(tint)
+            .help(help)
     }
 }
 
