@@ -24,7 +24,8 @@ struct SpeakerPillsView: View {
     let speakers: [RecordingSpeaker]
 
     var body: some View {
-        if speakers.isEmpty {
+        let visible = dedupedSpeakers
+        if visible.isEmpty {
             EmptyView()
         } else {
             PillFlowLayout(horizontalSpacing: 4, verticalSpacing: 4) {
@@ -33,10 +34,24 @@ struct SpeakerPillsView: View {
                 // metadata) get distinct `ForEach` ids — relying on
                 // `RecordingSpeaker.id` alone would collide and trigger a
                 // SwiftUI runtime warning.
-                ForEach(Array(speakers.enumerated()), id: \.offset) { _, speaker in
+                ForEach(Array(visible.enumerated()), id: \.offset) { _, speaker in
                     pill(for: speaker)
                 }
             }
+        }
+    }
+
+    /// Collapse rows that share `(label, isMicrophone)`. A pre-fix merge
+    /// (before `FinalMarkdownRewriter` learned to drop the merged-away
+    /// `speakerId`) left some recordings with two `metadata.json` rows
+    /// that both relabelled to the primary's name — rendering them
+    /// directly would show one person as two pills. First occurrence
+    /// wins; the rewriter self-heals these on the next rewrite.
+    private var dedupedSpeakers: [RecordingSpeaker] {
+        var seen: Set<String> = []
+        return speakers.filter { speaker in
+            let key = "\(speaker.label)\u{1F}\(speaker.isMicrophone)"
+            return seen.insert(key).inserted
         }
     }
 

@@ -129,7 +129,12 @@ public final class SpeakerEditorViewModel {
                 oldName: names.otherName, newName: names.primaryName,
                 appearances: appearances,
                 outputFolderRoots: self.outputRoots(),
-                reason: .speakerMerged)
+                reason: .speakerMerged,
+                // Drop the merged-away row from `metadata.json` so a
+                // recording that had BOTH speakers doesn't end up with two
+                // rows under the primary's name (which surfaces in the
+                // recordings-list pills as a duplicate chip).
+                removedSpeakerId: otherId)
             _ = try? await self.events?.append(SpeakerMergedEvent(
                 primarySpeakerId: primaryId, mergedSpeakerId: otherId,
                 appliedToRecordings: results.map(\.recordingId)))
