@@ -56,11 +56,12 @@ struct SpeakerLibraryUnitTests {
 
     // MARK: - Event registry
 
-    @Test("all 11 speaker-library events are registered in the EventRegistry")
+    @Test("all 13 speaker-library events are registered in the EventRegistry")
     func allSpeakerLibraryEventsRegistered() {
         let speakerEvents = [
             "speaker_created", "speaker_renamed", "speaker_merged",
             "speaker_split", "speaker_deleted", "speaker_undeleted",
+            "speaker_delisted", "speaker_undelisted",
             "speaker_unmerged", "speaker_unsplit", "speaker_centroid_updated",
         ]
         for type in speakerEvents {
@@ -282,6 +283,137 @@ struct SpeakerLibraryUnitTests {
             databaseURL: dir.appendingPathComponent("speakers.sqlite"),
             clock: { later })
         #expect(try await library.recoverableSpeakers().isEmpty)
+    }
+
+    // MARK: - Delist + undelist ("Don't recognize this speaker")
+
+    @Test("delist hides speaker from liveSpeakers and excludes from bestMatch")
+    func delistExcludesFromMatch() async throws {
+        let (library, dir) = try await makeLibrary()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let embedding = syntheticEmbedding(axis: 7)
+        let created = try await library.createSpeaker(
+            name: "Unknown #6", centroid: embedding, modelRevision: "r",
+            recordingId: "rec_a", recordingFolderName: "a")
+
+        // Before delist: visible + matches.
+        #expect(try await library.liveSpeakers().map(\.id) == [created.id])
+        #expect(try await library.bestMatch(
+            for: embedding, modelRevision: "r")?.speaker.id == created.id)
+
+        let name = try await library.delist(speakerId: created.id)
+        #expect(name == "Unknown #6")
+
+        // After delist: hidden from live, excluded from match, recoverable.
+        #expect(try await library.liveSpeakers().isEmpty)
+        #expect(try await library.bestMatch(
+            for: embedding, modelRevision: "r") == nil)
+        #expect(try await library.recoverableDelistedSpeakers().map(\.id)
+            == [created.id])
+        #expect(try await library.speaker(id: created.id)?.isDelisted == true)
+        // The speaker is NOT also marked deleted — delist + delete are
+        // orthogonal flags.
+        #expect(try await library.speaker(id: created.id)?.isDeleted == false)
+    }
+
+    @Test("undelist restores the speaker to liveSpeakers and to bestMatch")
+    func undelistRoundTrip() async throws {
+        let (library, dir) = try await makeLibrary()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let embedding = syntheticEmbedding(axis: 8)
+        let created = try await library.createSpeaker(
+            name: "Unknown #7", centroid: embedding, modelRevision: "r",
+            recordingId: "rec_a", recordingFolderName: "a")
+        try await library.delist(speakerId: created.id)
+        let restoredName = try await library.undelist(speakerId: created.id)
+
+        #expect(restoredName == "Unknown #7")
+        #expect(try await library.liveSpeakers().map(\.id) == [created.id])
+        #expect(try await library.recoverableDelistedSpeakers().isEmpty)
+        #expect(try await library.speaker(id: created.id)?.isDelisted == false)
+        #expect(try await library.bestMatch(
+            for: embedding, modelRevision: "r")?.speaker.id == created.id)
+    }
+
+    @Test("recoverableDelistedSpeakers respects the 30-day window")
+    func recoverableDelistedWindowExpiry() async throws {
+        // Delist far in the past, then re-open with a clock 31 days later.
+        let delistTime = Date(timeIntervalSince1970: 1_700_000_000)
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let factory = DeterministicULIDFactory(seed: 2)
+
+        do {
+            let library = try await SpeakerLibrary(
+                databaseURL: dir.appendingPathComponent("speakers.sqlite"),
+                clock: { delistTime },
+                ulidFactory: { factory.make($0) })
+            let created = try await library.createSpeaker(
+                name: "Unknown #1", centroid: self.syntheticEmbedding(axis: 9),
+                modelRevision: "r", recordingId: "rec_a",
+                recordingFolderName: "a")
+            try await library.delist(speakerId: created.id)
+        }
+        let later = delistTime.addingTimeInterval(31 * 86_400)
+        let library = try await SpeakerLibrary(
+            databaseURL: dir.appendingPathComponent("speakers.sqlite"),
+            clock: { later })
+
+        // Past the window: nothing recoverable, but the row is still present
+        // (mirrors `allDeletedSpeakers` — SW2 number reuse defense).
+        #expect(try await library.recoverableDelistedSpeakers().isEmpty)
+        #expect(try await library.allDelistedSpeakers().count == 1)
+    }
+
+    @Test("delete + delist are orthogonal — either flag excludes from live")
+    func deleteAndDelistOrthogonal() async throws {
+        let (library, dir) = try await makeLibrary()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let a = try await library.createSpeaker(
+            name: "Alpha", centroid: syntheticEmbedding(axis: 10),
+            modelRevision: "r", recordingId: "rec_a", recordingFolderName: "a")
+        let b = try await library.createSpeaker(
+            name: "Beta", centroid: syntheticEmbedding(axis: 11),
+            modelRevision: "r", recordingId: "rec_b", recordingFolderName: "b")
+        let c = try await library.createSpeaker(
+            name: "Gamma", centroid: syntheticEmbedding(axis: 12),
+            modelRevision: "r", recordingId: "rec_c", recordingFolderName: "c")
+
+        try await library.delete(speakerId: a.id)
+        try await library.delist(speakerId: b.id)
+        try await library.delete(speakerId: c.id)
+        try await library.delist(speakerId: c.id)   // both flags set
+
+        // Only the never-touched would be live, but here every speaker has
+        // at least one flag set → live is empty.
+        #expect(try await library.liveSpeakers().isEmpty)
+        // Recovery sections split by reason.
+        #expect(try await library.recoverableSpeakers().map(\.id).contains(a.id))
+        #expect(try await library.recoverableDelistedSpeakers()
+            .map(\.id).contains(b.id))
+        // `c` has both flags. It is delete-recoverable (since the delete
+        // tombstone is set), but absent from `recoverableDelistedSpeakers`
+        // because the delete flag also disqualifies it from that list (we
+        // do not double-surface speakers in two recovery sections).
+        let cReloaded = try #require(try await library.speaker(id: c.id))
+        #expect(cReloaded.isDeleted && cReloaded.isDelisted)
+        #expect(!(try await library.recoverableDelistedSpeakers()
+            .map(\.id).contains(c.id)))
+    }
+
+    @Test("undelist refuses to undo when the speaker is not delisted")
+    func undelistRefusesNonDelisted() async throws {
+        let (library, dir) = try await makeLibrary()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let created = try await library.createSpeaker(
+            name: "Unknown #1", centroid: syntheticEmbedding(axis: 0),
+            modelRevision: "r", recordingId: "rec_a", recordingFolderName: "a")
+        await #expect(throws: SpeakerLibrary.LibraryError.self) {
+            try await library.undelist(speakerId: created.id)
+        }
     }
 
     // MARK: - Merge + unmerge
@@ -561,5 +693,69 @@ struct SpeakerLibraryUnitTests {
         // the brief's 5ms bar. The hard guarantee under test is the O(n)
         // in-memory algorithm with no per-query I/O, not a debug-build μs count.
         #expect(perCall < 0.1, "match took \(perCall * 1000)ms per call (debug build)")
+    }
+
+    // MARK: - Schema migration
+
+    @Test("v1 → v2: adds `delisted_at` column + index to a pre-existing v1 database")
+    func v1ToV2MigrationAddsDelistedAt() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbURL = dir.appendingPathComponent("speakers.sqlite")
+
+        // Hand-build a v1-shaped DB (no `delisted_at` column, no
+        // `idx_speakers_delisted_at` index). Pre-fix this exact shape made
+        // SpeakerLibrary init fail: the CREATE INDEX on `delisted_at` ran
+        // inside the migration's multi-statement exec BEFORE the conditional
+        // ALTER could add the column.
+        do {
+            let db = try SQLiteDatabase(url: dbURL)
+            try db.exec("""
+                CREATE TABLE speakers (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    centroid BLOB NOT NULL,
+                    pyannote_model_revision TEXT NOT NULL,
+                    appearance_count INTEGER NOT NULL DEFAULT 0,
+                    last_seen TEXT NOT NULL,
+                    sample_audio_path TEXT,
+                    created_at TEXT NOT NULL,
+                    deleted_at TEXT
+                );
+                CREATE TABLE appearances (
+                    speaker_id TEXT NOT NULL REFERENCES speakers(id) ON DELETE RESTRICT,
+                    recording_id TEXT NOT NULL,
+                    recording_folder_name TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    origin_speaker_id TEXT,
+                    PRIMARY KEY (speaker_id, recording_id)
+                );
+                CREATE INDEX idx_appearances_speaker ON appearances(speaker_id);
+                CREATE INDEX idx_speakers_live ON speakers(deleted_at);
+                """)
+            try db.setUserVersion(1)
+        }
+
+        // Open through SpeakerLibrary — the v1 → v2 migration should run and
+        // succeed. Before the fix the multi-statement DDL exec ran
+        // `CREATE INDEX ... ON speakers(delisted_at)` against a v1 table
+        // that did not yet have the column, throwing.
+        let factory = DeterministicULIDFactory(seed: 0xC0DE)
+        _ = try await SpeakerLibrary(
+            databaseURL: dbURL,
+            clock: { Date(timeIntervalSince1970: 1_777_000_000) },
+            ulidFactory: { factory.make($0) })
+
+        // Verify post-migration shape against the same DB file.
+        let probe = try SQLiteDatabase(url: dbURL)
+        let columns = try probe.query("PRAGMA table_info(speakers);")
+            .compactMap { $0.string(1) }
+        #expect(columns.contains("delisted_at"))
+        let indexes = try probe.query(
+            "SELECT name FROM sqlite_master "
+                + "WHERE type='index' AND tbl_name='speakers';")
+            .compactMap { $0.string(0) }
+        #expect(indexes.contains("idx_speakers_delisted_at"))
+        #expect(probe.userVersion == 2)
     }
 }

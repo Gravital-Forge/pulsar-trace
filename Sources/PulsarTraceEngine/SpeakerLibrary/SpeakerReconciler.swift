@@ -115,16 +115,17 @@ public struct SpeakerReconciler: Sendable {
     }
 
     /// The next `Unknown #N` placeholder name. `N` is one past the highest
-    /// `Unknown #N` ever assigned in the library — across every live speaker
-    /// AND every soft-deleted speaker, including those past the 30-day
-    /// recovery window. The all-time scan (not just the recoverable window,
-    /// SW2) is what makes a placeholder number genuinely never reused, even
-    /// after a speaker has been hard-aged-out.
+    /// `Unknown #N` ever assigned in the library — across every live speaker,
+    /// every soft-deleted speaker, and every delisted speaker, including those
+    /// past the 30-day recovery window. The all-time scan (not just the
+    /// recoverable window, SW2) is what makes a placeholder number genuinely
+    /// never reused, even after a speaker has been hard-aged-out or delisted.
     private func nextUnknownName() async throws -> String {
         let live = try await library.liveSpeakers()
         let deleted = try await library.allDeletedSpeakers()
+        let delisted = try await library.allDelistedSpeakers()
         var highest = 0
-        for speaker in live + deleted {
+        for speaker in live + deleted + delisted {
             if let n = Self.unknownNumber(in: speaker.name) {
                 highest = max(highest, n)
             }

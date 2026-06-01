@@ -30,6 +30,7 @@ public actor SpeakerLibrary {
     public enum LibraryError: Error, CustomStringConvertible {
         case speakerNotFound(String)
         case speakerNotDeleted(String)
+        case speakerNotDelisted(String)
         case notMergeable(String)
         case database(Error)
         case modelRevisionMismatch(stored: String, incoming: String)
@@ -39,6 +40,8 @@ public actor SpeakerLibrary {
             case .speakerNotFound(let id): return "speaker not found: \(id)"
             case .speakerNotDeleted(let id):
                 return "speaker is not deleted (nothing to undo): \(id)"
+            case .speakerNotDelisted(let id):
+                return "speaker is not delisted (nothing to undo): \(id)"
             case .notMergeable(let m): return "speakers not mergeable: \(m)"
             case .database(let e): return "speaker library database error: \(e)"
             case .modelRevisionMismatch(let s, let i):
@@ -197,7 +200,14 @@ public actor SpeakerLibrary {
     /// The current speaker-library schema version. Stored in `PRAGMA
     /// user_version` (S3) so a future schema migration can tell what is applied.
     /// Bump this and add a versioned migration step when the schema changes.
-    private static let schemaVersion: Int32 = 1
+    ///
+    /// History:
+    /// - v1: initial `speakers` + `appearances` schema.
+    /// - v2: adds `speakers.delisted_at` ("Don't recognize this speaker"
+    ///   tombstone) and its index. The base CREATE on a fresh DB already
+    ///   includes the column; the migration runs `ALTER TABLE` for an
+    ///   existing v1 database.
+    private static let schemaVersion: Int32 = 2
 
     private static func migrate(_ db: SQLiteDatabase) throws {
         // Schema creation runs inside one transaction so it is atomic — a
@@ -217,7 +227,8 @@ public actor SpeakerLibrary {
                     last_seen TEXT NOT NULL,
                     sample_audio_path TEXT,
                     created_at TEXT NOT NULL,
-                    deleted_at TEXT
+                    deleted_at TEXT,
+                    delisted_at TEXT
                 );
                 -- One row per (speaker, recording). `origin_speaker_id`
                 -- records the speaker that owned the appearance before the
@@ -242,6 +253,25 @@ public actor SpeakerLibrary {
                 CREATE INDEX IF NOT EXISTS idx_speakers_live
                     ON speakers(deleted_at);
                 """)
+
+            // v1 → v2: add `delisted_at` if a pre-v2 database is missing it.
+            // SQLite has no `ADD COLUMN IF NOT EXISTS`, so probe via
+            // `PRAGMA table_info` and ALTER conditionally. The CREATE TABLE
+            // above is a no-op on existing v1 databases (IF NOT EXISTS), so
+            // the column is genuinely absent there until this ALTER runs.
+            // The `delisted_at` index MUST come after the ALTER — on a v1
+            // database the column does not yet exist and `CREATE INDEX ...
+            // ON speakers(delisted_at)` would error before the conditional
+            // ALTER below could run.
+            let columns = try db.query("PRAGMA table_info(speakers);")
+                .compactMap { $0.string(1) }
+            if !columns.contains("delisted_at") {
+                try db.exec(
+                    "ALTER TABLE speakers ADD COLUMN delisted_at TEXT;")
+            }
+            try db.exec(
+                "CREATE INDEX IF NOT EXISTS idx_speakers_delisted_at "
+                    + "ON speakers(delisted_at);")
         }
         // Record the applied schema version (S3) so a future schema migration
         // knows what is in place. `user_version` is a connection-level pragma, not
@@ -253,14 +283,21 @@ public actor SpeakerLibrary {
 
     // MARK: - Read
 
-    /// Every live (non-deleted) speaker, ordered by creation time.
+    /// Every live (non-deleted, non-delisted) speaker, ordered by creation
+    /// time.
+    ///
+    /// A delisted speaker ("Don't recognize this speaker") is excluded just
+    /// like a soft-deleted one — they no longer participate in `bestMatch`,
+    /// which iterates `liveSpeakers()` (the matcher hot path), and they no
+    /// longer appear in the editor's main list.
     ///
     /// Served from the in-memory cache when warm; the cache is rebuilt from
     /// SQLite on the first call after any mutation.
     public func liveSpeakers() throws -> [Speaker] {
         if let cached = cachedLiveSpeakers { return cached }
         let speakers = try selectSpeakers(
-            "WHERE deleted_at IS NULL ORDER BY created_at, id")
+            "WHERE deleted_at IS NULL AND delisted_at IS NULL "
+                + "ORDER BY created_at, id")
         cachedLiveSpeakers = speakers
         return speakers
     }
@@ -285,6 +322,26 @@ public actor SpeakerLibrary {
     public func allDeletedSpeakers() throws -> [Speaker] {
         try selectSpeakers(
             "WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, id")
+    }
+
+    /// Every delisted speaker still inside the 30-day recovery window —
+    /// the "Recently delisted" list mirroring `recoverableSpeakers`.
+    public func recoverableDelistedSpeakers() throws -> [Speaker] {
+        let cutoff = Timestamps.event(clock().addingTimeInterval(-Self.recoveryWindow))
+        return try selectSpeakers(
+            "WHERE delisted_at IS NOT NULL AND deleted_at IS NULL "
+                + "AND delisted_at >= ? "
+                + "ORDER BY delisted_at DESC, id",
+            [.text(cutoff)])
+    }
+
+    /// Every delisted speaker — including those past the 30-day window.
+    /// Lets `Unknown #N` numbering treat a delisted speaker as a still-claimed
+    /// number so the same noise cluster does not silently reuse it on a
+    /// future refine (mirrors SW2 for `allDeletedSpeakers`).
+    public func allDelistedSpeakers() throws -> [Speaker] {
+        try selectSpeakers(
+            "WHERE delisted_at IS NOT NULL ORDER BY delisted_at DESC, id")
     }
 
     /// Look up one speaker by id (live or deleted), or `nil`.
@@ -526,6 +583,90 @@ public actor SpeakerLibrary {
         }
         await emitBackupEvent(backupEvent)
         _ = try? await events?.append(SpeakerUndeletedEvent(speakerId: speakerId))
+    }
+
+    // MARK: - Delist + undo ("Don't recognize this speaker")
+
+    /// Delist a speaker — soft-stamp `delisted_at` so they are excluded from
+    /// the live list and from `bestMatch`, and so the menubar's "Recently
+    /// delisted" section can offer a 30-day undo (parallel to `delete`).
+    ///
+    /// A delisted speaker does NOT block `unrecognize` re-clustering: if the
+    /// same noise re-clusters as a new Unknown on a future refine, the user
+    /// re-delists. That decision is locked.
+    ///
+    /// - Parameter suppressEvent: when `true`, the DB mutation + backup are
+    ///   done but `speaker_delisted` is NOT emitted — a caller that drives the
+    ///   retroactive rewrite emits it after the `final.md` rewrite with a
+    ///   populated `applied_to_recordings`, in causal order. Default `false`
+    ///   keeps the plain delist behaviour (no rewrite, no
+    ///   `applied_to_recordings`). The returned name is what the caller needs
+    ///   to drive the rewrite and the undo toast.
+    /// - Returns: the speaker's display name.
+    @discardableResult
+    public func delist(
+        speakerId: String,
+        suppressEvent: Bool = false
+    ) async throws -> String {
+        guard let speaker = try speaker(id: speakerId) else {
+            throw LibraryError.speakerNotFound(speakerId)
+        }
+        let backupEvent = backupBeforeWrite()
+        let now = clock()
+        let delistedAt = Timestamps.event(now)
+        do {
+            try database.run(
+                "UPDATE speakers SET delisted_at = ? WHERE id = ?",
+                [.text(delistedAt), .text(speakerId)])
+        } catch {
+            throw LibraryError.database(error)
+        }
+        await emitBackupEvent(backupEvent)
+        if !suppressEvent {
+            let recoverableUntil = Timestamps.event(
+                now.addingTimeInterval(Self.recoveryWindow))
+            _ = try? await events?.append(SpeakerDelistedEvent(
+                speakerId: speakerId,
+                recoverableUntil: recoverableUntil,
+                appliedToRecordings: []))
+        }
+        return speaker.name
+    }
+
+    /// Undo a delist within the recovery window — clear `delisted_at` so the
+    /// speaker is once again live and visible to `bestMatch`.
+    ///
+    /// - Parameter suppressEvent: when `true`, the DB mutation + backup are
+    ///   done but `speaker_undelisted` is NOT emitted — the editor drives a
+    ///   retroactive rewrite that restores `Unrecognized` → the speaker's
+    ///   name, then emits `speaker_undelisted` with a populated
+    ///   `applied_to_recordings` in causal order.
+    /// - Returns: the speaker's display name.
+    @discardableResult
+    public func undelist(
+        speakerId: String,
+        suppressEvent: Bool = false
+    ) async throws -> String {
+        guard let speaker = try speaker(id: speakerId) else {
+            throw LibraryError.speakerNotFound(speakerId)
+        }
+        guard speaker.isDelisted else {
+            throw LibraryError.speakerNotDelisted(speakerId)
+        }
+        let backupEvent = backupBeforeWrite()
+        do {
+            try database.run(
+                "UPDATE speakers SET delisted_at = NULL WHERE id = ?",
+                [.text(speakerId)])
+        } catch {
+            throw LibraryError.database(error)
+        }
+        await emitBackupEvent(backupEvent)
+        if !suppressEvent {
+            _ = try? await events?.append(SpeakerUndelistedEvent(
+                speakerId: speakerId, appliedToRecordings: []))
+        }
+        return speaker.name
     }
 
     // MARK: - Merge + undo (R32b — speaker_merged / speaker_unmerged)
@@ -817,7 +958,8 @@ public actor SpeakerLibrary {
             rows = try database.query(
                 "SELECT id, name, centroid, pyannote_model_revision, "
                     + "appearance_count, last_seen, sample_audio_path, "
-                    + "created_at, deleted_at FROM speakers " + clause,
+                    + "created_at, deleted_at, delisted_at FROM speakers "
+                    + clause,
                 bindings)
         } catch {
             throw LibraryError.database(error)
@@ -835,7 +977,8 @@ public actor SpeakerLibrary {
                 appearanceCount: Int(count), lastSeen: lastSeen,
                 sampleAudioPath: row.string(6),
                 createdAt: createdAt,
-                deletedAt: row.isNull(8) ? nil : row.string(8))
+                deletedAt: row.isNull(8) ? nil : row.string(8),
+                delistedAt: row.isNull(9) ? nil : row.string(9))
         }
     }
 
@@ -843,7 +986,8 @@ public actor SpeakerLibrary {
         try database.run(
             "INSERT INTO speakers (id, name, centroid, pyannote_model_revision, "
                 + "appearance_count, last_seen, sample_audio_path, created_at, "
-                + "deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                + "deleted_at, delisted_at) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 .text(speaker.id), .text(speaker.name),
                 .blob(Centroid.encodeBlob(speaker.centroid)),
@@ -853,6 +997,7 @@ public actor SpeakerLibrary {
                 speaker.sampleAudioPath.map { .text($0) } ?? .null,
                 .text(speaker.createdAt),
                 speaker.deletedAt.map { .text($0) } ?? .null,
+                speaker.delistedAt.map { .text($0) } ?? .null,
             ])
     }
 

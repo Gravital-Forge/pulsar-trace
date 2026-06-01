@@ -30,6 +30,12 @@ public struct Speaker: Sendable, Equatable, Identifiable {
     /// Soft-delete tombstone (R32b): `nil` for a live speaker, an ISO-8601 UTC
     /// instant for a deleted/merged-away speaker. Recoverable for 30 days.
     public var deletedAt: String?
+    /// Delist tombstone ("Don't recognize this speaker"): `nil` for a speaker
+    /// the matcher considers, an ISO-8601 UTC instant for one excluded from
+    /// `bestMatch` and stripped from past `final.md` labels. Soft, recoverable
+    /// for 30 days. Orthogonal to `deletedAt` — a speaker can be either, or
+    /// both, and `liveSpeakers()` filters on both fields.
+    public var delistedAt: String?
 
     public init(
         id: String,
@@ -40,7 +46,8 @@ public struct Speaker: Sendable, Equatable, Identifiable {
         lastSeen: String,
         sampleAudioPath: String?,
         createdAt: String,
-        deletedAt: String? = nil
+        deletedAt: String? = nil,
+        delistedAt: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -51,10 +58,13 @@ public struct Speaker: Sendable, Equatable, Identifiable {
         self.sampleAudioPath = sampleAudioPath
         self.createdAt = createdAt
         self.deletedAt = deletedAt
+        self.delistedAt = delistedAt
     }
 
     /// True when the speaker has been soft-deleted (R32b).
     public var isDeleted: Bool { deletedAt != nil }
+    /// True when the speaker has been delisted ("Don't recognize this speaker").
+    public var isDelisted: Bool { delistedAt != nil }
 }
 
 /// One speaker ↔ recording appearance link (R28 appearances table).

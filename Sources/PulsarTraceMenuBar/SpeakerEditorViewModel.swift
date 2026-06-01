@@ -36,11 +36,14 @@ public struct UndoToast: Identifiable, Sendable {
 @Observable
 public final class SpeakerEditorViewModel {
 
-    /// Live (non-deleted) speakers, newest-library-order.
+    /// Live (non-deleted, non-delisted) speakers, newest-library-order.
     public private(set) var liveSpeakers: [Speaker] = []
     /// Soft-deleted speakers still inside the 30-day recovery window (R44
     /// "Recently deleted").
     public private(set) var deletedSpeakers: [Speaker] = []
+    /// Delisted speakers still inside the 30-day recovery window
+    /// ("Recently delisted" section, parallel to "Recently deleted").
+    public private(set) var delistedSpeakers: [Speaker] = []
     /// True while a rewrite is in flight — the UI disables edits.
     public private(set) var isRewriting = false
     /// The last error surfaced to the user, or `nil`.
@@ -71,11 +74,13 @@ public final class SpeakerEditorViewModel {
 
     // MARK: - Load
 
-    /// Reload `liveSpeakers` / `deletedSpeakers` from the library.
+    /// Reload `liveSpeakers` / `deletedSpeakers` / `delistedSpeakers` from
+    /// the library.
     public func reload() async {
         do {
             liveSpeakers = try await library.liveSpeakers()
             deletedSpeakers = try await library.recoverableSpeakers()
+            delistedSpeakers = try await library.recoverableDelistedSpeakers()
             lastError = nil
         } catch {
             lastError = "Could not load speakers: \(error)"
@@ -196,6 +201,97 @@ public final class SpeakerEditorViewModel {
     public func undelete(speakerId: String) async {
         await withRewrite {
             try await self.library.undelete(speakerId: speakerId)
+        }
+    }
+
+    // MARK: - Delist / undelist ("Don't recognize this speaker")
+
+    /// Delist a speaker: hide them from the library, exclude from future
+    /// matching, and rewrite past `final.md` files to drop their token
+    /// (solo → `Unrecognized`, co-attribution → drop just the token).
+    ///
+    /// Rejects the mic speaker (name `"You"`). The mic identity is per-recording
+    /// metadata, not a library attribute, so there is no clean
+    /// `Speaker.isMicrophone` to check — the matching surface is the name
+    /// `"You"`, which `SpeakerReconciler` documents as the never-in-library
+    /// mic label. A user-renamed library speaker happening to be called
+    /// `"You"` would still be rejected; that is the intended conservative
+    /// behaviour. TODO: surface an `isMicrophone` flag on `Speaker` once the
+    /// library carries one.
+    public func delist(speakerId: String) async {
+        guard let target = liveSpeakers.first(where: { $0.id == speakerId })
+        else {
+            lastError = "Speaker not found."
+            return
+        }
+        guard target.name != "You" else {
+            lastError = "The microphone speaker cannot be delisted."
+            return
+        }
+        let name = target.name
+        await withRewrite {
+            _ = try await self.library.delist(
+                speakerId: speakerId, suppressEvent: true)
+            let appearances = try await self.library.appearances(of: speakerId)
+            let results = try await self.rewriter.rewriteDropping(
+                name: name, speakerId: speakerId,
+                appearances: appearances,
+                outputFolderRoots: self.outputRoots(),
+                reason: .speakerDelisted)
+            // Causal order: emit `speaker_delisted` (the cause) BEFORE the
+            // rewriter's `final_md_rewritten` events.
+            let recoverableUntil = Timestamps.event(
+                Date().addingTimeInterval(SpeakerLibrary.recoveryWindow))
+            _ = try? await self.events?.append(SpeakerDelistedEvent(
+                speakerId: speakerId,
+                recoverableUntil: recoverableUntil,
+                appliedToRecordings: results.map(\.recordingId)))
+            await self.emitRewriteEvents(results, reason: .speakerDelisted)
+        }
+        if lastError == nil {
+            undoToast = UndoToast(message: "Stopped recognizing \(name)") {
+                [weak self] in
+                await self?.undelist(speakerId: speakerId)
+            }
+        }
+    }
+
+    /// Undo a delist (within the 30-day window): restore the speaker to the
+    /// live list and rewrite the `Unrecognized` sentinel back to their name.
+    ///
+    /// Two acceptable degradations vs. an idealised undo:
+    ///
+    /// 1. **Co-attributed lines remain rewritten.** A delisted token in
+    ///    `A+B+C` was dropped at delist time; the rewriter cannot
+    ///    reconstruct the original position from `A+C`. Solo lines DO round
+    ///    trip correctly.
+    /// 2. **Cross-speaker collision on overlapping delists.** If two
+    ///    speakers were delisted in the same recording, both have solo
+    ///    lines now labelled `Unrecognized`, and undelisting just ONE of
+    ///    them rewrites *every* `Unrecognized` solo line on that recording
+    ///    to that one speaker's name — misattributing the other delisted
+    ///    speaker's lines. Per-line provenance would be needed to
+    ///    disambiguate, and we don't carry it on disk. The pragmatic shape
+    ///    is: undelist the most recent first, or accept that overlapping
+    ///    delists need manual cleanup.
+    ///
+    /// The pill renders correctly because `RecordingSpeaker` keys off
+    /// `label` + `isMicrophone`; the `speaker_id` linkage in
+    /// `metadata.json` is not restored (it was dropped on delist).
+    public func undelist(speakerId: String) async {
+        await withRewrite {
+            let name = try await self.library.undelist(
+                speakerId: speakerId, suppressEvent: true)
+            let appearances = try await self.library.appearances(of: speakerId)
+            let results = try await self.rewriter.rewrite(
+                oldName: "Unrecognized", newName: name,
+                appearances: appearances,
+                outputFolderRoots: self.outputRoots(),
+                reason: .speakerUndelisted)
+            _ = try? await self.events?.append(SpeakerUndelistedEvent(
+                speakerId: speakerId,
+                appliedToRecordings: results.map(\.recordingId)))
+            await self.emitRewriteEvents(results, reason: .speakerUndelisted)
         }
     }
 

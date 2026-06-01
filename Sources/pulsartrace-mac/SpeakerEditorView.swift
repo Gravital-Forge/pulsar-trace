@@ -83,7 +83,9 @@ struct SpeakerEditorView: View {
 
     @ViewBuilder
     private func content(_ viewModel: SpeakerEditorViewModel) -> some View {
-        if viewModel.liveSpeakers.isEmpty && viewModel.deletedSpeakers.isEmpty {
+        if viewModel.liveSpeakers.isEmpty
+            && viewModel.deletedSpeakers.isEmpty
+            && viewModel.delistedSpeakers.isEmpty {
             emptyState
         } else {
             List {
@@ -105,6 +107,23 @@ struct SpeakerEditorView: View {
                                     Task { await viewModel.undelete(
                                         speakerId: speaker.id) }
                                 }
+                            }
+                        }
+                    }
+                }
+                if !viewModel.delistedSpeakers.isEmpty {
+                    Section("Recently Delisted") {
+                        ForEach(viewModel.delistedSpeakers) { speaker in
+                            HStack {
+                                Text(speaker.name).foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Restore") {
+                                    Task { await viewModel.undelist(
+                                        speakerId: speaker.id) }
+                                }
+                                .help("Recognize this speaker again. Their "
+                                    + "lines marked 'Unrecognized' are "
+                                    + "restored to this name.")
                             }
                         }
                     }
@@ -228,6 +247,19 @@ struct SpeakerEditorView: View {
                 Button("Rename") {
                     renameText = speaker.name
                     renameTarget = speaker.id
+                }
+                // "Don't recognize this speaker" — hidden for the mic speaker
+                // (name `"You"`), matching the ViewModel's mic-rejection guard.
+                // The library doesn't carry an `isMicrophone` flag on a
+                // `Speaker` today, so the UI mirrors the same name-based
+                // policy. See SpeakerEditorViewModel.delist for the rationale.
+                if speaker.name != "You" {
+                    Button("Don't recognize") {
+                        Task { await viewModel.delist(speakerId: speaker.id) }
+                    }
+                    .help("Stop recognizing this speaker. Their lines in "
+                        + "transcripts become 'Unrecognized'. Undoable for "
+                        + "30 days.")
                 }
                 Button("Delete") {
                     Task { await viewModel.delete(speakerId: speaker.id) }
