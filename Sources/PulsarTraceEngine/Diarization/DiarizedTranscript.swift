@@ -21,7 +21,13 @@ import Foundation
 public enum DiarizationMerge {
 
     /// The label used when no speaker span overlaps an utterance at all.
-    public static let unknownSpeaker = "Speaker_?"
+    ///
+    /// Semantically equivalent to a delisted speaker — there is no library
+    /// row to enroll (no raw pyannote label exists for the
+    /// no-overlap case), so the utterance is rendered with the same
+    /// `Unrecognized` sentinel the delist feature uses. The Speakers list
+    /// never has a row to show for these lines.
+    public static let unknownSpeaker = "Unrecognized"
 
     /// Minimum share of an utterance's duration a *secondary* speaker must
     /// cover before it is co-attributed (`Speaker_0+Speaker_1`). 0.30 keeps a

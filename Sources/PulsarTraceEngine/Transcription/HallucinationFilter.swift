@@ -11,8 +11,8 @@ import Foundation
 /// confidently-decoded `"Thank you."` — over a near-silent stretch of the
 /// system-audio stream. `BlankTokenFilter` deliberately keeps `"Thank you."`
 /// so a real person saying it survives, so a hallucinated one slips through
-/// and lands in `final.md` with a `Speaker_?` label (it matches no
-/// diarization span).
+/// and lands in `final.md` with an `Unrecognized` label (it matches no
+/// diarization span — see `DiarizationMerge.unknownSpeaker`).
 ///
 /// This filter closes that gap **without ever dropping a real utterance**: it
 /// drops a segment only when *both*
