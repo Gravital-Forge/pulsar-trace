@@ -314,6 +314,106 @@ struct FinalMarkdownRewriterTests {
             == "spk_aaa")
     }
 
+    // MARK: - merge collapses the metadata.json speakers list
+
+    /// Regression for the "merged speakers show as two pills" bug: a merge
+    /// rewrite must drop the merged-away `speakerId` row from `metadata.json`
+    /// (passed via `removedSpeakerId`) so a recording that had both speakers
+    /// doesn't end up with two rows under the primary's name.
+    @Test("merge drops the merged-away speakerId row from metadata.json")
+    func metadataMergeDropsRow() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(
+            root: root, name: "merge-folder", recordingId: "rec_merge")
+
+        _ = try await FinalMarkdownRewriter().rewrite(
+            oldName: "Unknown #1", newName: "Steve",
+            appearances: [SpeakerAppearance(
+                speakerId: "spk_bbb", recordingId: "rec_merge",
+                recordingFolderName: "merge-folder",
+                observedAt: "2026-05-01T09:00:00Z")],
+            outputFolderRoots: [root],
+            reason: .speakerMerged,
+            removedSpeakerId: "spk_aaa")
+
+        let meta = try JSONDecoder().decode(
+            RefinementMetadata.self,
+            from: Data(contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.metadata)))
+        // The merged-away row is gone — only Steve and You remain.
+        #expect(meta.speakers.count == 2)
+        #expect(meta.speakers.contains {
+            $0.label == "Steve" && $0.speakerId == "spk_bbb"
+        })
+        #expect(meta.speakers.contains { $0.isMicrophone })
+        #expect(!meta.speakers.contains { $0.speakerId == "spk_aaa" })
+        // No duplicate Steve rows.
+        #expect(meta.speakers.filter { $0.label == "Steve" }.count == 1)
+    }
+
+    /// A `metadata.json` already corrupted by a pre-fix merge (two rows
+    /// sharing the same label under different speakerIds) self-heals on the
+    /// next rewrite — the dedupe step in `rewriteMetadataIfPresent` collapses
+    /// the duplicate even when the caller doesn't pass `removedSpeakerId`.
+    @Test("stale duplicate-label metadata is collapsed on the next rewrite")
+    func metadataSelfHealsDuplicates() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent(
+            "stale-folder", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+
+        // A final.md with two Steve utterances — and a stale metadata.json
+        // carrying TWO rows for Steve (the residue of a pre-fix merge).
+        let staleMarkdown = """
+            <!-- pulsartrace:final -->
+            ## Transcript
+
+            **[00:00:01] Steve:** Hello.
+
+            **[00:00:05] Steve:** Again.
+
+            """
+        try Data(staleMarkdown.utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.final))
+        let stale = try RefinementMetadata(
+            recordingId: "rec_stale",
+            recordingStart: "2026-05-01T09:00:00Z",
+            refinedAt: "2026-05-01T10:00:00Z",
+            durationSeconds: 10,
+            speakers: [
+                .init(label: "Steve", isMicrophone: false, speakerId: "spk_x"),
+                .init(label: "Steve", isMicrophone: false, speakerId: "spk_y"),
+            ],
+            whisperModel: .init(name: "base", sha256: "deadbeef"),
+            pyannoteModel: nil,
+            language: "en",
+            sourceBasename: "meeting.wav").encoded()
+        try stale.write(to: folder.appendingPathComponent(
+            RecordingFolder.FileName.metadata))
+
+        // A subsequent rename that touches Steve triggers the dedupe pass.
+        _ = try await FinalMarkdownRewriter().rewrite(
+            oldName: "Steve", newName: "Steven",
+            appearances: [SpeakerAppearance(
+                speakerId: "spk_x", recordingId: "rec_stale",
+                recordingFolderName: "stale-folder",
+                observedAt: "2026-05-01T09:00:00Z")],
+            outputFolderRoots: [root],
+            reason: .speakerRenamed)
+
+        let meta = try JSONDecoder().decode(
+            RefinementMetadata.self,
+            from: Data(contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.metadata)))
+        #expect(meta.speakers.count == 1)
+        #expect(meta.speakers.first?.label == "Steven")
+        // First occurrence wins — keep the row that came first in the file.
+        #expect(meta.speakers.first?.speakerId == "spk_x")
+    }
+
     // MARK: - final_md_rewritten events (emitted by the caller)
 
     @Test("one final_md_rewritten event is emitted per rewritten recording")
