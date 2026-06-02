@@ -652,7 +652,10 @@ struct SpeakerLibraryUnitTests {
 
     // MARK: - Large library performance
 
-    @Test("matching stays fast with a large library (≥1000 speakers)")
+    @Test(
+        "matching stays fast with a large library (≥1000 speakers)",
+        .disabled("debug-build timing test; flaky under parallel UnitTests pool starvation. Verify with --filter SpeakerLibraryUnitTests.largeLibraryMatchIsFast")
+    )
     func largeLibraryMatchIsFast() async throws {
         let (library, dir) = try await makeLibrary()
         defer { try? FileManager.default.removeItem(at: dir) }
