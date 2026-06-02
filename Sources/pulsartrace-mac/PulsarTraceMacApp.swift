@@ -322,10 +322,18 @@ final class AppEnvironment {
         // silently mis-locate it in the mac-app process.
         let whisperBinaryURL =
             RecordingViewModel.defaultBinaryURLResolver("pulsartrace-whisper")
+        // Mirror the live path's language allow-list into refinement
+        // (R-streaming-lang). Without this, refinement decoded each region
+        // with unrestricted auto-detect, so a quiet/ambiguous stretch in a
+        // Polish meeting could drift to Spanish or Russian even when the
+        // user had restricted the language set in Settings.
+        let refineWhisperOptions = WhisperOptions(
+            allowedLanguages: settings.allowedLanguages)
         let q = await RefinementJobQueue.makeStandard(
             events: events,
             whisperBinaryURL: whisperBinaryURL,
-            paths: paths)
+            paths: paths,
+            whisperOptions: refineWhisperOptions)
         self.queue = q
         await queueVM.setQueue(q)
         queueVM.onJobsTerminated = { [weak self] _ in

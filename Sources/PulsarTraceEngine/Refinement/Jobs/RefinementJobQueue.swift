@@ -407,7 +407,8 @@ extension RefinementJobQueue {
     public static func makeStandard(
         events: EventWriter,
         whisperBinaryURL: URL,
-        paths: AppPaths = .standard
+        paths: AppPaths = .standard,
+        whisperOptions: WhisperOptions = .init()
     ) async -> RefinementJobQueue {
         let store = RefinementJobStore.standard(paths: paths)
         let gate = PauseGate(initiallyOpen: true)
@@ -500,6 +501,7 @@ extension RefinementJobQueue {
                 pauseGate: gate,
                 events: events,
                 library: library,
+                whisperOptions: whisperOptions,
                 onStageUpdate: { [weak queue] state in
                     guard let queue else { return }
                     await queue.reportStage(state)

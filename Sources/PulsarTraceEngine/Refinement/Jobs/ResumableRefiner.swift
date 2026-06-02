@@ -35,6 +35,13 @@ public actor ResumableRefiner {
     /// (R22, R23). `nil` keeps the raw `Speaker_N` labels — the queue's
     /// `makeStandard` opens a real library and passes it in for production.
     private let library: SpeakerLibrary?
+    /// Whisper tunables threaded into every region decode. The only field
+    /// the refine path currently depends on is `allowedLanguages`, but the
+    /// whole value flows through so future per-job tunables (e.g. a forced
+    /// `language`) inherit the same plumbing for free. Default `.init()`
+    /// preserves the legacy unrestricted auto-detect behaviour for tests
+    /// that don't care.
+    private let whisperOptions: WhisperOptions
     private let reportState: StageReporter?
     private let logger: Logger
 
@@ -45,6 +52,7 @@ public actor ResumableRefiner {
         pauseGate: PauseGate,
         events: EventWriter?,
         library: SpeakerLibrary? = nil,
+        whisperOptions: WhisperOptions = .init(),
         onStageUpdate: StageReporter? = nil,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
@@ -54,6 +62,7 @@ public actor ResumableRefiner {
         self.pauseGate = pauseGate
         self.events = events
         self.library = library
+        self.whisperOptions = whisperOptions
         self.reportState = onStageUpdate
         self.logger = logger
     }
@@ -255,7 +264,7 @@ public actor ResumableRefiner {
             await pauseGate.waitOpen()
             let region = allRegions[i]
             let result = try await transcribeRegionWithRetry(
-                samples: samples, region: region, options: .init())
+                samples: samples, region: region, options: whisperOptions)
             for seg in result.segments {
                 let partial = RefinementProgress.PartialSegment(
                     startMillis: Int(seg.start.seconds * 1000),

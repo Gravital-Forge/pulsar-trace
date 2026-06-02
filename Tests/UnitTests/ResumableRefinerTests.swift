@@ -618,6 +618,60 @@ struct ResumableRefinerTests {
         #expect(FileManager.default.fileExists(
             atPath: folder.appendingPathComponent("metadata.json").path))
     }
+
+    /// The `whisperOptions` passed to init must reach every region's
+    /// `transcribe` closure unchanged. This pins the language allow-list
+    /// plumbing: previously `iterateRegions` hardcoded `.init()`, so
+    /// refinement decoded each region with unrestricted auto-detect even
+    /// when the user had restricted the language set in Settings.
+    @Test("whisperOptions threaded through to every transcribe call")
+    func whisperOptionsThreadedThrough() async throws {
+        let folder = tempDir()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FixtureRecording.minimal(at: folder)
+
+        let captured = OSAllocatedUnfairLock(initialState: [[String]]())
+
+        let refiner = ResumableRefiner(
+            transcribe: { _, region, options in
+                captured.withLock { $0.append(options.allowedLanguages) }
+                return TranscriptionResult(
+                    segments: [TranscriptSegment(
+                        start: region.start, end: region.end, text: "stub")],
+                    language: "pl")
+            },
+            detectRegions: { _ in
+                [
+                    SpeechRegion(start: .seconds(0), end: .seconds(1)),
+                    SpeechRegion(start: .seconds(1), end: .seconds(2)),
+                ]
+            },
+            diarize: { _ in
+                DiarizationResult(
+                    model: "stub",
+                    modelVersion: "stub",
+                    audioDuration: .seconds(2),
+                    speakers: [],
+                    spans: [],
+                    exclusiveSpans: [],
+                    embeddings: [])
+            },
+            pauseGate: PauseGate(initiallyOpen: true),
+            events: nil,
+            whisperOptions: WhisperOptions(allowedLanguages: ["pl", "en"]))
+
+        let job = RefinementJob(
+            id: "job_opts", recordingId: "rec_opts", folderURL: folder,
+            modelName: "stub", modelSHA256: "stub",
+            trigger: .manual, enqueuedAt: Date(), state: .queued)
+        try await refiner.run(job: job)
+
+        let calls = captured.withLock { $0 }
+        #expect(calls.count == 2, "expected two region calls; got \(calls.count)")
+        for allow in calls {
+            #expect(allow == ["pl", "en"])
+        }
+    }
 }
 
 enum FixtureRecording {
