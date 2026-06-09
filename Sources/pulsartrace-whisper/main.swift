@@ -137,6 +137,14 @@ struct WhisperSubprocessMain {
         }
         defer { close(clientFD) }
 
+        // Only the parent — same euid — may drive the decode loop. The
+        // transcripts that flow back over this socket are meeting content.
+        if !PeerCredentials.peerIsSameUser(fd: clientFD) {
+            FileHandle.standardError.write(Data(
+                "ERROR: rejected socket peer with foreign uid\n".utf8))
+            return 1
+        }
+
         // `SO_NOSIGPIPE`: a disappeared parent surfaces as `EPIPE` from
         // `write(2)` rather than killing this process with SIGPIPE.
         var noSigPipe: Int32 = 1
