@@ -200,8 +200,7 @@ public actor LiveDiarizer: LiveDiarizing {
             throw LiveDiarizeError.pythonNotFound(
                 configuration.pythonExecutable.path)
         }
-        try FileManager.default.createDirectory(
-            at: scratchDirectory, withIntermediateDirectories: true)
+        try SecureFiles.ensurePrivateDirectory(at: scratchDirectory)
 
         let proc = Process()
         proc.executableURL = configuration.pythonExecutable

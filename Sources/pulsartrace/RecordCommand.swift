@@ -80,8 +80,7 @@ enum RecordCommand {
         // --- resolve the recording folder ----------------------------------
         let outputFolder = options.outputFolder ?? defaultOutputFolder()
         do {
-            try FileManager.default.createDirectory(
-                at: outputFolder, withIntermediateDirectories: true)
+            try SecureFiles.createDirectoryPrivateIfNew(at: outputFolder)
         } catch {
             err("record: cannot create output folder \(outputFolder.path) — \(error)")
             return 1

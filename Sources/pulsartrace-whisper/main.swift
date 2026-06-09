@@ -71,9 +71,8 @@ struct WhisperSubprocessMain {
         // user-visible error, not something to loop-retry.
         let lock: WhisperLock
         do {
-            try FileManager.default.createDirectory(
-                at: parsed.lockPath.deletingLastPathComponent(),
-                withIntermediateDirectories: true)
+            try SecureFiles.ensurePrivateDirectory(
+                at: parsed.lockPath.deletingLastPathComponent())
             lock = try WhisperLock(lockPath: parsed.lockPath)
         } catch WhisperLockError.held {
             FileHandle.standardError.write(Data(

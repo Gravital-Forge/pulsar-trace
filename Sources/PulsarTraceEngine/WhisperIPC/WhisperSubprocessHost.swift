@@ -216,9 +216,7 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
             throw HostError.binaryNotFound(configuration.binaryURL.path)
         }
 
-        try FileManager.default.createDirectory(
-            at: configuration.socketDirectory,
-            withIntermediateDirectories: true)
+        try SecureFiles.ensurePrivateDirectory(at: configuration.socketDirectory)
 
         // Keep this filename short — `sockaddr_un.sun_path` on macOS is 104
         // bytes (incl. NUL). The socket directory (production:

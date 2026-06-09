@@ -178,6 +178,20 @@ struct LiveMarkdownWriterTests {
         #expect(text.contains("_(recording resumed after 2m 05s)_"))
     }
 
+    @Test("live.md is created owner-only (0600)")
+    func liveFileIsOwnerOnly() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("live.md")
+
+        let writer = LiveMarkdownWriter(fileURL: url, recordingStart: fixedStart)
+        try await writer.start()
+        await writer.finish()
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    }
+
     @Test("multi-byte UTF-8 content is written whole (no torn character, R12)")
     func multibyteContentIntact() async throws {
         let dir = tempDir()

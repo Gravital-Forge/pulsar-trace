@@ -85,9 +85,8 @@ public actor SpeakerLibrary {
         self.ulidFactory = ulidFactory
         self.logger = logger
 
-        try FileManager.default.createDirectory(
-            at: databaseURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true)
+        try SecureFiles.ensurePrivateDirectory(
+            at: databaseURL.deletingLastPathComponent())
 
         // Open + integrity-check; on corruption restore the last-good backup.
         let opened = try await Self.openWithRecovery(

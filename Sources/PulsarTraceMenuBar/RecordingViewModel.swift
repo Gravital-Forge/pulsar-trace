@@ -176,8 +176,7 @@ public final class RecordingViewModel {
         let outputFolder = outputRoot.appendingPathComponent(
             folderName, isDirectory: true)
         do {
-            try FileManager.default.createDirectory(
-                at: outputFolder, withIntermediateDirectories: true)
+            try SecureFiles.createDirectoryPrivateIfNew(at: outputFolder)
         } catch {
             status = .error(message: "Cannot create the recording folder.")
             progressMessage = ""

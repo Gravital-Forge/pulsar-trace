@@ -106,6 +106,21 @@ struct EventWriterTests {
         #expect(findings.isEmpty)
     }
 
+    @Test("Events directory is 0700 and the day file 0600 (owner-only)")
+    func eventsAreOwnerOnly() async throws {
+        let (writer, dir) = makeWriter()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await writer.bootstrap()
+        try await writer.append(AppStartedEvent(version: "0.1.0", macosVersion: "26.3.1"))
+
+        let dirAttrs = try FileManager.default.attributesOfItem(atPath: dir.path)
+        #expect((dirAttrs[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+
+        let url = await writer.currentFileURL()
+        let fileAttrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        #expect((fileAttrs[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    }
+
     @Test("Event registry knows the app_started/app_stopped pair")
     func registryHasSystemEvents() {
         #expect(EventRegistry.entry(for: "app_started")?.version == 1)

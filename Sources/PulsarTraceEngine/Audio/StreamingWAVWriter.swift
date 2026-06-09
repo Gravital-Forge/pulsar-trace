@@ -53,8 +53,9 @@ final class StreamingWAVWriter {
         self.url = url
         self.sampleRate = sampleRate
 
-        // Create (or truncate) the file, then open a handle for writing.
-        FileManager.default.createFile(atPath: url.path, contents: nil)
+        // Create (or truncate) the file owner-only, then open a handle for
+        // writing.
+        SecureFiles.createPrivateFile(atPath: url.path)
         do {
             self.handle = try FileHandle(forWritingTo: url)
         } catch {

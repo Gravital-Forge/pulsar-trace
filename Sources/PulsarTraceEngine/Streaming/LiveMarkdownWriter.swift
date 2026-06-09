@@ -77,12 +77,11 @@ public actor LiveMarkdownWriter {
         guard handle == nil else { throw WriteError.alreadyStarted }
 
         let directory = fileURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
+        try SecureFiles.createDirectoryPrivateIfNew(at: directory)
 
         // Create the file fresh. A pre-existing live.md (a previous, crashed
         // run) is overwritten *only here at session start* — never mid-session.
-        FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        SecureFiles.createPrivateFile(atPath: fileURL.path)
         guard let h = try? FileHandle(forWritingTo: fileURL) else {
             throw WriteError.openFailed(fileURL.lastPathComponent)
         }

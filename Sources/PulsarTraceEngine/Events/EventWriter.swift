@@ -64,8 +64,7 @@ public actor EventWriter {
 
     /// Create the events directory, open today's file, prune expired files.
     public func bootstrap() {
-        try? FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
+        try? SecureFiles.ensurePrivateDirectory(at: directory)
         rotateIfNeeded()
         prune()
     }
@@ -178,7 +177,7 @@ public actor EventWriter {
         currentDay = day
         let url = directory.appendingPathComponent("\(day).jsonl")
         if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil)
+            SecureFiles.createPrivateFile(atPath: url.path)
         }
         handle = try? FileHandle(forWritingTo: url)
         _ = try? handle?.seekToEnd()
