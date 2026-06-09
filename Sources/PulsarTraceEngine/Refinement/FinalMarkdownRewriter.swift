@@ -41,6 +41,17 @@ public struct FinalMarkdownRewriter: Sendable {
         /// Undo of a split — the split-off name is folded back to the
         /// original, paired with a `speaker_unsplit` cause.
         case speakerUnsplit  = "speaker_unsplit"
+        /// "Don't recognize this speaker": the speaker's token is dropped from
+        /// every label they appeared in. Solo lines collapse to the sentinel
+        /// label `Unrecognized`; co-attributed labels lose just that token.
+        case speakerDelisted = "speaker_delisted"
+        /// Undo of a delist — the `Unrecognized` sentinel is rewritten back to
+        /// the restored speaker's name. Symmetric only for solo lines: a
+        /// co-attributed line that previously read `Steve+<name>` was already
+        /// rewritten to `Steve` on delist, so the rewriter cannot reconstruct
+        /// the original position of `<name>` on undelist — that degradation is
+        /// documented and accepted.
+        case speakerUndelisted = "speaker_undelisted"
     }
 
     /// One recording whose `final.md` was rewritten.
@@ -139,6 +150,237 @@ public struct FinalMarkdownRewriter: Sendable {
         }
 
         return results
+    }
+
+    /// Rewrite every appearance's `final.md`, dropping `name` from every
+    /// speaker label it appears in. A solo line `**[..] <name>:**` becomes
+    /// `**[..] <fallbackLabel>:**`; a co-attributed `**[..] A+<name>+B:**`
+    /// becomes `**[..] A+B:**`. The `metadata.json` row for `speakerId` is
+    /// removed; any surviving row whose `label` was `name` (the speaker
+    /// shipped under a different `speaker_id` in metadata) is relabelled to
+    /// `fallbackLabel`. Then duplicate rows are collapsed.
+    ///
+    /// - Parameters:
+    ///   - name: the speaker label to drop from labels.
+    ///   - speakerId: the library `spk_<ulid>` to drop from
+    ///     `metadata.json`'s speakers array.
+    ///   - appearances: the speaker's appearances, from
+    ///     `SpeakerLibrary.appearances(of:)`.
+    ///   - outputFolderRoots: directories to scan for a subdirectory whose
+    ///     `lastPathComponent` matches an appearance's folder name.
+    ///   - fallbackLabel: the sentinel label used when a solo line would
+    ///     otherwise produce an empty label. Locked to `Unrecognized` for
+    ///     delist (PRD decision).
+    ///   - reason: why the rewrite is happening — the caller copies it into
+    ///     the `final_md_rewritten` event it emits per `RecordingResult`.
+    /// - Returns: one `RecordingResult` per recording whose `final.md` was
+    ///   **genuinely changed**, same shape and skip rules as `rewrite(...)`.
+    @discardableResult
+    public func rewriteDropping(
+        name: String,
+        speakerId: String,
+        appearances: [SpeakerAppearance],
+        outputFolderRoots: [URL],
+        fallbackLabel: String = "Unrecognized",
+        reason: RewriteReason = .speakerDelisted
+    ) async throws -> [RecordingResult] {
+        var results: [RecordingResult] = []
+
+        for appearance in appearances {
+            guard let folder = locateFolder(
+                named: appearance.recordingFolderName, in: outputFolderRoots)
+            else {
+                logger.notice("final.md drop-rewrite: folder not found, skipping")
+                continue
+            }
+
+            let finalURL = folder.appendingPathComponent(
+                RecordingFolder.FileName.final)
+            guard FileManager.default.fileExists(atPath: finalURL.path) else {
+                logger.notice("final.md drop-rewrite: no final.md, skipping")
+                continue
+            }
+
+            guard let sha = try dropInFolder(
+                folder: folder, finalURL: finalURL,
+                name: name, speakerId: speakerId,
+                fallbackLabel: fallbackLabel)
+            else { continue }
+
+            results.append(RecordingResult(
+                recordingId: appearance.recordingId,
+                folderURL: folder, newSHA256: sha))
+        }
+        return results
+    }
+
+    /// Drop `name` from every label in `final.md` (atomic write + `.bak`) and
+    /// drop `speakerId`'s row from `metadata.json`. Returns `nil` when the
+    /// drop leaves `final.md` byte-identical — same no-op semantics as
+    /// `rewriteFolder`.
+    private func dropInFolder(
+        folder: URL,
+        finalURL: URL,
+        name: String,
+        speakerId: String,
+        fallbackLabel: String
+    ) throws -> String? {
+        let fm = FileManager.default
+        let original = try String(contentsOf: finalURL, encoding: .utf8)
+        let rewritten = Self.rewriteMarkdownDropping(
+            original, name: name, fallbackLabel: fallbackLabel)
+
+        guard rewritten != original else { return nil }
+
+        let backupURL = folder.appendingPathComponent(
+            RecordingFolder.FileName.finalBackup)
+        if fm.fileExists(atPath: backupURL.path) {
+            try? fm.removeItem(at: backupURL)
+        }
+        try fm.copyItem(at: finalURL, to: backupURL)
+
+        let sha = try AtomicFile.write(rewritten, to: finalURL)
+
+        dropFromMetadataIfPresent(
+            in: folder, name: name, speakerId: speakerId,
+            fallbackLabel: fallbackLabel)
+
+        return sha
+    }
+
+    /// `rewriteMarkdown`-shaped pass that drops `name` from every utterance
+    /// label, preserving line terminators byte-for-byte. Solo lines collapse
+    /// to `fallbackLabel`; co-attributed lines lose just that token.
+    static func rewriteMarkdownDropping(
+        _ markdown: String,
+        name: String,
+        fallbackLabel: String
+    ) -> String {
+        var output = ""
+        var lineStart = markdown.unicodeScalars.startIndex
+        let scalars = markdown.unicodeScalars
+        var index = scalars.startIndex
+
+        func emit(body bodyRange: Range<String.UnicodeScalarView.Index>,
+                  terminator: String) {
+            var body = String(markdown.unicodeScalars[bodyRange])
+            let trailingCR = body.hasSuffix("\r")
+            if trailingCR { body = String(body.dropLast()) }
+            output += Self.rewriteLineDropping(
+                body, name: name, fallbackLabel: fallbackLabel)
+            if trailingCR { output += "\r" }
+            output += terminator
+        }
+
+        while index < scalars.endIndex {
+            if scalars[index] == "\n" {
+                emit(body: lineStart..<index, terminator: "\n")
+                index = scalars.index(after: index)
+                lineStart = index
+            } else {
+                index = scalars.index(after: index)
+            }
+        }
+        emit(body: lineStart..<scalars.endIndex, terminator: "")
+        return output
+    }
+
+    /// Rewrite one line if it is an utterance line, dropping any label
+    /// component equal to `name`. If the resulting component list is empty,
+    /// the new label is `fallbackLabel`. Otherwise the components are joined
+    /// with the original `+` separator. Adjacent-duplicate components are
+    /// collapsed (mirrors `rewriteLine`'s defense against self-overlap).
+    private static func rewriteLineDropping(
+        _ line: String,
+        name: String,
+        fallbackLabel: String
+    ) -> String {
+        guard line.hasPrefix("**[") else { return line }
+        guard let timeEnd = line.range(of: "] ") else { return line }
+        let afterTime = timeEnd.upperBound
+        guard let labelClose = line.range(
+            of: ":**", range: afterTime..<line.endIndex)
+        else { return line }
+
+        let label = String(line[afterTime..<labelClose.lowerBound])
+            .trimmingCharacters(in: .newlines)
+
+        var keptComponents: [String] = []
+        for raw in label.split(separator: "+", omittingEmptySubsequences: false) {
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            // The plan locked the bare `+` separator (no surrounding spaces),
+            // matching the existing fixtures — compare on the trimmed token
+            // so a stray ` ` does not let a `name` token survive.
+            if trimmed == name { continue }
+            let component = String(raw)
+            if component != keptComponents.last {
+                keptComponents.append(component)
+            }
+        }
+        let newLabel = keptComponents.isEmpty
+            ? fallbackLabel
+            : keptComponents.joined(separator: "+")
+
+        guard newLabel != label else { return line }
+        return String(line[line.startIndex..<afterTime])
+            + newLabel
+            + String(line[labelClose.lowerBound...])
+    }
+
+    /// Update `metadata.json` for a delist: drop the row whose `speakerId`
+    /// matches (mainline drop), relabel any surviving row whose `label` equals
+    /// `name` (the `Unrecognized` sentinel — covers metadata that shipped
+    /// without a `speaker_id` link), and then drop duplicates by `label`.
+    private func dropFromMetadataIfPresent(
+        in folder: URL,
+        name: String,
+        speakerId: String,
+        fallbackLabel: String
+    ) {
+        let metadataURL = folder.appendingPathComponent(
+            RecordingFolder.FileName.metadata)
+        guard FileManager.default.fileExists(atPath: metadataURL.path) else {
+            return
+        }
+        do {
+            let data = try Data(contentsOf: metadataURL)
+            let metadata = try JSONDecoder().decode(
+                RefinementMetadata.self, from: data)
+
+            // Step 1 — drop the row for this speakerId.
+            let afterDrop = metadata.speakers.filter { $0.speakerId != speakerId }
+            // Step 2 — relabel any surviving row whose label is `name`.
+            let relabelled = afterDrop.map { speaker in
+                speaker.label == name
+                    ? RefinementMetadata.Speaker(
+                        label: fallbackLabel,
+                        isMicrophone: speaker.isMicrophone,
+                        speakerId: speaker.speakerId)
+                    : speaker
+            }
+            // Step 3 — dedupe by label (a relabel can collide with an
+            // existing `Unrecognized` row from a prior delist).
+            var seen: Set<String> = []
+            let deduped = relabelled.filter { seen.insert($0.label).inserted }
+
+            // No-op guard: only rewrite if something actually changed.
+            guard deduped != metadata.speakers else { return }
+
+            let updated = RefinementMetadata(
+                schemaVersion: metadata.schemaVersion,
+                recordingId: metadata.recordingId,
+                recordingStart: metadata.recordingStart,
+                refinedAt: metadata.refinedAt,
+                durationSeconds: metadata.durationSeconds,
+                speakers: deduped,
+                whisperModel: metadata.whisperModel,
+                pyannoteModel: metadata.pyannoteModel,
+                language: metadata.language,
+                sourceBasename: metadata.sourceBasename)
+            try AtomicFile.write(try updated.encoded(), to: metadataURL)
+        } catch {
+            logger.notice("final.md drop-rewrite: metadata.json update skipped")
+        }
     }
 
     // MARK: - Folder resolution

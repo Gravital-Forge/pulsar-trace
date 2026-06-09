@@ -129,6 +129,16 @@ public enum EventRegistry {
             category: .speakerLibrary
         ),
         Entry(
+            type: SpeakerDelistedEvent.eventType,
+            version: SpeakerDelistedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: SpeakerUndelistedEvent.eventType,
+            version: SpeakerUndelistedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
             type: SpeakerCentroidUpdatedEvent.eventType,
             version: SpeakerCentroidUpdatedEvent.schemaVersion,
             category: .speakerLibrary

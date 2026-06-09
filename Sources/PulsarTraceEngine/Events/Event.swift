@@ -647,6 +647,60 @@ public struct SpeakerUnsplitEvent: EventPayload {
     }
 }
 
+/// `speaker_delisted` — emitted on a delist ("Don't recognize this speaker"):
+/// the speaker is excluded from future matching, hidden from the live list, and
+/// their token is stripped from past `final.md` labels. Soft, recoverable for
+/// 30 days; the cause is logged before the paired `final_md_rewritten` events
+/// (Hard Invariant #8).
+public struct SpeakerDelistedEvent: EventPayload {
+    public static let eventType = "speaker_delisted"
+
+    public let speakerId: String
+    /// ISO-8601 UTC instant after which the delist is no longer recoverable.
+    public let recoverableUntil: String
+    /// Recordings whose `final.md` was rewritten as part of the delist.
+    public let appliedToRecordings: [String]
+
+    public init(
+        speakerId: String,
+        recoverableUntil: String,
+        appliedToRecordings: [String]
+    ) {
+        self.speakerId = speakerId
+        self.recoverableUntil = recoverableUntil
+        self.appliedToRecordings = appliedToRecordings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case speakerId = "speaker_id"
+        case recoverableUntil = "recoverable_until"
+        case appliedToRecordings = "applied_to_recordings"
+    }
+}
+
+/// `speaker_undelisted` — emitted when a delist is undone within the 30-day
+/// recovery window. The speaker is restored to the live list and the
+/// `Unrecognized` token in affected `final.md` files is rewritten back to the
+/// speaker's name (best-effort for co-attributed lines — see
+/// `FinalMarkdownRewriter`).
+public struct SpeakerUndelistedEvent: EventPayload {
+    public static let eventType = "speaker_undelisted"
+
+    public let speakerId: String
+    /// Recordings whose `final.md` was rewritten as part of the undelist.
+    public let appliedToRecordings: [String]
+
+    public init(speakerId: String, appliedToRecordings: [String]) {
+        self.speakerId = speakerId
+        self.appliedToRecordings = appliedToRecordings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case speakerId = "speaker_id"
+        case appliedToRecordings = "applied_to_recordings"
+    }
+}
+
 /// `speaker_centroid_updated` — emitted when a returning speaker's centroid is
 /// refined by a new appearance via the running-mean update (§8.13, R30).
 public struct SpeakerCentroidUpdatedEvent: EventPayload {

@@ -465,6 +465,267 @@ struct FinalMarkdownRewriterTests {
         #expect(log.contains("\"sha256\":\"\(results[0].newSHA256)\""))
     }
 
+    // MARK: - Delist drop-rewrite ("Don't recognize this speaker")
+
+    /// A `final.md` body whose only utterance is solo `Unknown #6`.
+    private static let soloUnknownMarkdown = """
+        <!-- pulsartrace:final -->
+        ## Transcript — 2026-05-01 09:00
+
+        **[00:00:01] Unknown #6:** hi
+
+        """
+
+    @Test("delist solo line becomes the Unrecognized sentinel")
+    func delistSoloBecomesUnrecognized() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("rec-solo", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+        try Data(Self.soloUnknownMarkdown.utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.final))
+
+        let results = try await FinalMarkdownRewriter().rewriteDropping(
+            name: "Unknown #6", speakerId: "spk_aaa",
+            appearances: [makeAppearance(
+                recordingId: "rec_solo", folderName: "rec-solo")],
+            outputFolderRoots: [root])
+
+        #expect(results.count == 1)
+        let rewritten = try String(
+            contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.final),
+            encoding: .utf8)
+        #expect(rewritten.contains("**[00:00:01] Unrecognized:** hi"))
+        #expect(!rewritten.contains("Unknown #6"))
+    }
+
+    @Test("delist drops the token from a co-attributed label")
+    func delistCoAttributedDropsToken() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("rec-co", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+        let body = """
+            <!-- pulsartrace:final -->
+
+            **[00:00:02] Steve+Unknown #6:** ok
+
+            """
+        try Data(body.utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.final))
+
+        _ = try await FinalMarkdownRewriter().rewriteDropping(
+            name: "Unknown #6", speakerId: "spk_aaa",
+            appearances: [makeAppearance(
+                recordingId: "rec_co", folderName: "rec-co")],
+            outputFolderRoots: [root])
+
+        let rewritten = try String(
+            contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.final),
+            encoding: .utf8)
+        #expect(rewritten.contains("**[00:00:02] Steve:** ok"))
+        #expect(!rewritten.contains("Unknown #6"))
+        #expect(!rewritten.contains("Unrecognized"))
+    }
+
+    @Test("delist on a three-way label drops just the matching token")
+    func delistThreeWayDropsMiddle() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("rec-3", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+        let body = """
+            <!-- pulsartrace:final -->
+
+            **[00:00:03] Steve+Unknown #6+Alice:** yes
+
+            """
+        try Data(body.utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.final))
+
+        _ = try await FinalMarkdownRewriter().rewriteDropping(
+            name: "Unknown #6", speakerId: "spk_aaa",
+            appearances: [makeAppearance(
+                recordingId: "rec_3", folderName: "rec-3")],
+            outputFolderRoots: [root])
+
+        let rewritten = try String(
+            contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.final),
+            encoding: .utf8)
+        #expect(rewritten.contains("**[00:00:03] Steve+Alice:** yes"))
+        #expect(!rewritten.contains("Unknown #6"))
+    }
+
+    @Test("delist all-noise self-overlap collapses to a single Unrecognized")
+    func delistAllNoiseCollapses() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("rec-noise", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+        let body = """
+            <!-- pulsartrace:final -->
+
+            **[00:00:04] Unknown #6+Unknown #6:** static
+
+            """
+        try Data(body.utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.final))
+
+        _ = try await FinalMarkdownRewriter().rewriteDropping(
+            name: "Unknown #6", speakerId: "spk_aaa",
+            appearances: [makeAppearance(
+                recordingId: "rec_noise", folderName: "rec-noise")],
+            outputFolderRoots: [root])
+
+        let rewritten = try String(
+            contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.final),
+            encoding: .utf8)
+        #expect(rewritten.contains("**[00:00:04] Unrecognized:** static"))
+        // No "Unrecognized+Unrecognized" — the empty-label fallback only
+        // fires when every component was dropped.
+        #expect(!rewritten.contains("Unrecognized+Unrecognized"))
+    }
+
+    @Test("delist removes the metadata.json row for the dropped speaker")
+    func delistMetadataRowDropped() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // The fixture's metadata.json carries `Unknown #1` (speaker_id
+        // spk_aaa), `Steve`, and `You`. After a delist of spk_aaa the
+        // `Unknown #1` row is gone — surviving rows are `Steve` and `You`.
+        let folder = try makeRecordingFolder(
+            root: root, name: "meta-delist", recordingId: "rec_meta")
+
+        _ = try await FinalMarkdownRewriter().rewriteDropping(
+            name: "Unknown #1", speakerId: "spk_aaa",
+            appearances: [makeAppearance(
+                recordingId: "rec_meta", folderName: "meta-delist")],
+            outputFolderRoots: [root])
+
+        let meta = try JSONDecoder().decode(
+            RefinementMetadata.self,
+            from: Data(contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.metadata)))
+        #expect(meta.speakers.count == 2)
+        #expect(meta.speakers.map(\.label).sorted() == ["Steve", "You"])
+        #expect(!meta.speakers.contains { $0.speakerId == "spk_aaa" })
+    }
+
+    @Test("delist of the only speaker leaves a length-0 metadata speakers array")
+    func delistMetadataAllDropped() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // A recording whose metadata.json has exactly one speaker — that
+        // one is the delist target, so the array length goes 1 → 0.
+        let folder = root.appendingPathComponent("solo-meta", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+        try Data(Self.soloUnknownMarkdown.utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.final))
+        let solo = try RefinementMetadata(
+            recordingId: "rec_solo",
+            recordingStart: "2026-05-01T09:00:00Z",
+            refinedAt: "2026-05-01T10:00:00Z",
+            durationSeconds: 30,
+            speakers: [.init(label: "Unknown #6", isMicrophone: false,
+                             speakerId: "spk_aaa")],
+            whisperModel: .init(name: "base", sha256: "deadbeef"),
+            pyannoteModel: nil, language: "en",
+            sourceBasename: "solo.wav").encoded()
+        try solo.write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.metadata))
+
+        _ = try await FinalMarkdownRewriter().rewriteDropping(
+            name: "Unknown #6", speakerId: "spk_aaa",
+            appearances: [makeAppearance(
+                recordingId: "rec_solo", folderName: "solo-meta")],
+            outputFolderRoots: [root])
+
+        let meta = try JSONDecoder().decode(
+            RefinementMetadata.self,
+            from: Data(contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.metadata)))
+        #expect(meta.speakers.isEmpty)
+    }
+
+    @Test("undelist solo line restores the speaker's name from Unrecognized")
+    func undelistSoloRoundTrip() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("rec-undo", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+        try Data(Self.soloUnknownMarkdown.utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.final))
+
+        let rewriter = FinalMarkdownRewriter()
+        _ = try await rewriter.rewriteDropping(
+            name: "Unknown #6", speakerId: "spk_aaa",
+            appearances: [makeAppearance(
+                recordingId: "rec_undo", folderName: "rec-undo")],
+            outputFolderRoots: [root])
+        // After delist the line reads `Unrecognized`. Undelist (the existing
+        // rewrite()) substitutes Unrecognized → Unknown #6 — solo only.
+        _ = try await rewriter.rewrite(
+            oldName: "Unrecognized", newName: "Unknown #6",
+            appearances: [makeAppearance(
+                recordingId: "rec_undo", folderName: "rec-undo")],
+            outputFolderRoots: [root],
+            reason: .speakerUndelisted)
+
+        let rewritten = try String(
+            contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.final),
+            encoding: .utf8)
+        #expect(rewritten.contains("**[00:00:01] Unknown #6:** hi"))
+        #expect(!rewritten.contains("Unrecognized"))
+    }
+
+    @Test("undelist cannot reconstruct co-attributed position — documented loss")
+    func undelistCoAttributedDocumentedLoss() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("rec-co-undo", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true)
+        // The co-attributed `Steve+Unknown #6` was already rewritten to
+        // `Steve` on delist; the file no longer carries any token for
+        // `Unknown #6`, so undelist (Unrecognized → Unknown #6) is a no-op
+        // here — the rewriter cannot reconstruct the original co-attribution.
+        let bodyAfterDelist = """
+            <!-- pulsartrace:final -->
+
+            **[00:00:02] Steve:** ok
+
+            """
+        try Data(bodyAfterDelist.utf8).write(
+            to: folder.appendingPathComponent(RecordingFolder.FileName.final))
+        let before = try Data(
+            contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.final))
+
+        let results = try await FinalMarkdownRewriter().rewrite(
+            oldName: "Unrecognized", newName: "Unknown #6",
+            appearances: [makeAppearance(
+                recordingId: "rec_co_undo", folderName: "rec-co-undo")],
+            outputFolderRoots: [root],
+            reason: .speakerUndelisted)
+
+        // No genuine change: no result, no .bak.
+        #expect(results.isEmpty)
+        #expect(try Data(
+            contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.final)) == before)
+    }
+
     // MARK: - SpeakerLibrary suppressEvent overload
 
     @Test("rename with suppressEvent mutates the DB but emits no event")

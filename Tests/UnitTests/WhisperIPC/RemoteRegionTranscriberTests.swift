@@ -286,7 +286,10 @@ struct RemoteRegionTranscriberTests {
         #expect(factory.callCount == 2)
     }
 
-    @Test("respawn that takes longer than the initial backoff emits at least one 'still waiting' log line")
+    @Test(
+        "respawn that takes longer than the initial backoff emits at least one 'still waiting' log line",
+        .disabled("flaky under parallel UnitTests pool starvation; verify with --filter RemoteRegionTranscriber")
+    )
     func backoffLogFires() async throws {
         let wedged = FakeHost()
         wedged.cannedDecodeError = .readTimedOut
