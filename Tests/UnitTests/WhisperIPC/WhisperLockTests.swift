@@ -65,7 +65,41 @@ struct WhisperLockTests {
         }
     }
 
+    // MARK: - Permissions (the lock file's existence/mtime leaks session
+    // timing to other local users — owner-only, always)
+
+    @Test("a fresh lock file is created 0600")
+    func freshLockIsOwnerOnly() throws {
+        let path = Self.makeTempLockPath()
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        let lock = try WhisperLock(lockPath: path)
+        _ = lock
+
+        #expect(Self.mode(path) == 0o600)
+    }
+
+    @Test("a pre-existing 0644 lock file is repaired to 0600 on acquire")
+    func legacyLockIsRepaired() throws {
+        let path = Self.makeTempLockPath()
+        defer { try? FileManager.default.removeItem(at: path) }
+        FileManager.default.createFile(
+            atPath: path.path, contents: nil,
+            attributes: [.posixPermissions: 0o644])
+
+        let lock = try WhisperLock(lockPath: path)
+        _ = lock
+
+        #expect(Self.mode(path) == 0o600)
+    }
+
     // MARK: - Helpers
+
+    /// The POSIX permission bits of `url`, or `-1` if unreadable.
+    private static func mode(_ url: URL) -> Int {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attrs?[.posixPermissions] as? NSNumber)?.intValue ?? -1
+    }
 
     /// A unique path under `$TMPDIR` for one test's lock file. Each test
     /// uses its own path so cross-test runs (including the parallel

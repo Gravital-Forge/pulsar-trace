@@ -55,8 +55,8 @@ public final class WhisperLock: @unchecked Sendable {
     private let fd: Int32
 
     /// Acquire `flock(LOCK_EX | LOCK_NB)` on `lockPath`. The file is
-    /// created with mode 0644 if absent; the lock object exists for the
-    /// directory entry, so two different filesystems / paths are
+    /// created (or repaired to) owner-only 0600; the lock object exists
+    /// for the directory entry, so two different filesystems / paths are
     /// independent. Tests pass a per-test temp path so they don't collide
     /// with each other or with a real subprocess.
     ///
@@ -66,11 +66,15 @@ public final class WhisperLock: @unchecked Sendable {
     public init(lockPath: URL) throws {
         let path = lockPath.path
         let fd = path.withCString { cstr in
-            open(cstr, O_CREAT | O_RDWR, 0o644)
+            open(cstr, O_CREAT | O_RDWR, 0o600)
         }
         guard fd >= 0 else {
             throw WhisperLockError.openFailed(path: path, errno: errno)
         }
+        // open(2)'s mode applies only at creation — repair a lock file a
+        // pre-hardening build created 0644. fchmod on the held fd: no
+        // TOCTOU window, and a failure is non-fatal (the flock still works).
+        _ = fchmod(fd, 0o600)
         // `flock(LOCK_EX | LOCK_NB)`: exclusive, non-blocking. Returns
         // `-1`/`EWOULDBLOCK` immediately if another process holds it; we
         // map that to `.held` and let the caller decide exit policy.
