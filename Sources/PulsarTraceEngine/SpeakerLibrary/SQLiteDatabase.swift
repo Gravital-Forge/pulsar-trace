@@ -216,6 +216,9 @@ final class SQLiteDatabase {
             throw SQLiteError.backupFailed(openRC, message)
         }
         defer { sqlite3_close_v2(dest) }
+        // Restrict before any page is copied: the destination must never be
+        // readable mid-copy, and a failed backup must not leave a 0644 partial.
+        SecureFiles.restrictToOwner(destinationURL)
 
         guard let backup = sqlite3_backup_init(dest, "main", handle, "main") else {
             throw SQLiteError.backupFailed(
@@ -232,8 +235,6 @@ final class SQLiteDatabase {
             throw SQLiteError.backupFailed(
                 finishRC, String(cString: sqlite3_errmsg(dest)))
         }
-        // sqlite3_open_v2 on the destination used the umask — restrict.
-        SecureFiles.restrictToOwner(destinationURL)
     }
 
     /// Run `body` inside a single transaction; rolls back on a thrown error.
