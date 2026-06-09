@@ -23,8 +23,7 @@ public enum AtomicFile {
     @discardableResult
     public static func write(_ data: Data, to url: URL) throws -> String {
         let directory = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
+        try SecureFiles.createDirectoryPrivateIfNew(at: directory)
 
         // A unique temp name in the destination directory: same volume, so the
         // rename is a true atomic in-place replace.
@@ -32,10 +31,27 @@ public enum AtomicFile {
             ".\(url.lastPathComponent).tmp-\(UUID().uuidString)")
 
         do {
-            try data.write(to: tempURL, options: .atomic)
+            // Owner-only from the first byte: create the temp file 0600 and
+            // stream the payload through a handle. (`Data.write(.atomic)`
+            // would create its own 0644 temp file behind our back.)
+            guard SecureFiles.createPrivateFile(atPath: tempURL.path) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let handle = try FileHandle(forWritingTo: tempURL)
+            do {
+                try handle.write(contentsOf: data)
+                try handle.close()
+            } catch {
+                try? handle.close()
+                throw error
+            }
             // `replaceItemAt` performs an atomic exchange when the destination
             // already exists, and a plain rename when it does not.
             _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
+            // When the destination existed, `replaceItemAt` preserves the *old*
+            // item's metadata — repair so pre-hardening 0644 files converge to
+            // 0600 on their next rewrite.
+            SecureFiles.restrictToOwner(url)
         } catch {
             // Never leave a stray temp file behind on failure.
             try? FileManager.default.removeItem(at: tempURL)
