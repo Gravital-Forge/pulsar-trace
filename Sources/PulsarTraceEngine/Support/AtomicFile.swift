@@ -35,13 +35,17 @@ public enum AtomicFile {
             // stream the payload through a handle. (`Data.write(.atomic)`
             // would create its own 0644 temp file behind our back.)
             guard SecureFiles.createPrivateFile(atPath: tempURL.path) else {
-                throw CocoaError(.fileWriteUnknown)
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: tempURL.path])
             }
             let handle = try FileHandle(forWritingTo: tempURL)
             do {
                 try handle.write(contentsOf: data)
+                // Restores the F_FULLFSYNC the old Data.write(.atomic) path
+                // performed (flush before rename).
+                try handle.synchronize()
                 try handle.close()
             } catch {
+                try? handle.synchronize()
                 try? handle.close()
                 throw error
             }

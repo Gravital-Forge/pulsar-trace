@@ -57,4 +57,30 @@ struct AtomicFilePermissionsTests {
         let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         #expect(names == ["metadata.json"])
     }
+
+    @Test("a failed replace leaves no stray temp file")
+    func noStrayTempOnFailure() throws {
+        let dir = tempDir()
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let url = dir.appendingPathComponent("final.md")
+        try AtomicFile.write("first", to: url)
+
+        // Make the directory unwritable: temp-file creation must fail and
+        // the failed write must not leave debris behind.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500], ofItemAtPath: dir.path)
+        #expect(throws: (any Error).self) {
+            try AtomicFile.write("second", to: url)
+        }
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: dir.path)
+
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        #expect(names == ["final.md"])
+        #expect(try String(contentsOf: url, encoding: .utf8) == "first")
+    }
 }
