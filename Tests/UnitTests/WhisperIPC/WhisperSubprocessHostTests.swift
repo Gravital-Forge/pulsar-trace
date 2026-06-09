@@ -122,6 +122,67 @@ struct WhisperSubprocessHostTests {
         }, "trailing partial line must be flushed; saw: \(capture.messages)")
     }
 
+    /// Hard Invariant #7: the operational log never contains full user
+    /// paths. `pulsartrace-whisper` writes its lock path to stderr on
+    /// lock failure ("ERROR: could not acquire whisper lock at …"), so
+    /// the drainer must redact `NSHomeDirectory()` before forwarding.
+    @Test("forwarded stderr lines have the home directory redacted (Invariant 7)")
+    func drainRedactsHomePaths() {
+        let pipe = Pipe()
+        let capture = CapturingDrainLogHandler()
+        let logger = Logger(label: "test") { _ in capture }
+
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            WhisperSubprocessHost.drainStderrLines(
+                from: pipe.fileHandleForReading, logger: logger)
+            done.signal()
+        }
+
+        let raw = "ERROR: could not acquire whisper lock at \(NSHomeDirectory())/Library/Application Support/PulsarTrace/whisper.lock: errno 13\n"
+        pipe.fileHandleForWriting.write(Data(raw.utf8))
+        try? pipe.fileHandleForWriting.close()
+        _ = done.wait(timeout: .now() + .seconds(2))
+
+        let messages = capture.messages
+        #expect(!messages.isEmpty, "expected at least one forwarded line")
+        #expect(!messages.contains {
+            $0.contains(NSHomeDirectory())
+        }, "raw home path leaked into the log; saw: \(messages)")
+        #expect(messages.contains {
+            $0.contains("~/Library/Application Support/PulsarTrace/whisper.lock")
+        }, "expected the redacted ~-form; saw: \(messages)")
+    }
+
+    @Test("the EOF-flushed trailing partial line is also home-redacted (Invariant 7)")
+    func drainRedactsHomePathsInTrailingPartial() {
+        let pipe = Pipe()
+        let capture = CapturingDrainLogHandler()
+        let logger = Logger(label: "test") { _ in capture }
+
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            WhisperSubprocessHost.drainStderrLines(
+                from: pipe.fileHandleForReading, logger: logger)
+            done.signal()
+        }
+
+        // No trailing newline — exercises the EOF-flush emit site.
+        let raw = "ERROR: could not acquire whisper lock at \(NSHomeDirectory())/Library/Application Support/PulsarTrace/whisper.lock"
+        pipe.fileHandleForWriting.write(Data(raw.utf8))
+        try? pipe.fileHandleForWriting.close()
+        _ = done.wait(timeout: .now() + .seconds(2))
+
+        let messages = capture.messages
+        #expect(!messages.isEmpty, "expected the trailing partial line to be flushed")
+        #expect(!messages.contains {
+            $0.contains(NSHomeDirectory())
+        }, "raw home path leaked via the EOF flush; saw: \(messages)")
+        #expect(messages.contains {
+            $0.contains("~/Library/Application Support/PulsarTrace/whisper.lock")
+        }, "expected the redacted ~-form on the EOF flush; saw: \(messages)")
+    }
+
     @Test("startAndInitialize on a nonexistent binary throws .binaryNotFound without spawning")
     func nonexistentBinary() throws {
         let config = WhisperSubprocessHost.Configuration(
