@@ -117,6 +117,40 @@ struct RecordingEntryDecodeTests {
         #expect(mic.id == "label:You:true")
     }
 
+    @Test("title.txt sidecar decodes into customTitle and displayTitle prefers it")
+    func customTitleDecodes() throws {
+        let root = MenuBarFixtures.tempDir()
+        let folder = try MenuBarFixtures.makeRecordingFolder(
+            root: root, name: "2026-05-01-090000", recordingId: "rec_a")
+        try RecordingTitleStore.write("Quarterly sync", folderURL: folder)
+        let entry = try #require(RecordingEntry.decode(folderURL: folder))
+        #expect(entry.customTitle == "Quarterly sync")
+        #expect(entry.displayTitle == "Quarterly sync")
+        #expect(entry.defaultTitle != "Quarterly sync")
+    }
+
+    @Test("no sidecar → customTitle nil, displayTitle falls back to the date default")
+    func noSidecar() throws {
+        let root = MenuBarFixtures.tempDir()
+        let folder = try MenuBarFixtures.makeRecordingFolder(
+            root: root, name: "2026-05-01-090000", recordingId: "rec_a")
+        let entry = try #require(RecordingEntry.decode(folderURL: folder))
+        #expect(entry.customTitle == nil)
+        #expect(entry.displayTitle == entry.defaultTitle)
+    }
+
+    @Test("title.txt sidecar decodes into customTitle for an unrefined folder too")
+    func customTitleDecodesUnrefined() throws {
+        let root = MenuBarFixtures.tempDir()
+        let folder = try MenuBarFixtures.makeUnrefinedRecordingFolder(
+            root: root, name: "2026-05-01-090000")
+        try RecordingTitleStore.write("Draft notes", folderURL: folder)
+        let entry = try #require(RecordingEntry.decode(folderURL: folder))
+        #expect(entry.isRefined == false)
+        #expect(entry.customTitle == "Draft notes")
+        #expect(entry.displayTitle == "Draft notes")
+    }
+
     /// `formatDuration` is what the recordings-list row shows under the pill
     /// strip — covers the hour boundary (where the format switches from
     /// `M:SS` to `H:MM:SS`), the defensive NaN/negative branches, and the

@@ -81,6 +81,9 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
     public let speakers: [RecordingSpeaker]
     /// Whether a `final.md` is present (the recording has been refined).
     public let isRefined: Bool
+    /// User-assigned title from the `title.txt` sidecar (spec §4.1), `nil`
+    /// when none is set. UI-owned; decoded at scan time like everything else.
+    public let customTitle: String?
 
     public init(
         id: String,
@@ -88,7 +91,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
         folderURL: URL,
         durationSeconds: Double,
         speakers: [RecordingSpeaker],
-        isRefined: Bool
+        isRefined: Bool,
+        customTitle: String? = nil
     ) {
         self.id = id
         self.recordingStart = recordingStart
@@ -96,15 +100,23 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
         self.durationSeconds = durationSeconds
         self.speakers = speakers
         self.isRefined = isRefined
+        self.customTitle = customTitle
     }
 
     /// The display name shown in the list — the recording folder's basename.
     public var displayName: String { folderURL.lastPathComponent }
 
-    /// Human title for a recording — "Today at 2:30 PM" / "Yesterday at …" /
-    /// "May 16, 2026 at 2:30 PM". The folder basename stays available as
-    /// `displayName` (tooltips, Reveal in Finder, diagnostics).
+    /// Human title — the custom title when one is set, else the date-based
+    /// default. The one source for the list, the detail header, and
+    /// notifications.
     public var displayTitle: String {
+        customTitle ?? defaultTitle
+    }
+
+    /// The date-based default title ("Today at 2:30 PM"), regardless of any
+    /// custom title — the detail header shows it as a caption under a custom
+    /// title.
+    public var defaultTitle: String {
         Self.displayTitle(for: recordingStart, relativeTo: Date())
     }
 
@@ -186,7 +198,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
                     speakerId: $0.speakerId,
                     isMicrophone: $0.isMicrophone)
             },
-            isRefined: isRefined)
+            isRefined: isRefined,
+            customTitle: RecordingTitleStore.read(folderURL: folderURL))
     }
 
     /// Surface a recording folder that has **no** `metadata.json` — a
@@ -216,7 +229,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
             folderURL: folderURL,
             durationSeconds: 0,
             speakers: [],
-            isRefined: false)
+            isRefined: false,
+            customTitle: RecordingTitleStore.read(folderURL: folderURL))
     }
 
     /// Parse a `yyyy-MM-dd-HHmmss` recording-folder basename into a `Date`.
