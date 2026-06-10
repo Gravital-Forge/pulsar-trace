@@ -75,7 +75,8 @@ struct RecordingsListView: View {
                 // refinement status icon. The icon is hover-only — full
                 // text moved into `.help()` tooltips to keep the line tight.
                 HStack(spacing: 8) {
-                    Text(recording.displayName)
+                    Text(recording.displayTitle)
+                        .help(recording.displayName)
                     if recording.isRefined {
                         Text(RecordingEntry.formatDuration(recording.durationSeconds))
                             .font(.caption)
@@ -184,7 +185,7 @@ struct RecordedTranscriptSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(recording.displayName).font(.headline)
+                Text(recording.displayTitle).font(.headline)
                 Spacer()
                 Button {
                     copyTranscriptToPasteboard(lines)
