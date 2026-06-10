@@ -64,9 +64,9 @@ final class LiveRunner: Sendable {
     private let writer: LiveMarkdownWriter
     private let logger: Logger
     private let library: SpeakerLibrary?
-    /// Test hook: invoked with `diarBuffer.count` after every system frame
-    /// (Fix C coverage — assert the buffer stays bounded over a long stream).
-    /// `nil` in production.
+    /// Test hook: invoked with the diar buffer's sample count after every
+    /// system frame (Fix C coverage — assert the buffer stays bounded over a
+    /// long stream). `nil` in production.
     private let diarBufferProbe: (@Sendable (Int) -> Void)?
     /// Per-stream silence-watchdog threshold (Fix A). Defaults to the
     /// production `defaultSilenceGapThreshold`; tests inject a short value.
@@ -181,23 +181,13 @@ final class LiveRunner: Sendable {
         // The full system + mic audio is streamed straight to disk as frames
         // arrive (see `systemWAVWriter` / `micWAVWriter` below) so a crash mid
         // recording still leaves a recording folder a later `pulsartrace
-        // refine` can consume. `diarBuffer` is kept only as the live-diarizer's
-        // window source — it no longer backs the WAV.
-        //
-        // Fix C: `diarBuffer` is **bounded**. The diarizer only ever slices its
-        // most recent `diarWindow` samples, so after each window is dispatched
-        // the buffer is trimmed from the front to at most `2 * diarWindow`
-        // (a small margin past what the next window needs). `diarBufferBase` is
-        // the recording-absolute sample index of `diarBuffer[0]` — mirroring
-        // `StreamingTranscriber.bufferBaseSample` — so `windowStart` stays
-        // recording-absolute-correct after a trim.
-        var diarBuffer: [Float] = []
-        var diarBufferBase = 0
+        // refine` can consume. `diarBuffers` is kept only as the live-diarizer's
+        // window source — it no longer backs the WAV. Cadence gating and the
+        // Fix C bounded trim live in `DiarBufferManager`.
         let diarStep = durationToSamples(configuration.diarizationStep)
         let diarWindow = durationToSamples(configuration.diarizationWindow)
-        /// Recording-absolute sample count at which the last diarization
-        /// window was dispatched (paces the step cadence; survives trims).
-        var lastDiarEnd = 0
+        var diarBuffers = DiarBufferManager(
+            stepSamples: diarStep, windowSamples: diarWindow)
         let diarState = DiarState()
         /// Bounds outstanding live-diarization work to a single window in
         /// flight (Fix B) and lets the run hand off any in-flight task at exit.
@@ -246,10 +236,6 @@ final class LiveRunner: Sendable {
             finalizeWAV(systemWAVWriter, stream: "system")
             finalizeWAV(micWAVWriter, stream: "mic")
         }
-
-        // Recording-absolute sample count fed to the diarizer so far — the
-        // diarizer's window is sliced from this, not the trimmed `diarBuffer`.
-        var diarTotalSamples: Int { diarBufferBase + diarBuffer.count }
 
         // --- diagnostic phase tracker + heartbeat ---------------------------
         // Records the current step of the run loop so a background task can
@@ -433,52 +419,31 @@ final class LiveRunner: Sendable {
                 }
                 lastSystemActivity = systemFrameNow
                 // Feed a diarization window on cadence — *off* the run loop's
-                // critical path (Fix B). The window samples + windowStart are
-                // captured as locals and a detached task runs `diarizeWindow`
-                // then `diarState.merge`; the run loop never `await`s the
-                // diarizer subprocess. At most one window is in flight — if the
-                // previous one has not finished, this window is skipped (live
-                // diarization is best-effort/provisional). Diarization stays on
-                // the drain (it is fast: a detached dispatch, Fix B/C).
-                diarBuffer.append(contentsOf: frame.samples)
-                if let liveDiarizer,
-                   diarTotalSamples - lastDiarEnd >= diarStep,
-                   diarTotalSamples >= diarWindow {
-                    let loAbs = max(0, diarTotalSamples - diarWindow)
-                    let lo = loAbs - diarBufferBase
-                    lastDiarEnd = diarTotalSamples
-                    phase.set("await-diarGate-tryAcquire")
-                    if lo >= 0, lo <= diarBuffer.count,
-                       await diarGate.tryAcquire() {
-                        // Copy the window out of `diarBuffer` up front: the
-                        // detached task owns this independent `[Float]`, so the
-                        // run loop's concurrent front-trim of `diarBuffer`
-                        // below cannot mutate the in-flight task's samples.
-                        let windowSamples = Array(diarBuffer[lo...])
-                        let windowStart = samplesToDuration(loAbs)
-                        Task.detached {
-                            let spans = await liveDiarizer.diarizeWindow(
-                                samples: windowSamples,
-                                windowStart: windowStart)
-                            await diarState.merge(spans)
-                            await diarGate.release()
+                // critical path (Fix B). `DiarBufferManager` owns the cadence
+                // gating, the window copy (an independent `[Float]` the
+                // detached task can safely own), and the Fix C bounded trim.
+                // A detached task runs `diarizeWindow` then `diarState.merge`;
+                // the run loop never `await`s the diarizer subprocess. At most
+                // one window is in flight — if the previous one has not
+                // finished, this window is skipped (live diarization is
+                // best-effort/provisional).
+                if let liveDiarizer {
+                    if let req = diarBuffers.append(frame.samples) {
+                        phase.set("await-diarGate-tryAcquire")
+                        if await diarGate.tryAcquire() {
+                            let windowStart = samplesToDuration(req.startSampleIndex)
+                            Task.detached {
+                                let spans = await liveDiarizer.diarizeWindow(
+                                    samples: req.samples, windowStart: windowStart)
+                                await diarState.merge(spans)
+                                await diarGate.release()
+                            }
                         }
                     }
+                } else {
+                    _ = diarBuffers.append(frame.samples)   // trim behavior unchanged without a diarizer
                 }
-                // Fix C: trim `diarBuffer` to its recent tail on *every* system
-                // frame — not only on a diarization trigger — so the buffer is
-                // held tight at `2 * diarWindow` (it never grows by a whole
-                // step between triggers). The diarizer only ever needs the last
-                // `diarWindow` samples; `2 * diarWindow` is the safety margin.
-                // `diarBufferBase` advances by exactly what is dropped, so the
-                // recording-absolute `windowStart`/`lo` above stay correct.
-                let diarKeep = 2 * diarWindow
-                if diarBuffer.count > diarKeep {
-                    let trim = diarBuffer.count - diarKeep
-                    diarBuffer.removeFirst(trim)
-                    diarBufferBase += trim
-                }
-                diarBufferProbe?(diarBuffer.count)
+                diarBufferProbe?(diarBuffers.bufferedSampleCount)
                 // Hand off to whisper — never blocks; drops oldest if behind.
                 phase.set("enqueue-system")
                 systemQueue.enqueue(frame)
