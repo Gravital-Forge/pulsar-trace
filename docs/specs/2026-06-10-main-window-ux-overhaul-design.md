@@ -152,10 +152,12 @@ litter). Chosen: the Recordings pane owns an internal resizable split.
   - **just refined — transient green check**: shown while the recording's
     latest terminal job in `queueVM.recent` is `.completed` and the row has
     not been selected since completion; clears on selection or when the job
-    ages out of `recent`. No timer, no clock injection — two existing
-    signals, zero new mechanisms. Gives the queued→refining wait a visible
-    ending even when the notification was missed/denied, without permanent
-    check-mark noise.
+    ages out of `recent`. A row that is *already selected* when its refine
+    completes never shows the badge — the detail's completion banner (§4.2)
+    is the signal there; the badge exists for rows the user is not looking
+    at. No timer, no clock injection — two existing signals, zero new
+    mechanisms. Gives the queued→refining wait a visible ending even when
+    the notification was missed/denied, without permanent check-mark noise.
   Queue state wins over the intrinsic refined flag (preserves today's
   documented `RefineStatusIcon` precedence).
 - **Context menu**: View Transcript (selects), Rename, Reveal in Finder,
@@ -237,8 +239,10 @@ parser, display; **no display-layer transformation at all**.
   a tentative identification.
 - R16's requirement ("live speaker IDs explicitly marked provisional,
   distinguishable from final labels") remains satisfied — only its example
-  string changes. Deliverables alongside the code: update the R16 example in
-  `project-docs/PRD.md`, the `(provisional)` sections of
+  string changes. Deliverables alongside the code: update `project-docs/
+  PRD.md` everywhere the old suffix appears (the R16 example row AND the
+  sample-transcript section near the end, including its "`(provisional)`
+  annotations are removed" prose), the `(provisional)` sections of
   `docs/file-format.md`, and every test pinning the old suffix (engine sink
   tests, the `TranscriptLine` parser test).
 - `final.md` semantics are untouched: refinement never wrote provisional
@@ -248,8 +252,8 @@ parser, display; **no display-layer transformation at all**.
   migration, accepted (consistent with the no-compatibility-tangle stance).
 
 **Copy copies what you see.** Today the Copy buttons put the raw Markdown
-lines on the pasteboard (bold syntax, `(provisional)` suffix and all), which
-would no longer match the rendered text. Copy switches to the rendered plain
+lines on the pasteboard (`**[00:01:23] Them?:** hi`, comment markers and
+all) while the screen shows styled text. Copy switches to the rendered plain
 text (what selection + ⌘C from the NSTextView already yields); the raw file
 remains one Reveal-in-Finder away for anyone who wants the source form.
 
@@ -414,10 +418,12 @@ Verification: bare `swift build`, then `swift test --filter MenuBar`,
 exposure; the broad `PipelineTests` filter stays off-limits per CLAUDE.md).
 Manual GUI smoke (`scripts/make-dev-app.sh`) at branch finish: record →
 watch live detail → stop → watch row settle through queued/refining/
-completion banner → filter, day groups, Move to Trash, speakers
-multi-select merge, find-in-transcript (⌘F), divider persistence across
-relaunch, both empty states, hotkey-start-while-reading (selection must not
-move).
+completion banner → filter, day groups, double-click rename (recording and
+speaker; selection must not glitch), Move to Trash, speakers multi-select
+merge, find-in-transcript (⌘F), divider persistence across relaunch, all
+three empty states (recordings, speakers, no-selection detail),
+hotkey-start-while-reading (selection must not move), live transcript shows
+`Them?` labels.
 
 ## 12. Open questions deferred to planning
 
