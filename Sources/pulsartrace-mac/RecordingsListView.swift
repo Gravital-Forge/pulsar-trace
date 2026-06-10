@@ -1,5 +1,4 @@
 import AppKit
-import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
 
@@ -100,13 +99,10 @@ struct RecordingsListView: View {
             // while a job for this recording is already running or queued.
             Button("Refine") {
                 Task {
-                    let model = ModelCatalog.model(named: settings.refineModelName)
-                        ?? ModelCatalog.base
                     await queueVM.enqueueManual(
                         folderURL: recording.folderURL,
                         recordingId: recording.id,
-                        modelName: model.name,
-                        modelSHA256: model.sha256)
+                        refineModelName: settings.refineModelName)
                 }
             }
             .disabled(jobInFlight(recording.id))
@@ -222,10 +218,8 @@ struct RecordedTranscriptSheet: View {
     /// when no transcript file exists yet (placeholder shown), and `nil` when
     /// a file exists but could not be read (an explicit error line shown).
     private func load() async {
-        let finalURL = recording.folderURL.appendingPathComponent(
-            RecordingFolder.FileName.final)
-        let liveURL = recording.folderURL.appendingPathComponent(
-            RecordingFolder.FileName.live)
+        let finalURL = recording.finalURL
+        let liveURL = recording.liveURL
         let result: [String]? = await Task.detached(priority: .utility) {
             let fm = FileManager.default
             let url = fm.fileExists(atPath: finalURL.path) ? finalURL : liveURL

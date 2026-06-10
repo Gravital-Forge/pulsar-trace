@@ -115,6 +115,18 @@ public final class RefinementJobQueueViewModel {
         PathRedactor.redactHome(s)
     }
 
+    /// Forward a "Refine" button press, resolving the user's refine-model
+    /// setting to a pinned catalog entry (falling back to `base` for an
+    /// unknown name) — so the views never touch `ModelCatalog` themselves.
+    public func enqueueManual(folderURL: URL, recordingId: String,
+                              refineModelName: String) async {
+        let model = ModelCatalog.model(named: refineModelName)
+            ?? ModelCatalog.base
+        await enqueueManual(
+            folderURL: folderURL, recordingId: recordingId,
+            modelName: model.name, modelSHA256: model.sha256)
+    }
+
     /// Forward a "Refine" button press.
     public func enqueueManual(folderURL: URL, recordingId: String,
                               modelName: String, modelSHA256: String) async {

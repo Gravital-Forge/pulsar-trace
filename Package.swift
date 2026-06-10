@@ -108,9 +108,14 @@ let package = Package(
         // The thin SwiftUI executable — `MenuBarExtra` + `Settings`
         // scenes bound to `PulsarTraceMenuBar`'s ViewModels. No logic, no
         // unit tests; exercised only by manual smoke test (D27).
+        // `PulsarTraceEngine` is declared honestly (it was reached
+        // transitively before): a few views legitimately name engine types —
+        // static catalogs (`ModelCatalog`, `WhisperLanguageCatalog`,
+        // `AudioInputDevices`) and display types (`RefinementJob`, `Speaker`,
+        // `EventWriter`) — but never construct engine objects.
         .executableTarget(
             name: "pulsartrace-mac",
-            dependencies: ["PulsarTraceMenuBar"]
+            dependencies: ["PulsarTraceMenuBar", "PulsarTraceEngine"]
         ),
         // Layer 1: unit tests — pure logic, <5s, no devices.
         .testTarget(

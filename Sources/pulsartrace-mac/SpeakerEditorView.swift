@@ -370,21 +370,18 @@ struct SpeakerEditorView: View {
         .frame(width: 380)
     }
 
-    /// Open the `SpeakerLibrary` at the standard app-support path and build the
-    /// ViewModel. A failure surfaces an error state (I6) instead of an
-    /// indefinite loading spinner.
+    /// Build the ViewModel via its `load` factory — the VM owns opening the
+    /// `SpeakerLibrary` at the standard path; this view never constructs
+    /// engine objects. A failure surfaces an error state (I6) instead of an
+    /// indefinite loading spinner; the rendered error is home-redacted so it
+    /// cannot leak `/Users/<name>/...` into the UI.
     private func loadLibrary() async {
         guard viewModel == nil else { return }
-        let paths = AppPaths.standard
         do {
-            let library = try await SpeakerLibrary(
-                databaseURL: paths.speakersDatabaseURL, events: events)
-            let vm = SpeakerEditorViewModel(
-                library: library, events: events, settings: settings)
-            await vm.reload()
-            viewModel = vm
+            viewModel = try await SpeakerEditorViewModel.load(
+                events: events, settings: settings)
         } catch {
-            loadError = "\(error)"
+            loadError = PathRedactor.redactHome("\(error)")
         }
     }
 }

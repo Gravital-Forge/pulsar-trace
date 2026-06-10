@@ -72,6 +72,21 @@ public final class SpeakerEditorViewModel {
         self.rewriter = FinalMarkdownRewriter()
     }
 
+    /// Opens the speaker library at the standard path and returns a ready
+    /// VM — the one place the editor flow touches `AppPaths`/`SpeakerLibrary`,
+    /// so the view layer never constructs engine objects. A failure to open
+    /// the library throws; the view surfaces it as its error state (I6).
+    public static func load(
+        events: EventWriter?, settings: MenuBarSettings
+    ) async throws -> SpeakerEditorViewModel {
+        let library = try await SpeakerLibrary(
+            databaseURL: AppPaths.standard.speakersDatabaseURL, events: events)
+        let vm = SpeakerEditorViewModel(
+            library: library, events: events, settings: settings)
+        await vm.reload()
+        return vm
+    }
+
     // MARK: - Load
 
     /// Reload `liveSpeakers` / `deletedSpeakers` / `delistedSpeakers` from

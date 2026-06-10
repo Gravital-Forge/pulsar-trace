@@ -1,5 +1,4 @@
 import AppKit
-import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
 
@@ -13,7 +12,12 @@ import SwiftUI
 struct PulsarTraceMacApp: App {
 
     /// The shared app environment — the ViewModels every scene binds to.
-    @State private var environment = AppEnvironment()
+    /// Owned by `PulsarTraceMenuBar`; this target only renders it.
+    @State private var environment: AppEnvironment
+
+    /// The NSEvent global-hotkey monitor — the AppKit piece that stays in
+    /// this target (D27); `AppEnvironment` itself is AppKit-free.
+    @State private var hotkey: HotkeyController
 
     init() {
         // No Dock icon, no app-switcher entry — PulsarTrace lives in the
@@ -24,6 +28,15 @@ struct PulsarTraceMacApp: App {
         // still `nil` here and force-unwrapping it crashes. `.shared` creates
         // the instance on first access (and is the same object SwiftUI adopts).
         NSApplication.shared.setActivationPolicy(.accessory)
+
+        let environment = AppEnvironment()
+        let hotkey = HotkeyController()
+        // Installed here — where `AppEnvironment.init` used to call
+        // `installHotkeyMonitor()` — so the hotkey is live from launch.
+        hotkey.install(
+            settings: environment.settings, recording: environment.recording)
+        _environment = State(initialValue: environment)
+        _hotkey = State(initialValue: hotkey)
     }
 
     var body: some Scene {
@@ -60,368 +73,6 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.liveWatcher)
         }
         .defaultSize(width: 460, height: 480)
-    }
-}
-
-/// A mutable container for an async closure — used to break the init-time
-/// dependency cycle in `AppEnvironment`. `RecordingViewModel` calls `call(_:_:)`
-/// on the box; `AppEnvironment` wires the real implementation into `impl` once
-/// `self` is fully initialized (every stored property is set).
-///
-/// `@unchecked Sendable` because `impl` is mutated once during init on the
-/// MainActor and read-only thereafter — the mutation happens before any
-/// concurrent caller can reach it.
-private final class EnqueueBox: @unchecked Sendable {
-    var impl: (@Sendable (URL, String) async -> Void)?
-
-    func call(_ url: URL, _ recordingId: String) async {
-        await impl?(url, recordingId)
-    }
-}
-
-/// A mutable container for a no-argument async closure — same init-time
-/// dependency-cycle break as `EnqueueBox`, used for `pauseRefinement` and
-/// `resumeRefinement`.
-///
-/// `@unchecked Sendable`: mutated once during init on the MainActor, then
-/// read-only from `RecordingViewModel` closures.
-private final class AsyncCallBox: @unchecked Sendable {
-    var impl: (@Sendable () async -> Void)?
-
-    func call() async {
-        await impl?()
-    }
-}
-
-/// One-shot async gate. `wait()` suspends until `signal()` is called; once
-/// signalled, every later `wait()` returns immediately. Used by
-/// AppEnvironment to block auto-refine enqueues until `bootstrap` has
-/// installed the real `RefinementJobQueue`.
-///
-/// `@unchecked Sendable`: the lock protects `signalled` and `waiters` from
-/// concurrent access; everything mutates inside `lock.withLock`.
-private final class QueueReadyGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var signalled = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func signal() {
-        let toResume: [CheckedContinuation<Void, Never>] = lock.withLock {
-            guard !signalled else { return [] }
-            signalled = true
-            let w = waiters
-            waiters.removeAll()
-            return w
-        }
-        for c in toResume { c.resume() }
-    }
-
-    func wait() async {
-        let alreadySignalled: Bool = lock.withLock {
-            if signalled { return true }
-            return false
-        }
-        if alreadySignalled { return }
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            let resumeImmediately: Bool = lock.withLock {
-                if signalled { return true }
-                waiters.append(c)
-                return false
-            }
-            if resumeImmediately { c.resume() }
-        }
-    }
-}
-
-/// Owns the long-lived ViewModels + the global-hotkey monitor.
-@MainActor
-@Observable
-final class AppEnvironment {
-    let settings: MenuBarSettings
-    let recording: RecordingViewModel
-    let scanner: RecordingsScanner
-    let liveWatcher: LiveTranscriptWatcher
-    let onboarding: OnboardingTourViewModel
-
-    /// Shared sidebar-navigation state for the unified window (#6).
-    let navigation = AppNavigation()
-
-    /// The process-wide events writer (§8.13). Bootstrapped here and shared by
-    /// every component that emits events — the re-refine pass and the speaker
-    /// editor — so the events-log public contract holds in the shipped app.
-    let events: EventWriter
-
-    /// The standard app paths — events directory, speaker library, sockets.
-    let paths: AppPaths
-
-    /// The single-worker refinement queue (D2). Built asynchronously in
-    /// `bootstrap()` — `nil` until then, so `toggleRecording` uses optional
-    /// calls throughout. This matches the existing `events.bootstrap()` pattern:
-    /// async setup is deferred to an `App.task { }`, keeping `init()` sync.
-    private(set) var queue: RefinementJobQueue? = nil
-
-    /// Gate that opens once `bootstrap()` has installed the real queue. The
-    /// `enqueueBox.impl` closure awaits this before reading `self.queue`, so
-    /// a stop-recording that lands during bootstrap still gets its auto-
-    /// refine enqueued instead of silently dropping (race fix).
-    private let queueReady = QueueReadyGate()
-
-    /// Main-actor façade over `queue` — always non-optional (E2). Initialised
-    /// with a placeholder (noop) queue in `init()`; `bootstrap()` swaps in the
-    /// real queue via `setQueue(_:)` once `makeStandard` completes. Non-optional
-    /// so it can be passed directly to `.environment(...)` without extra wrappers.
-    let queueVM: RefinementJobQueueViewModel
-
-    /// Passive global-hotkey monitor (R41). `addGlobalMonitorForEvents` needs
-    /// NO Accessibility TCC grant; the keypress also reaching the frontmost
-    /// app is an accepted v1 tradeoff (D27). NOT a `CGEventTap`.
-    private var hotkeyMonitor: Any?
-
-    /// The in-flight hotkey toggle. A new trigger is dropped while one is
-    /// running so a rapid double-press cannot stack `start`/`stop` calls.
-    private var hotkeyToggleTask: Task<Void, Never>?
-
-    /// Observes `recording.liveMarkdownURL` and points the `LiveTranscriptWatcher`
-    /// at it — so the live popover shows the real, growing transcript whether
-    /// or not it is open (FIX 1). Lives for the process lifetime.
-    private var liveWatcherWiring: Task<Void, Never>?
-
-    /// Handle for the combined bootstrap task (events → queue). Stored so
-    /// it can be cancelled if `AppEnvironment` is ever torn down.
-    private var bootstrapTask: Task<Void, Never>?
-
-    init() {
-        let settings = MenuBarSettings()
-        let paths = AppPaths.standard
-        let events = EventWriter(directory: paths.eventsDirectory)
-        self.settings = settings
-        self.paths = paths
-        self.events = events
-
-        // Placeholder queue used only to make queueVM non-Optional before
-        // bootstrap() swaps in the real queue. Points at a unique temp dir so
-        // it can never accidentally read or write the real refinement-queue
-        // store on disk.
-        let placeholderDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulsartrace-placeholder-queue-\(ProcessInfo.processInfo.processIdentifier)",
-                                    isDirectory: true)
-        let placeholderStore = RefinementJobStore(directory: placeholderDir)
-        let placeholderQueue = RefinementJobQueue(
-            store: placeholderStore, runJob: { _ in })
-        self.queueVM = RefinementJobQueueViewModel(queue: placeholderQueue)
-
-        // Indirection boxes: let RecordingViewModel call real closures before
-        // `self` is fully initialized (Swift forbids [weak self] captures until
-        // every stored property is set, which `recording` itself prevents). Each
-        // box is created up-front, passed into RecordingViewModel as the closure
-        // payload, and filled in below once `self` is complete.
-        let enqueueBox = EnqueueBox()
-        let pauseBox = AsyncCallBox()
-        let resumeBox = AsyncCallBox()
-
-        // Phase 6 / Layer B: probe the binary-level `whisper.lock` between
-        // pauseRefinement and the orchestrator's start. `pauseRefinement`
-        // terminates the refinement-whisper subprocess (Layer A); this
-        // probe is the defence-in-depth that catches the rare slow-teardown
-        // window before the engine subprocess hits the flock.
-        let lockProbePath = paths.applicationSupport
-            .appendingPathComponent("whisper.lock", isDirectory: false)
-        self.recording = RecordingViewModel(
-            settings: settings, paths: paths, events: events,
-            enqueueAutoRefine: { url, recordingId in
-                await enqueueBox.call(url, recordingId)
-            },
-            pauseRefinement: { await pauseBox.call() },
-            resumeRefinement: { await resumeBox.call() },
-            waitForWhisperLockFree: {
-                try await WhisperLockProbe.waitUntilFree(
-                    lockPath: lockProbePath,
-                    timeout: .seconds(5))
-            })
-        self.scanner = RecordingsScanner(settings: settings)
-        self.liveWatcher = LiveTranscriptWatcher()
-        self.onboarding = OnboardingTourViewModel()
-
-        // All stored properties are now set — `self` is fully initialized.
-        // Wire the real implementations into the boxes. Closures hop to MainActor
-        // to read @MainActor-isolated state before crossing into the queue actor.
-        enqueueBox.impl = { [weak self] url, recordingId in
-            // Wait for bootstrap() to install the real queue. If
-            // AppEnvironment is torn down before bootstrap completes, the
-            // weak self below evaluates to nil and the closure exits.
-            let gateOpt: QueueReadyGate? = await MainActor.run { self?.queueReady }
-            guard let gate = gateOpt else { return }
-            await gate.wait()
-
-            let pair: (RefinementJobQueue, String, String)? =
-                await MainActor.run {
-                    guard let self, let queue = self.queue else { return nil }
-                    let name = self.settings.refineModelName
-                    let model = ModelCatalog.model(named: name) ?? ModelCatalog.base
-                    return (queue, model.name, model.sha256)
-                }
-            guard let (queue, modelName, modelSHA256) = pair else {
-                FileHandle.standardError.write(
-                    Data("pulsartrace-mac: auto-refine dropped — queue gone after bootstrap\n".utf8))
-                return
-            }
-            do {
-                try await queue.enqueueAutoRefine(
-                    folderURL: url, recordingId: recordingId,
-                    modelName: modelName, modelSHA256: modelSHA256)
-            } catch {
-                let raw = "pulsartrace-mac: auto-refine enqueue failed: \(error)\n"
-                let msg = PathRedactor.redactHome(raw)
-                FileHandle.standardError.write(Data(msg.utf8))
-            }
-        }
-        pauseBox.impl = { [weak self] in
-            let q: RefinementJobQueue? = await MainActor.run { self?.queue }
-            await q?.pauseForRecording()
-        }
-        resumeBox.impl = { [weak self] in
-            let q: RefinementJobQueue? = await MainActor.run { self?.queue }
-            await q?.resumeAfterRecording()
-        }
-
-        // Chain events bootstrap → queue bootstrap in a single stored Task so
-        // that `RefinementJobQueue.makeStandard` (and any `runJob` it spawns)
-        // always sees a fully bootstrapped events writer. The handle is stored
-        // so cancellation is possible if `AppEnvironment` is ever torn down.
-        self.bootstrapTask = Task { [weak self] in
-            await events.bootstrap()
-            await self?.bootstrap()
-        }
-        installHotkeyMonitor()
-        startLiveWatcherWiring()
-    }
-
-    /// Build the refinement queue asynchronously. Invoked from a fire-and-forget
-    /// `Task` in `init()` — the same pattern as `events.bootstrap()`. Keeps
-    /// `init()` synchronous while allowing the expensive async setup to run
-    /// once the MainActor is free after initialization.
-    func bootstrap() async {
-        // Wire `swift-log` into the daily-rotated `FileLogHandler` and
-        // `OSLogHandler` — the *engine subprocess* bootstraps these via
-        // `AppLifecycle.start()`, but the mac-app process never calls
-        // `AppLifecycle`. Without this call the in-process refinement
-        // queue's `Logger(label: LogSubsystem.engine)` lines fell into
-        // swift-log's default `StreamLogHandler` (stderr → launchd),
-        // making refinement failures undebuggable from `~/Library/Logs/
-        // PulsarTrace/*.log` (verified empty for the 2026-05-27 incident).
-        // `LogSystem.bootstrap` is idempotent — see
-        // `LoggingTests.bootstrapIsIdempotent`.
-        _ = await LogSystem.bootstrap(paths: paths)
-
-        // Resolve the whisper binary once, from the mac-app's known
-        // `.build/debug/...` layout (via `#filePath`). The same resolver is
-        // threaded into the engine subprocess as `PULSARTRACE_WHISPER_BINARY`
-        // by `defaultOrchestratorFactory`, so refinement and live decode
-        // share a single source of truth for the binary path — and the
-        // resolver's `argv[0]`-sibling fallback never gets a chance to
-        // silently mis-locate it in the mac-app process.
-        let whisperBinaryURL =
-            RecordingViewModel.defaultBinaryURLResolver("pulsartrace-whisper")
-        // Mirror the live path's language allow-list into refinement
-        // (R-streaming-lang). Without this, refinement decoded each region
-        // with unrestricted auto-detect, so a quiet/ambiguous stretch in a
-        // Polish meeting could drift to Spanish or Russian even when the
-        // user had restricted the language set in Settings.
-        let refineWhisperOptions = WhisperOptions(
-            allowedLanguages: settings.allowedLanguages)
-        let q = await RefinementJobQueue.makeStandard(
-            events: events,
-            whisperBinaryURL: whisperBinaryURL,
-            paths: paths,
-            whisperOptions: refineWhisperOptions)
-        self.queue = q
-        await queueVM.setQueue(q)
-        queueVM.onJobsTerminated = { [weak self] _ in
-            guard let self else { return }
-            Task { await self.scanner.refresh() }
-        }
-        // Single process-wide poller. The menubar dropdown and the
-        // recordings-list RefineBadge both read from queueVM; before this
-        // change polling only ran while RefinementsListView was visible,
-        // so those two surfaces were stale.
-        queueVM.startPolling()
-        queueReady.signal()
-    }
-
-    /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).
-    ///
-    /// The watcher was created but never `start()`-ed at a file, so the live
-    /// popover showed "Waiting for transcript" forever. This observes the VM's
-    /// `liveMarkdownURL`: when a recording begins the watcher tails that real
-    /// `live.md`; when it ends the watcher is stopped. The wiring lives at the
-    /// app level so the watcher keeps tailing whether or not the popover is
-    /// open — re-opening the popover just re-reads the already-tailed lines.
-    private func startLiveWatcherWiring() {
-        liveWatcherWiring = Task { @MainActor [weak self] in
-            var current: URL?
-            while !Task.isCancelled {
-                guard let self else { return }
-                let url = self.recording.liveMarkdownURL
-                if url != current {
-                    current = url
-                    if let url {
-                        self.liveWatcher.start(liveMarkdownURL: url)
-                    } else {
-                        self.liveWatcher.stop()
-                    }
-                }
-                // `liveMarkdownURL` flips at most twice per session (recording
-                // start / stop), so a light poll is ample — no `withObservation`
-                // plumbing needed. `@MainActor` so the VM read is in-isolation.
-                try? await Task.sleep(for: .milliseconds(200))
-            }
-        }
-    }
-
-    /// Install (or reinstall) the passive global hotkey monitor.
-    func installHotkeyMonitor() {
-        if let hotkeyMonitor {
-            NSEvent.removeMonitor(hotkeyMonitor)
-            self.hotkeyMonitor = nil
-        }
-        guard let combo = settings.globalHotkey else { return }
-        hotkeyMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: .keyDown
-        ) { [weak self] event in
-            guard let self else { return }
-            // The modifier keys that matter for a shortcut — masks off
-            // device-dependent bits (caps lock, fn, numeric pad).
-            let relevant: NSEvent.ModifierFlags =
-                [.command, .control, .option, .shift]
-            let activeModifiers = event.modifierFlags
-                .intersection(relevant).rawValue
-            guard event.keyCode == combo.keyCode,
-                  activeModifiers == combo.modifiers
-            else { return }
-            // Debounce: ignore the press while a toggle is still in flight so
-            // a rapid double-press cannot stack a start on top of a stop.
-            guard self.hotkeyToggleTask == nil else { return }
-            self.hotkeyToggleTask = Task { [weak self] in
-                await self?.toggleRecording()
-                self?.hotkeyToggleTask = nil
-            }
-        }
-    }
-
-    /// Start or stop recording — the hotkey's effect (R41).
-    ///
-    /// Pause/resume of the refinement queue is now owned by `RecordingViewModel`
-    /// via the injected hooks, so every path (hotkey, menubar dropdown) is
-    /// correct by construction.
-    func toggleRecording() async {
-        switch recording.status {
-        case .idle:
-            await recording.startRecording()
-        case .recording:
-            await recording.stopRecording()
-        default:
-            break
-        }
     }
 }
 

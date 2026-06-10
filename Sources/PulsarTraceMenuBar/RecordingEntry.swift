@@ -101,6 +101,18 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
     /// The display name shown in the list — the recording folder's basename.
     public var displayName: String { folderURL.lastPathComponent }
 
+    /// The recording's refined transcript (`final.md`) — present once a
+    /// refine pass has completed. Derived here so views read transcripts
+    /// without touching `RecordingFolder`'s file-name constants.
+    public var finalURL: URL {
+        folderURL.appendingPathComponent(RecordingFolder.FileName.final)
+    }
+
+    /// The recording's provisional live transcript (`live.md`).
+    public var liveURL: URL {
+        folderURL.appendingPathComponent(RecordingFolder.FileName.live)
+    }
+
     /// Format `durationSeconds` as `M:SS` when shorter than an hour, else
     /// `H:MM:SS`. Truncates fractional seconds. Negative or NaN inputs
     /// (defensive — `metadata.json` is trusted, but the field is `Double`)
