@@ -1,6 +1,6 @@
 # Main Window UX Overhaul — Master–Detail Recordings, In-Window Live Transcript, Queue Folding
 
-- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select. Second amendment (user request): renameable recordings (UI-owned sidecar title) and symbol rendering of the "(provisional)" live label. Third amendment (user decision): the provisional marker is fixed at the source — the engine writes a compact `?` suffix into `live.md`; no display-layer transformation, format docs and R16's example updated ("clean over compatibility — the app is too new to tangle").
+- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select. Second amendment (user request): renameable recordings (UI-owned sidecar title) and symbol rendering of the "(provisional)" live label. Third amendment (user decision): the provisional marker is fixed at the source — the engine writes a compact `?` suffix into `live.md`; no display-layer transformation, format docs and R16's example updated ("clean over compatibility — the app is too new to tangle"). Fourth amendment (user-set guiding principle): breaking changes are allowed and **preferred** over compatibility layers — simplifications applied throughout (single rename affordance, clock-free completion badge, unify-don't-map id rule).
 - **Date:** 2026-06-10
 - **Scope:** `pulsartrace-mac` (views) + `PulsarTraceMenuBar` (new view models), plus **one deliberate engine/format change**: the live provisional-label suffix in `live.md` becomes `?` (§5; `docs/file-format.md` and the R16 example updated with it). `final.md` and `events/*.jsonl` untouched; no capture changes.
 - **Builds on:** `docs/specs/2026-06-10-ui-polish-plan.md` (previous polish round, implemented — transcript parser/styled rendering, friendly titles, menubar icon states, notifications, context menus, hotkey recorder).
@@ -26,6 +26,13 @@ The unified window works but reads as a debug surface, not a product:
    transcript renderers (cross-line selection broken in one of them).
 
 ## 2. Goals / Non-goals
+
+**Guiding principle (user-set):** the app is pre-release. Breaking changes —
+to file formats, interactions, internal contracts — are allowed and
+*preferred* over compatibility layers, dual representations, legacy shims,
+or migration code. When a choice trades a breaking change against an extra
+mechanism, break. One representation, the fewest mechanisms that serve the
+user.
 
 **Goals**
 
@@ -57,8 +64,11 @@ The unified window works but reads as a debug surface, not a product:
 - No Liquid Glass adoption, no onboarding tour (R46 stays deferred), no
   speaker "play sample" (R31 remainder), no menubar dropdown redesign beyond
   the hover-color correctness fix.
-- The detached Live Transcript window (R45) is kept, not replaced — the
-  in-window live detail is an addition.
+- The detached Live Transcript window (R45) is kept — considered for
+  deletion under the simplicity principle, but it serves a function the main
+  window can't (a compact floating companion while another app is focused
+  during a call) and costs almost nothing since it shares the single
+  renderer. Kept for function, not compatibility.
 - No new index database — the list stays scan-based (R44). The recording
   title sidecar (§4.1) lives inside the recording folder, so it moves with
   the recording and respects R44's documented move-out-of-folder behavior.
@@ -103,9 +113,11 @@ litter). Chosen: the Recordings pane owns an internal resizable split.
   the existing context menu still works. On pane appear, if the selection is
   nil or its row no longer exists, the newest recording auto-selects so the
   detail is never blank.
-- **Renameable recordings.** Context-menu "Rename", Return on the selected
-  row, or double-click begins an inline rename TextField — the same
-  affordances as the Speakers list (internal consistency). Storage: a
+- **Renameable recordings.** Context-menu "Rename" or Return on the selected
+  row begins an inline rename TextField — the same two affordances as the
+  Speakers list (internal consistency). The double-click-to-rename gesture
+  is dropped everywhere: it fights `List` selection on macOS (the previously
+  flagged risk) and is a third mechanism for the same action. Storage: a
   UI-owned sidecar in the recording folder (`title.txt`, single line,
   whitespace-trimmed, newlines stripped, atomic write; filename constant
   added to `RecordingFolder.FileName`). The engine never reads it,
@@ -134,9 +146,10 @@ litter). Chosen: the Recordings pane owns an internal resizable split.
   - failed — red badge with humanized copy; raw `errorClass` in the tooltip
   - not yet refined — subtle orange clock, as today
   - **just refined — transient green check**: shown while the recording's
-    latest terminal job in `queueVM.recent` is `.completed` AND the row has
-    not been selected since completion AND less than ~5 minutes have passed
-    (injectable clock for tests). Gives the queued→refining wait a visible
+    latest terminal job in `queueVM.recent` is `.completed` and the row has
+    not been selected since completion; clears on selection or when the job
+    ages out of `recent`. No timer, no clock injection — two existing
+    signals, zero new mechanisms. Gives the queued→refining wait a visible
     ending even when the notification was missed/denied, without permanent
     check-mark noise.
   Queue state wins over the intrinsic refined flag (preserves today's
@@ -313,13 +326,13 @@ unchanged.
   (`Set<String>` selection): ⌘-click two speakers enables **Merge** in the
   toolbar with both operands pre-seeded (sheet pickers stay editable —
   which one to keep is still an explicit choice); exactly one selection
-  enables **Split** and Return-to-rename (double-click renames too, as
-  today). Single-selection seeding was rejected in review: merge is a
-  two-operand action. Context menu and delete-with-undo-toast behavior
-  unchanged. **Risk flags for planning:** the per-row
-  `.onTapGesture(count: 2)` can swallow the first selection click in macOS
-  SwiftUI `List`s; Return-to-rename needs deliberate key routing in an
-  accessory app (same class as the ⌘F flag).
+  enables **Split** and Return-to-rename. The double-click rename gesture is
+  removed along with the recordings one (breaking an existing interaction —
+  fine; one less mechanism and the gesture-vs-selection conflict disappears).
+  Single-selection seeding was rejected in review: merge is a two-operand
+  action. Context menu and delete-with-undo-toast behavior unchanged.
+  **Risk flag for planning:** Return-to-rename needs deliberate key routing
+  in an accessory app (same class as the ⌘F flag).
 - **Banners/toasts**: Speakers error + undo overlays move from `.overlay` to
   `.safeAreaInset`; all banners/toasts get appear/disappear transitions
   (`.move + .opacity`, `.animation(_:value:)`). WCAG-checked tint scheme kept.
@@ -374,8 +387,8 @@ New suites in `Tests/MenuBarTests` (Swift Testing, `@MainActor`, throwaway
   (fixed reference dates, category-level assertions, not locale strings);
   filter matching incl. live-row exemption; badge precedence (queue wins
   over intrinsic; cancelled/unknown falls through — preserves today's
-  behavior); transient just-refined badge expiry by clock and by selection
-  (injectable clock); live-row synthesis, dedup on id, removal on stop;
+  behavior); transient just-refined badge clearing on selection and on
+  eviction from `recent`; live-row synthesis, dedup on id, removal on stop;
   auto-select rules (nil/stale selection → newest; **no** auto-select on
   status transitions — action-scoped only); rename round-trip (sidecar
   write/read, trim + newline-strip rules, clear restores default,
@@ -409,12 +422,11 @@ move).
 
 - Exact `RecordPlan.recordingId` vs `RecordingFolder.recordingId(forName:)`
   equivalence for the synthesized row's id (documented as stable; verify at
-  implementation and pin with a test).
+  implementation and pin with a test). If they turn out to differ, **unify
+  the derivation at the source** — do not map between two id schemes
+  (guiding principle, §2).
 - ⌘F routing in the accessory app (§5 risk flag); Return-to-rename key
-  routing in the Speakers list (§8 risk flag).
-- Double-click rename gesture vs `List` selection click-swallowing on the
-  Speakers rows (§8 risk flag) — fall back to Return/context-menu rename
-  only if the gesture fights selection.
+  routing in the rename flows (§4.1/§8 risk flag).
 
 ## 13. Named follow-ups (out of scope, recorded so they aren't lost)
 
