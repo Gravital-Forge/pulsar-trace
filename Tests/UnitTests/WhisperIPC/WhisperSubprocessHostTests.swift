@@ -72,7 +72,7 @@ struct WhisperSubprocessHostTests {
     @Test("drainStderrLines forwards each newline-delimited stderr line as a notice and exits on EOF")
     func drainStderrLinesForwardsLines() {
         let pipe = Pipe()
-        let capture = CapturingDrainLogHandler()
+        let capture = CapturingLogHandler()
         let logger = Logger(label: "test") { _ in capture }
 
         let done = DispatchSemaphore(value: 0)
@@ -102,7 +102,7 @@ struct WhisperSubprocessHostTests {
     @Test("drainStderrLines flushes a trailing partial line (no terminating newline) at EOF")
     func drainStderrLinesFlushesTrailingPartial() {
         let pipe = Pipe()
-        let capture = CapturingDrainLogHandler()
+        let capture = CapturingLogHandler()
         let logger = Logger(label: "test") { _ in capture }
 
         let done = DispatchSemaphore(value: 0)
@@ -129,7 +129,7 @@ struct WhisperSubprocessHostTests {
     @Test("forwarded stderr lines have the home directory redacted (Invariant 7)")
     func drainRedactsHomePaths() {
         let pipe = Pipe()
-        let capture = CapturingDrainLogHandler()
+        let capture = CapturingLogHandler()
         let logger = Logger(label: "test") { _ in capture }
 
         let done = DispatchSemaphore(value: 0)
@@ -157,7 +157,7 @@ struct WhisperSubprocessHostTests {
     @Test("the EOF-flushed trailing partial line is also home-redacted (Invariant 7)")
     func drainRedactsHomePathsInTrailingPartial() {
         let pipe = Pipe()
-        let capture = CapturingDrainLogHandler()
+        let capture = CapturingLogHandler()
         let logger = Logger(label: "test") { _ in capture }
 
         let done = DispatchSemaphore(value: 0)
@@ -213,25 +213,5 @@ struct WhisperSubprocessHostTests {
     // imposes kernel-scheduling latency that flakes the tight-budget
     // timing tests in adjacent unit suites (the 80 ms heartbeat / the
     // 30 ms respawn-backoff log) when run in parallel.
-}
-
-/// Lock-protected log sink used by the stderr-drainer tests. Same
-/// shape as the helper in the other WhisperIPC tests but kept private
-/// to this file so the unit-tests target doesn't grow yet another
-/// transitive symbol.
-private final class CapturingDrainLogHandler: LogHandler, @unchecked Sendable {
-    private let lock = NSLock()
-    private var _m: [String] = []
-    var logLevel: Logger.Level = .trace
-    var metadata: Logger.Metadata = [:]
-    subscript(metadataKey k: String) -> Logger.Metadata.Value? {
-        get { metadata[k] } set { metadata[k] = newValue }
-    }
-    var messages: [String] { lock.withLock { _m } }
-    func log(level: Logger.Level, message: Logger.Message,
-             metadata: Logger.Metadata?, source: String,
-             file: String, function: String, line: UInt) {
-        lock.withLock { _m.append("\(message)") }
-    }
 }
 

@@ -213,21 +213,3 @@ private final class TrackingWindowTranscriber: WindowTranscribing, @unchecked Se
         return TranscriptionResult(segments: [], language: "en")
     }
 }
-
-/// Lock-protected log sink — same shape as the `RemoteWindowTranscriber`
-/// tests' helper. The tests assert on `messages` after the call returns.
-private final class CapturingLogHandler: LogHandler, @unchecked Sendable {
-    private let lock = NSLock()
-    private var _m: [String] = []
-    var logLevel: Logger.Level = .trace
-    var metadata: Logger.Metadata = [:]
-    subscript(metadataKey k: String) -> Logger.Metadata.Value? {
-        get { metadata[k] } set { metadata[k] = newValue }
-    }
-    var messages: [String] { lock.withLock { _m } }
-    func log(level: Logger.Level, message: Logger.Message,
-             metadata: Logger.Metadata?, source: String,
-             file: String, function: String, line: UInt) {
-        lock.withLock { _m.append("\(message)") }
-    }
-}

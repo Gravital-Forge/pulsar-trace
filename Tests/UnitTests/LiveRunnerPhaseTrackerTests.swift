@@ -181,33 +181,3 @@ struct LiveRunnerPhaseTrackerTests {
         return unitIsMs ? n : n * 1000
     }
 }
-
-/// Lock-protected log sink that records every message handed to it. Used by
-/// the tracker's heartbeat tests so we can assert on the actual log content.
-private final class CapturingLogHandler: LogHandler, @unchecked Sendable {
-    private let lock = NSLock()
-    private var _messages: [String] = []
-
-    var logLevel: Logger.Level = .trace
-    var metadata: Logger.Metadata = [:]
-    subscript(metadataKey key: String) -> Logger.Metadata.Value? {
-        get { metadata[key] }
-        set { metadata[key] = newValue }
-    }
-
-    var messages: [String] {
-        lock.withLock { _messages }
-    }
-
-    func log(
-        level: Logger.Level,
-        message: Logger.Message,
-        metadata: Logger.Metadata?,
-        source: String,
-        file: String,
-        function: String,
-        line: UInt
-    ) {
-        lock.withLock { _messages.append("\(message)") }
-    }
-}
