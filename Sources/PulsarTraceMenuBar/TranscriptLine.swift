@@ -22,7 +22,9 @@ public enum TranscriptLine: Equatable, Sendable {
         // `.+` matches up to the LAST `:**` (it grabs everything first,
         // then backtracks only as far as needed), so names containing
         // colons survive. Local literal: `Regex` is not Sendable, so a
-        // `static let` would violate Swift 6 strict concurrency.
+        // `static let` would violate Swift 6 strict concurrency — revisit
+        // if a future stdlib makes Regex Sendable (the runtime caches the
+        // compiled program, so per-call construction costs ~nothing).
         let utteranceRegex = /^\*\*\[(\d{2}:\d{2}:\d{2})\] (.+):\*\* (.*)$/
         if let match = line.wholeMatch(of: utteranceRegex) {
             return .utterance(

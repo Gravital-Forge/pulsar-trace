@@ -194,6 +194,11 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
 
         if textChanged {
             let oldLineCount = context.coordinator.lastSeenLineCount
+            // Wholesale rebuild — same O(n) shape the old `string =` setter
+            // had. If long meetings ever make this measurable: live changes
+            // are suffix-only appends, so `textStorage.append` over
+            // `lines[oldCount...]` would work, with a full rebuild fallback
+            // when the line count decreases (truncation/overwrite).
             textView.textStorage?.setAttributedString(Self.attributed(from: lines))
             context.coordinator.lastSeenRawText = newText
             // Force layout so the document view's frame reflects the new
