@@ -83,6 +83,7 @@ from pulsartrace_ai._common import (
     DiarizationError,
     Span,
     _annotation_to_spans,
+    _embeddings_by_label,
     _model_revision,
     _seed_everything,
 )
@@ -140,13 +141,17 @@ def diarize_window(
         for s in _annotation_to_spans(diarization)
     ]
 
-    embeddings: dict[str, list[float]] = {}
-    embedding_dim = 0
-    if raw_embeddings is not None and len(raw_embeddings) > 0:
-        embedding_dim = int(raw_embeddings.shape[1])
-        for index, label in enumerate(speakers):
-            if index < len(raw_embeddings):
-                embeddings[label] = [float(x) for x in raw_embeddings[index]]
+    # Non-finite rows (NaN — a cluster with no usable speech frames) are
+    # dropped at the source so the response line's `allow_nan=False` dump
+    # cannot fail; the Swift LiveDiarizer defaults a label with no embedding
+    # entry to an empty embedding and keeps the window's spans.
+    embeddings, embedding_dim, dropped = _embeddings_by_label(raw_embeddings, speakers)
+    for label in dropped:
+        print(
+            f"[live_diarize] window @{window_start:.1f}s dropped non-finite "
+            f"embedding for {label} (no usable speech frames)",
+            file=sys.stderr,
+        )
 
     print(
         f"[live_diarize] window @{window_start:.1f}s diarized in "

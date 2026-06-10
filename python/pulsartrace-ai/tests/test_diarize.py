@@ -13,15 +13,20 @@ and reused across every case here.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 
+import numpy as np
 import pytest
 
+from pulsartrace_ai._common import _embeddings_by_label
 from pulsartrace_ai.diarize import (
     MODEL_ID,
     SCHEMA_VERSION,
     DiarizationError,
+    DiarizationResult,
+    Span,
     diarize,
 )
 
@@ -166,6 +171,98 @@ def test_telemetry_is_disabled(audio_dir, diarization_pipeline):
     # Running a real diarization must not flip the gate back on.
     diarize(audio_dir / "single-speaker-30s.wav", pipeline=diarization_pipeline)
     assert is_metrics_enabled() is False
+
+
+def _result_like_diarize(
+    speakers: list[str],
+    spans: list[Span],
+    raw_embeddings,
+) -> DiarizationResult:
+    """Build a DiarizationResult exactly the way `diarize()` does post-pipeline.
+
+    Uses the same `_embeddings_by_label` mapping `diarize()` calls, so these
+    tests exercise the real construction path without paying a model load.
+    """
+    embeddings, embedding_dim, _ = _embeddings_by_label(raw_embeddings, speakers)
+    return DiarizationResult(
+        model_revision="0000000000000000000000000000000000000000",
+        model_version="4.0.4",
+        audio_duration=37.0,
+        speakers=speakers,
+        spans=spans,
+        exclusive_spans=spans,
+        embeddings=embeddings,
+        embedding_dim=embedding_dim,
+    )
+
+
+def test_nan_embedding_row_is_dropped_and_result_serializes() -> None:
+    """Regression: a near-silent recording made pyannote emit a NaN embedding
+    row, and `json.dump(..., allow_nan=False)` raised ValueError — failing the
+    refinement job as `diarizeCrashed` on every retry. The NaN row is now
+    dropped at the source; the speaker keeps its spans and its label."""
+    speakers = ["SPEAKER_00", "SPEAKER_01"]
+    spans = [
+        Span(speaker="SPEAKER_00", start=0.5, end=2.1),
+        Span(speaker="SPEAKER_01", start=3.0, end=3.4),
+    ]
+    raw = np.array([[0.1] * 256, [math.nan] * 256])
+
+    result = _result_like_diarize(speakers, spans, raw)
+
+    # The dump that crashed in production must now succeed.
+    payload = json.loads(json.dumps(result.as_dict(), allow_nan=False))
+
+    # The NaN speaker keeps its label and spans — only the embedding is gone.
+    assert payload["speakers"] == ["SPEAKER_00", "SPEAKER_01"]
+    assert any(s["speaker"] == "SPEAKER_01" for s in payload["spans"])
+    assert set(payload["embeddings"]) == {"SPEAKER_00"}
+    assert payload["embedding_dim"] == 256
+
+
+def test_main_emits_nothing_on_stdout_when_serialization_fails(
+    monkeypatch, capsys
+) -> None:
+    """Regression: `json.dump` used to stream a partial JSON object to stdout
+    before raising on a non-finite value, and the exception escaped `main()`'s
+    try/except (exit 1, partial stdout). Serialization now happens inside the
+    try, before any stdout write: a failure is a clean exit 2 with an empty
+    stdout — never partial JSON for the Swift parent to choke on."""
+    import pulsartrace_ai.diarize as diarize_module
+
+    class _Unserializable:
+        def as_dict(self):
+            return {"embeddings": {"SPEAKER_00": [math.nan]}}
+
+    monkeypatch.setattr(diarize_module, "diarize", lambda wav: _Unserializable())
+
+    exit_code = diarize_module.main(["unused.wav"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.out == ""
+    assert "[diarize] unexpected failure" in captured.err
+
+
+def test_main_writes_exactly_one_json_line_on_success(monkeypatch, capsys) -> None:
+    """The atomic write: stdout receives the full payload as one line."""
+    import pulsartrace_ai.diarize as diarize_module
+
+    result = _result_like_diarize(
+        ["SPEAKER_00"],
+        [Span(speaker="SPEAKER_00", start=0.0, end=1.6)],
+        np.array([[0.25] * 8]),
+    )
+    monkeypatch.setattr(diarize_module, "diarize", lambda wav: result)
+
+    exit_code = diarize_module.main(["unused.wav"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out.count("\n") == 1
+    assert captured.out.endswith("\n")
+    assert json.loads(captured.out) == result.as_dict()
+    assert "[diarize] ok" in captured.err
 
 
 def test_cli_end_to_end(audio_dir):

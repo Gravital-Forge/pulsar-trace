@@ -47,7 +47,10 @@ Output JSON contract (consumed by Swift ``Diarizer``)::
 ``spans`` preserves overlapping speech: when two speakers talk at once both
 attributions appear (their spans simply overlap in time). ``exclusive_spans``
 is pyannote 4.x's overlap-resolved variant, handy for clean transcript
-reconciliation. Times are seconds from the start of the WAV.
+reconciliation. Times are seconds from the start of the WAV. A speaker whose
+embedding row is non-finite (pyannote emits NaN for a cluster with no usable
+speech frames, e.g. a near-silent recording) is omitted from ``embeddings``;
+its ``spans`` and its entry in ``speakers`` remain.
 
 The model is cached under PulsarTrace's own cache dir (``HF_HOME`` is pointed
 at ``~/Library/Caches/PulsarTrace/huggingface``) rather than the shared
@@ -89,6 +92,7 @@ from pulsartrace_ai._common import (
     MODEL_ID,
     Span,
     _annotation_to_spans,
+    _embeddings_by_label,
     _model_revision,
     _seed_everything,
     _wav_duration_seconds,
@@ -255,14 +259,15 @@ def diarize(
     # unambiguous regardless of how a future pyannote version orders things.
     speakers = sorted(str(label) for label in diarization.labels())
 
-    embeddings: dict[str, list[float]] = {}
-    embedding_dim = 0
-    if raw_embeddings is not None and len(raw_embeddings) > 0:
-        embedding_dim = int(raw_embeddings.shape[1])
-        for index, label in enumerate(speakers):
-            if index < len(raw_embeddings):
-                row = raw_embeddings[index]
-                embeddings[label] = [float(x) for x in row]
+    embeddings, embedding_dim, dropped = _embeddings_by_label(raw_embeddings, speakers)
+    for label in dropped:
+        # Speaker labels (SPEAKER_NN) are pyannote-generated — safe for the
+        # operational log (no user content, no paths; Hard Invariant #7).
+        print(
+            f"[diarize] dropped non-finite embedding for {label} "
+            "(no usable speech frames)",
+            file=sys.stderr,
+        )
 
     return DiarizationResult(
         model_revision=model_revision,
@@ -304,6 +309,16 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     try:
         result = diarize(args.wav)
+        # Serialize fully BEFORE touching stdout: `json.dump` streams as it
+        # encodes, so a mid-encode failure would leave partial JSON on stdout
+        # for the Swift parent to choke on. allow_nan=False stays as the
+        # last-resort guard — embeddings are already sanitized at the source
+        # (`_embeddings_by_label` drops non-finite rows), so a NaN/Inf here is
+        # a bug, surfaced as a clean exit 2 (caught below) instead of
+        # `NaN`/`Infinity` tokens that Swift's strict JSONDecoder would reject.
+        payload = json.dumps(
+            result.as_dict(), separators=(",", ":"), allow_nan=False
+        )
     except DiarizationError as exc:
         print(f"[diarize] error: {exc}", file=sys.stderr)
         return 1
@@ -314,13 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         traceback.print_exc(file=sys.stderr)
         return 2
 
-    # allow_nan=False: a NaN/Inf embedding value raises a clean ValueError
-    # here (caught as an unexpected failure → exit 2) instead of emitting
-    # `NaN`/`Infinity` tokens that Swift's strict JSONDecoder would reject.
-    json.dump(
-        result.as_dict(), sys.stdout, separators=(",", ":"), allow_nan=False
-    )
-    sys.stdout.write("\n")
+    sys.stdout.write(payload + "\n")
     sys.stdout.flush()
     print(
         f"[diarize] ok: {len(result.speakers)} speaker(s), "

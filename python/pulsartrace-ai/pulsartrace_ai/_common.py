@@ -13,6 +13,7 @@ This module must not import from ``pulsartrace_ai.diarize`` or
 from __future__ import annotations
 
 import dataclasses
+import math
 import os
 import random
 import sys
@@ -129,6 +130,36 @@ def _model_revision(token: str | None = None) -> str:
     except Exception as exc:  # noqa: BLE001 — revision is best-effort
         print(f"[diarize] model revision unavailable: {exc}", file=sys.stderr)
         return ""
+
+
+def _embeddings_by_label(
+    raw_embeddings, speakers: list[str]
+) -> tuple[dict[str, list[float]], int, list[str]]:
+    """Map sorted speaker labels to embedding rows, dropping non-finite rows.
+
+    pyannote can emit a NaN embedding row when a cluster has no usable
+    speech frames (e.g. a near-silent recording). A non-finite row would
+    crash JSON serialization (``allow_nan=False``) and is useless to the
+    speaker library, so it is dropped here; the speaker keeps its spans
+    and its pyannote display label (the Swift reconciler treats a label
+    with no embedding as unmatchable and keeps the label as-is).
+
+    Returns ``(embeddings, embedding_dim, dropped_labels)``.
+    """
+    if raw_embeddings is None or len(raw_embeddings) == 0:
+        return {}, 0, []
+
+    embedding_dim = int(raw_embeddings.shape[1])
+    embeddings: dict[str, list[float]] = {}
+    dropped_labels: list[str] = []
+    for index, label in enumerate(speakers):
+        if index < len(raw_embeddings):
+            row = [float(x) for x in raw_embeddings[index]]
+            if all(math.isfinite(x) for x in row):
+                embeddings[label] = row
+            else:
+                dropped_labels.append(label)
+    return embeddings, embedding_dim, dropped_labels
 
 
 def _annotation_to_spans(annotation) -> list[Span]:
