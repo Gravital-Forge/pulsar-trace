@@ -25,6 +25,10 @@ struct DiarBufferManager {
     var bufferedSampleCount: Int { buffer.count }
 
     init(stepSamples: Int, windowSamples: Int) {
+        // A zero-sample window would make the lo-bound guard below emit an
+        // empty WindowRequest instead of nil — reject the misuse outright.
+        precondition(stepSamples > 0 && windowSamples > 0,
+                     "step and window must be positive sample counts")
         self.stepSamples = stepSamples
         self.windowSamples = windowSamples
     }

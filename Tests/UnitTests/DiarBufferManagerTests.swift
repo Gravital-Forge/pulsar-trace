@@ -8,6 +8,9 @@ import Testing
 struct DiarBufferManagerTests {
 
     // 16 kHz mono — windows in samples for readable tests.
+    // 1 s / 3 s = 3× overlap (production default: 5 s step / 10 s window =
+    // 2× overlap). Both ratios exercise the same code paths; the tests are
+    // ratio-agnostic.
     private let step = 16_000      // 1 s cadence
     private let window = 48_000    // 3 s window
 

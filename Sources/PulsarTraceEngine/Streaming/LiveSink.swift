@@ -4,7 +4,9 @@ import Foundation
 ///
 /// Both streams append through this one actor, so the append-only `live.md`
 /// (R36) never sees a half-line from an interleaved write and the dedup state
-/// is consistent.
+/// is consistent. The run-loop ownership story — why a single actor suffices
+/// and how the two transcription streams converge here — is documented in
+/// `LiveRunner`'s concurrency design comment.
 actor LiveSink {
     private let writer: LiveMarkdownWriter
     private let recordingStart: Date
