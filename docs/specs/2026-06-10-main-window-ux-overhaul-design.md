@@ -1,6 +1,6 @@
 # Main Window UX Overhaul — Master–Detail Recordings, In-Window Live Transcript, Queue Folding
 
-- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select.
+- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select. Second amendment (user request): renameable recordings (UI-owned sidecar title) and symbol rendering of the "(provisional)" live label.
 - **Date:** 2026-06-10
 - **Scope:** `pulsartrace-mac` (views) + `PulsarTraceMenuBar` (new view models). No engine, capture, or public-API changes (`live.md` / `final.md` / `events/*.jsonl` untouched).
 - **Builds on:** `docs/specs/2026-06-10-ui-polish-plan.md` (previous polish round, implemented — transcript parser/styled rendering, friendly titles, menubar icon states, notifications, context menus, hotkey recorder).
@@ -37,7 +37,12 @@ The unified window works but reads as a debug surface, not a product:
 - Refinement status lives on recording rows; the Refinements pane is deleted.
 - Day-grouped, filterable, selection-driven recordings list with
   exceptional-only status badges (plus a transient just-completed badge).
-- Recordings can be moved to the Trash from the list.
+- Recordings can be moved to the Trash from the list, and **renamed** — a
+  user-assigned title replaces the date-based default everywhere (list,
+  detail header, notifications).
+- The live transcript's "(provisional)" speaker suffix renders as a compact
+  `*` marker instead of the verbose label (display-only; `live.md` keeps the
+  on-disk marker per R16).
 - `ContentUnavailableView` empty states with actions (the PRD's R44 epic
   explicitly asks for a quick-start CTA in the recordings empty state).
 - One transcript renderer (the NSTextView-backed path) everywhere: fixes
@@ -54,8 +59,9 @@ The unified window works but reads as a debug surface, not a product:
   the hover-color correctness fix.
 - The detached Live Transcript window (R45) is kept, not replaced — the
   in-window live detail is an addition.
-- No new index database — the list stays scan-based (R44).
-- No user-assignable recording titles in this round — named follow-up (§13).
+- No new index database — the list stays scan-based (R44). The recording
+  title sidecar (§4.1) lives inside the recording folder, so it moves with
+  the recording and respects R44's documented move-out-of-folder behavior.
 
 ## 3. Information architecture and window frame
 
@@ -86,17 +92,33 @@ litter). Chosen: the Recordings pane owns an internal resizable split.
 - **Day-grouped sections.** Section keys derived from `recordingStart` with
   the current calendar: "Today", "Yesterday", weekday + date within the last
   week (e.g. "Monday, June 8"), full date older (e.g. "June 3, 2026"). Row
-  titles become time + duration ("2:30 PM · 42:18"); duration omitted when
-  unknown (unrefined rows carry `durationSeconds == 0`). `displayTitle`
-  ("Today at 2:30 PM") remains for the detail header and notifications.
+  title: the custom title when one is set (time + duration drop to a caption
+  line beneath), otherwise time + duration ("2:30 PM · 42:18"); duration
+  omitted when unknown (unrefined rows carry `durationSeconds == 0`).
+  `displayTitle` (custom title if set, else "Today at 2:30 PM") remains the
+  one source for the detail header and notifications.
 - **Selection-driven** (`List(selection:)` bound to
   `AppNavigation.selectedRecordingID: String?`). Single click (or arrow-key
   selection) shows the transcript in the detail — selecting *is* opening;
   the existing context menu still works. On pane appear, if the selection is
   nil or its row no longer exists, the newest recording auto-selects so the
   detail is never blank.
+- **Renameable recordings.** Context-menu "Rename", Return on the selected
+  row, or double-click begins an inline rename TextField — the same
+  affordances as the Speakers list (internal consistency). Storage: a
+  UI-owned sidecar in the recording folder (`title.txt`, single line,
+  whitespace-trimmed, newlines stripped, atomic write; filename constant
+  added to `RecordingFolder.FileName`). The engine never reads it,
+  `metadata.json` stays refine-owned (a re-refine cannot clobber the title),
+  and the folder basename — which the recording id derives from — is never
+  renamed. Absent or cleared sidecar → the date-based default title.
+  Renaming the in-progress row is allowed (harmless; the engine ignores the
+  file). No event is emitted: the title is presentation metadata, not
+  transcript content.
 - **Filter field, not `.searchable`.** An inline filter field pinned to the
-  top of the *list column* (prompt: "Filter by speaker or date"). Rationale:
+  top of the *list column* (prompt: "Filter by title, speaker, or date") —
+  custom titles are matched too, which is what makes the filter genuinely
+  useful. Rationale:
   a toolbar-level `.searchable` field next to a transcript reads as
   search-the-transcript and would fail the natural topic-word queries
   (speaker labels exist only on refined rows); it would also fight ⌘F.
@@ -119,8 +141,8 @@ litter). Chosen: the Recordings pane owns an internal resizable split.
     check-mark noise.
   Queue state wins over the intrinsic refined flag (preserves today's
   documented `RefineStatusIcon` precedence).
-- **Context menu**: View Transcript (selects), Reveal in Finder, Refine
-  (disabled while in flight), Cancel Refinement (queued rows), Retry
+- **Context menu**: View Transcript (selects), Rename, Reveal in Finder,
+  Refine (disabled while in flight), Cancel Refinement (queued rows), Retry
   (failed rows, only when the queue marked the failure retryable), and
   **Move to Trash** (also bound to ⌫ on the selection) via
   `NSWorkspace.shared.recycle` — the Trash itself is the undo, no new
@@ -163,8 +185,9 @@ A `TranscriptDetailModel` picks the source and banner for the selected row:
   (lines / empty-with-placeholder / unreadable-with-error-line) lifted from
   `RecordedTranscriptSheet.load()`. The live path keeps the smart auto-scroll
   and "N new" jump pill via the existing `AutoScrollController`.
-- Detail header: `displayTitle`, duration, speaker pills; Copy and Reveal in
-  Finder buttons (also still in the row context menu).
+- Detail header: `displayTitle` (custom title when set, with the date as a
+  caption beneath it), duration, speaker pills; Copy and Reveal in Finder
+  buttons (also still in the row context menu).
 - **The fixed-size `RecordedTranscriptSheet` is deleted.**
 
 ## 5. One transcript renderer
@@ -182,6 +205,18 @@ current `autoScroll: AutoScrollController?` parameter works. Wins:
   visible menu bar may need an explicit `.keyboardShortcut("f")` hook calling
   `performTextFinderAction(_:)`; verify during implementation and wire
   explicitly if needed.
+
+**Provisional labels render as a symbol.** The live pipeline writes speaker
+labels with a " (provisional)" suffix into `live.md` (R16's provisional
+marker — an on-disk public-contract detail this spec does NOT change). At
+render time the suffix is replaced by a trailing `*` on the speaker name:
+"Them*" instead of "Them (provisional)". A small display helper in
+`PulsarTraceMenuBar` (extension on `TranscriptLine`'s utterance speaker)
+owns the suffix split so it is unit-tested — only the exact " (provisional)"
+*suffix* is replaced; the substring elsewhere in a name is left alone. The
+parser itself is unchanged (its suffix-retention behavior is pinned by
+existing tests). Applies in both the main-window detail and the detached
+live window automatically, since both use the single renderer.
 
 Two explicit requirements (not discoveries):
 
@@ -283,13 +318,14 @@ where possible); views in `pulsartrace-mac` stay pure bindings.
 
 | Component | Target | Role |
 |-----------|--------|------|
-| `RecordingsPaneModel` (new, `@Observable`) | PulsarTraceMenuBar | Composes scanner entries + recording status + queue state + filter text into day sections of row models: live-row synthesis & dedup, badge derivation incl. transient just-refined window (absorbs `RefineStatusIcon` precedence logic; injectable clock), filtering, auto-select rules, move-to-Trash (recycle + refresh + selection fallback). |
+| `RecordingsPaneModel` (new, `@Observable`) | PulsarTraceMenuBar | Composes scanner entries + recording status + queue state + filter text into day sections of row models: live-row synthesis & dedup, badge derivation incl. transient just-refined window (absorbs `RefineStatusIcon` precedence logic; injectable clock), filtering (incl. titles), auto-select rules, rename (sidecar write + refresh), move-to-Trash (recycle + refresh + selection fallback). |
+| `RecordingEntry` (modified) | PulsarTraceMenuBar | Decodes the `title.txt` sidecar into `customTitle: String?`; `displayTitle` prefers it. |
 | `TranscriptDetailModel` (new, `@Observable`) | PulsarTraceMenuBar | Source/banner decision table (§4.2), async file loading, pending-refined-content gate (banner-mediated swap), reload triggers. |
 | `AppNavigation` (modified) | PulsarTraceMenuBar | Drops `.refinements`; gains `selectedRecordingID: String?` (process-lifetime, like `section`). |
 | `RecordingsSplitView` (new; replaces `RecordingsListView` content) | pulsartrace-mac | Resizable split: list + detail, toolbar, divider persistence. |
 | `TranscriptDetailView` (new) | pulsartrace-mac | Header + banner + renderer. |
 | `RecordToolbarButton` (new) | pulsartrace-mac | Shared toolbar item, all panes; action-scoped navigation. |
-| `TranscriptView` (modified) | pulsartrace-mac | Single NSTextView renderer; find bar; mode-dependent initial scroll; suffix-append fast path. |
+| `TranscriptView` (modified) | pulsartrace-mac | Single NSTextView renderer; find bar; mode-dependent initial scroll; suffix-append fast path; provisional-suffix `*` rendering. |
 | `RefinementsListView` (deleted), `RecordedTranscriptSheet` (deleted) | pulsartrace-mac | Folded per §7 / §4.2. |
 | `SpeakerEditorView`, `SettingsView`, `LiveTranscriptView`, `MenuBarMenuView`, `MainWindowView`, `PulsarTraceMacApp` (modified) | pulsartrace-mac | §8 sweep; sidebar heading removal; window min/default size (§3). |
 
@@ -322,12 +358,17 @@ New suites in `Tests/MenuBarTests` (Swift Testing, `@MainActor`, throwaway
   behavior); transient just-refined badge expiry by clock and by selection
   (injectable clock); live-row synthesis, dedup on id, removal on stop;
   auto-select rules (nil/stale selection → newest; **no** auto-select on
-  status transitions — action-scoped only).
+  status transitions — action-scoped only); rename round-trip (sidecar
+  write/read, trim + newline-strip rules, clear restores default,
+  `displayTitle` preference, filter matches titles).
 - `TranscriptDetailModelTests` — source/banner decision table (§4.2)
   including queued/failed banners; the pending-refined-content gate (no
   auto-swap while content is on screen; swap on explicit action and on
   selection change; immediate reload from placeholder/error); three-way
   load result.
+- Provisional display helper — `"Them (provisional)"` → `("Them",
+  provisional: true)`; exact-suffix only (a name merely containing the
+  substring is untouched); plain names pass through.
 - Existing suites: `AppSection`-related and `RefinementsListView`-adjacent
   tests updated for the deleted pane; everything else untouched.
 
@@ -354,9 +395,6 @@ move).
 
 ## 13. Named follow-ups (out of scope, recorded so they aren't lost)
 
-- **User-assignable recording titles** (sidecar file, no engine change) —
-  the highest-leverage maturity item not in this round; would also make the
-  list filter meaningfully stronger.
 - Activation-policy revisit (D27) if the unified window grows into the
   primary surface.
 - Speaker "play sample" (R31 remainder).
