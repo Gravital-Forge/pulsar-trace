@@ -9,6 +9,13 @@ import Logging
 ///
 /// `@unchecked Sendable`: `host`/`shutdownLatched` are guarded by `lock`,
 /// the same invariant the two wrappers documented individually.
+///
+/// State machine: `host` starts `nil`; `ensureHostStarted` lazily spawns
+/// it; a decode-deadline breach (`handleHostError`) SIGKILLs and respawns
+/// it (`respawnWithBackoffLog`); `sigkillCurrentHost` returns it to `nil`
+/// without latching, so the next call respawns. `shutdown()` is the only
+/// one-way door: it sets `shutdownLatched`, after which every start
+/// attempt throws — a latched Core never spawns again.
 final class RemoteTranscriberCore: @unchecked Sendable {
 
     /// Closure used to manufacture a new host. The default (supplied by
@@ -38,7 +45,10 @@ final class RemoteTranscriberCore: @unchecked Sendable {
         let logBackoffCap: Duration
         /// Prefix of the deadline-kill warning — the one string that
         /// differed between the wrappers. The Core appends " (\(error))"
-        /// with the concrete `HostError` variant.
+        /// with the concrete `HostError` variant. The wording is
+        /// load-bearing for log greps (tests pin it): the live wrapper
+        /// includes "stream=remote", the refinement wrapper says
+        /// "region" — do not unify the two strings.
         let deadlineKillMessage: String
     }
 

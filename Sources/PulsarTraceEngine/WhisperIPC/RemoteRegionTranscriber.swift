@@ -116,6 +116,10 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
                     socketDirectory: configuration.socketDirectory,
                     lockPath: nil,
                     forceCPU: configuration.forceCPU,
+                    // Deliberately not a Configuration field (unlike the
+                    // window transcriber's): refinement always uses the
+                    // spawn-handshake default. Surface it only when a
+                    // caller actually needs to tune it.
                     spawnTimeout: .seconds(10),
                     initTimeout: configuration.respawnDeadline),
                 modelPath: configuration.modelURL.path,
