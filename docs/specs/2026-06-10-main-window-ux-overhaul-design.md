@@ -1,8 +1,8 @@
 # Main Window UX Overhaul — Master–Detail Recordings, In-Window Live Transcript, Queue Folding
 
-- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select. Second amendment (user request): renameable recordings (UI-owned sidecar title) and symbol rendering of the "(provisional)" live label.
+- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select. Second amendment (user request): renameable recordings (UI-owned sidecar title) and symbol rendering of the "(provisional)" live label. Third amendment (user decision): the provisional marker is fixed at the source — the engine writes a compact `?` suffix into `live.md`; no display-layer transformation, format docs and R16's example updated ("clean over compatibility — the app is too new to tangle").
 - **Date:** 2026-06-10
-- **Scope:** `pulsartrace-mac` (views) + `PulsarTraceMenuBar` (new view models). No engine, capture, or public-API changes (`live.md` / `final.md` / `events/*.jsonl` untouched).
+- **Scope:** `pulsartrace-mac` (views) + `PulsarTraceMenuBar` (new view models), plus **one deliberate engine/format change**: the live provisional-label suffix in `live.md` becomes `?` (§5; `docs/file-format.md` and the R16 example updated with it). `final.md` and `events/*.jsonl` untouched; no capture changes.
 - **Builds on:** `docs/specs/2026-06-10-ui-polish-plan.md` (previous polish round, implemented — transcript parser/styled rendering, friendly titles, menubar icon states, notifications, context menus, hotkey recorder).
 - **Floor:** macOS 14 (`ContentUnavailableView`, `@Observable`, `symbolEffect(.pulse)` available; `.rotate` is not).
 
@@ -40,9 +40,9 @@ The unified window works but reads as a debug surface, not a product:
 - Recordings can be moved to the Trash from the list, and **renamed** — a
   user-assigned title replaces the date-based default everywhere (list,
   detail header, notifications).
-- The live transcript's "(provisional)" speaker suffix renders as a compact
-  `*` marker instead of the verbose label (display-only; `live.md` keeps the
-  on-disk marker per R16).
+- The live transcript's verbose " (provisional)" speaker suffix is replaced
+  by a compact `?` suffix **in the format itself** — engine, file, parser,
+  and display all carry the same representation (§5).
 - `ContentUnavailableView` empty states with actions (the PRD's R44 epic
   explicitly asks for a quick-start CTA in the recordings empty state).
 - One transcript renderer (the NSTextView-backed path) everywhere: fixes
@@ -206,22 +206,29 @@ current `autoScroll: AutoScrollController?` parameter works. Wins:
   `performTextFinderAction(_:)`; verify during implementation and wire
   explicitly if needed.
 
-**Provisional labels render as a symbol.** `live.md` is a machine-facing
-public surface: the PRD's purpose for it is agent consumption during the
-call, and the verbose `(provisional)` suffix is documented in
-`docs/file-format.md` as existing "so an agent can tell them apart" (R16,
-P0). The file keeps that marker — this is not a display patch over a wart
-but the same parse-then-render path the app already applies to every line
-(the `**` bold syntax, the `<!-- pulsartrace:live -->` comment, and raw
-timestamps are never shown either). The renderer displays the parsed
-provisional flag as a trailing `*` on the speaker name: "Them*" instead of
-"Them (provisional)". A display helper in `PulsarTraceMenuBar` (extension
-on `TranscriptLine`'s utterance speaker) owns the suffix split so it is
-unit-tested — only the exact " (provisional)" *suffix* maps to the flag; the
-substring elsewhere in a name is left alone. The parser itself is unchanged
-(its suffix-retention behavior is pinned by existing tests). Applies in both
-the main-window detail and the detached live window automatically, since
-both use the single renderer.
+**The provisional marker changes in the format itself.** User decision: the
+app is too new to preserve the verbose marker for compatibility's sake —
+clean wins. The engine component that composes live system-speaker labels
+switches from the `" (provisional)"` suffix to a bare `?` suffix:
+`**[00:01:23] Them?:** …`, `Them #2?`, `Steve?` (a library-matched but
+still-live name, R18). One representation everywhere — engine, `live.md`,
+parser, display; **no display-layer transformation at all**.
+
+- Symbol choice: `?` rather than the suggested `*`/`'` because a `*` inside
+  the `**…**` bold span breaks CommonMark emphasis parsing and `'` reads as
+  an apostrophe; `?` has no Markdown meaning and is the natural English for
+  a tentative identification.
+- R16's requirement ("live speaker IDs explicitly marked provisional,
+  distinguishable from final labels") remains satisfied — only its example
+  string changes. Deliverables alongside the code: update the R16 example in
+  `project-docs/PRD.md`, the `(provisional)` sections of
+  `docs/file-format.md`, and every test pinning the old suffix (engine sink
+  tests, the `TranscriptLine` parser test).
+- `final.md` semantics are untouched: refinement never wrote provisional
+  markers, so nothing changes there.
+- Legacy files: `live.md` files recorded before this change still contain
+  `(provisional)` and render verbatim until their recording is refined — no
+  migration, accepted (consistent with the no-compatibility-tangle stance).
 
 **Copy copies what you see.** Today the Copy buttons put the raw Markdown
 lines on the pasteboard (bold syntax, `(provisional)` suffix and all), which
@@ -336,7 +343,8 @@ where possible); views in `pulsartrace-mac` stay pure bindings.
 | `RecordingsSplitView` (new; replaces `RecordingsListView` content) | pulsartrace-mac | Resizable split: list + detail, toolbar, divider persistence. |
 | `TranscriptDetailView` (new) | pulsartrace-mac | Header + banner + renderer. |
 | `RecordToolbarButton` (new) | pulsartrace-mac | Shared toolbar item, all panes; action-scoped navigation. |
-| `TranscriptView` (modified) | pulsartrace-mac | Single NSTextView renderer; find bar; mode-dependent initial scroll; suffix-append fast path; provisional-suffix `*` rendering. |
+| `TranscriptView` (modified) | pulsartrace-mac | Single NSTextView renderer; find bar; mode-dependent initial scroll; suffix-append fast path. |
+| Live label composition (engine, `PulsarTraceEngine/Streaming`) | PulsarTraceEngine | `" (provisional)"` suffix → `"?"` (§5), with PRD R16 example + `docs/file-format.md` updates. |
 | `RefinementsListView` (deleted), `RecordedTranscriptSheet` (deleted) | pulsartrace-mac | Folded per §7 / §4.2. |
 | `SpeakerEditorView`, `SettingsView`, `LiveTranscriptView`, `MenuBarMenuView`, `MainWindowView`, `PulsarTraceMacApp` (modified) | pulsartrace-mac | §8 sweep; sidebar heading removal; window min/default size (§3). |
 
@@ -377,14 +385,18 @@ New suites in `Tests/MenuBarTests` (Swift Testing, `@MainActor`, throwaway
   auto-swap while content is on screen; swap on explicit action and on
   selection change; immediate reload from placeholder/error); three-way
   load result.
-- Provisional display helper — `"Them (provisional)"` → `("Them",
-  provisional: true)`; exact-suffix only (a name merely containing the
-  substring is untouched); plain names pass through.
+- Provisional-suffix format change — engine sink/streaming tests pinning
+  `"Them (provisional)"` updated to `"Them?"`; the `TranscriptLine` parser
+  test's provisional case updated (the parser needs no code change — the
+  suffix is part of the speaker capture either way). Engine suites
+  (`--filter Streaming`, `--filter Transcription`) added to the §11
+  verification list because of this change.
 - Existing suites: `AppSection`-related and `RefinementsListView`-adjacent
   tests updated for the deleted pane; everything else untouched.
 
 Verification: bare `swift build`, then `swift test --filter MenuBar`,
-`--filter UnitTests`, `--filter Refinement` (no new cross-suite IPC
+`--filter UnitTests`, `--filter Refinement`, `--filter Streaming`,
+`--filter Transcription` (no new cross-suite IPC
 exposure; the broad `PipelineTests` filter stays off-limits per CLAUDE.md).
 Manual GUI smoke (`scripts/make-dev-app.sh`) at branch finish: record →
 watch live detail → stop → watch row settle through queued/refining/
