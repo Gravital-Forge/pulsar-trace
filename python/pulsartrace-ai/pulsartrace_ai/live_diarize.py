@@ -76,26 +76,24 @@ os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
 
 import sys
 import time
-import wave
 from pathlib import Path
 from typing import Any
 
-from pulsartrace_ai.diarize import (
+from pulsartrace_ai._common import (
     DiarizationError,
     Span,
     _annotation_to_spans,
     _model_revision,
     _seed_everything,
-    load_pipeline,
 )
+from pulsartrace_ai.diarize import load_pipeline
 
 
-def _wav_duration_seconds(wav_path: Path) -> float:
-    with wave.open(str(wav_path), "rb") as w:
-        rate = w.getframerate()
-        if rate <= 0:
-            raise DiarizationError(f"WAV has invalid sample rate: {wav_path.name}")
-        return w.getnframes() / float(rate)
+def _parse_request(request: dict) -> tuple[Path, float]:
+    """Validate one stdin request; raises DiarizationError on a missing field."""
+    if "window_wav" not in request:
+        raise DiarizationError("request missing required field: window_wav")
+    return Path(request["window_wav"]), float(request.get("window_start", 0.0))
 
 
 def diarize_window(
@@ -199,8 +197,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         try:
             request = json.loads(line)
-            window_wav = Path(request["window_wav"])
-            window_start = float(request.get("window_start", 0.0))
+            window_wav, window_start = _parse_request(request)
             response = diarize_window(window_wav, window_start, pipeline)
             # allow_nan=False so a NaN/Inf embedding raises a clean ValueError
             # here rather than emitting non-standard JSON tokens Swift's

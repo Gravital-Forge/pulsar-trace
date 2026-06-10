@@ -15,10 +15,11 @@ import json
 import subprocess
 import sys
 import wave
+from pathlib import Path
 
 import pytest
 
-from pulsartrace_ai.live_diarize import diarize_window
+from pulsartrace_ai.live_diarize import DiarizationError, _parse_request, diarize_window
 
 
 def _window_wav(src_wav, dst_wav, start_s, end_s):
@@ -32,6 +33,19 @@ def _window_wav(src_wav, dst_wav, start_s, end_s):
             w.setsampwidth(r.getsampwidth())
             w.setframerate(rate)
             w.writeframes(frames)
+
+
+def test_parse_request_missing_window_wav() -> None:
+    """A request without `window_wav` raises a clean DiarizationError, not KeyError."""
+    with pytest.raises(DiarizationError, match="window_wav"):
+        _parse_request({})
+
+
+def test_parse_request_defaults_window_start_to_zero() -> None:
+    """`window_start` is optional and defaults to 0.0."""
+    path, start = _parse_request({"window_wav": "/tmp/w.wav"})
+    assert path == Path("/tmp/w.wav")
+    assert start == 0.0
 
 
 # Mirrors `LiveDiarizer.Configuration.windowTimeout` (LiveDiarizer.swift): a
