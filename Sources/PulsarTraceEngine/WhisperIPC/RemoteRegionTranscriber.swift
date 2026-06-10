@@ -93,12 +93,10 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
 
     private let configuration: Configuration
     private let logger: Logger
-    private let hostFactory: HostFactory
-
-    /// Guards `host` and `shutdownLatched`.
-    private let lock = NSLock()
-    private var host: WhisperHostProtocol?
-    private var shutdownLatched = false
+    /// Owns the host + every lifecycle policy (lazy start, deadline
+    /// kill, respawn with throttled backoff, latched shutdown). See
+    /// `RemoteTranscriberCore`.
+    private let core: RemoteTranscriberCore
 
     // MARK: - Init
 
@@ -111,11 +109,29 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
     ) {
         self.configuration = configuration
         self.logger = logger
-        self.hostFactory = hostFactory
+        self.core = RemoteTranscriberCore(
+            policy: RemoteTranscriberCore.Policy(
+                hostConfiguration: WhisperSubprocessHost.Configuration(
+                    binaryURL: configuration.binaryURL,
+                    socketDirectory: configuration.socketDirectory,
+                    lockPath: nil,
+                    forceCPU: configuration.forceCPU,
+                    spawnTimeout: .seconds(10),
+                    initTimeout: configuration.respawnDeadline),
+                modelPath: configuration.modelURL.path,
+                respawnDeadline: configuration.respawnDeadline,
+                logBackoffInitial: configuration.logBackoffInitial,
+                logBackoffCap: configuration.logBackoffCap,
+                // Refinement-specific wording so log greps disambiguate
+                // refinement from live.
+                deadlineKillMessage:
+                    "whisper region decode exceeded deadline; killing subprocess for respawn"),
+            logger: logger,
+            hostFactory: hostFactory)
     }
 
     deinit {
-        shutdown()
+        core.shutdown()
     }
 
     // MARK: - RegionTranscribing
@@ -150,7 +166,7 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
         // Lazy-start the host on first call so a `RemoteRegionTranscriber`
         // constructed at queue-job boot but never reached (e.g. a job
         // cancelled before any region runs) doesn't spawn a subprocess.
-        try ensureHostStarted()
+        try core.ensureHostStarted()
 
         // Wire format: the subprocess only sees [0..sliceDurationMs)
         // because that's all we sent. The recording-absolute shift is
@@ -165,10 +181,10 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
 
         let response: WhisperIPCResponse
         do {
-            response = try currentHostOrThrow().decode(
+            response = try core.currentHostOrThrow().decode(
                 request, deadline: configuration.decodeDeadline)
         } catch let e as WhisperSubprocessHost.HostError {
-            try handleHostError(e)
+            try core.handleHostError(e)
             // After `handleHostError` returns, the wedged region is
             // discarded and `ResumableRefiner` upstream will surface
             // this throw. Spec §6: "killed region just resumes from the
@@ -208,7 +224,7 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
             // safe action is to discard the host and treat this region
             // as failed.
             logger.error("whisper subprocess returned .ready to a region decode")
-            sigkillCurrentHost()
+            core.sigkillCurrentHost()
             throw WhisperTranscribeError.transcriptionFailed(-1)
         }
     }
@@ -216,174 +232,7 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
     /// Cooperative shutdown — SIGTERM the host with a short grace.
     /// Idempotent: a second call is a no-op.
     public func shutdown() {
-        let host = lock.withLock {
-            guard !shutdownLatched else { return WhisperHostProtocol?.none }
-            shutdownLatched = true
-            let h = self.host
-            self.host = nil
-            return h
-        }
-        host?.terminate(grace: .seconds(2))
-    }
-
-    // MARK: - Host lifecycle
-
-    private func ensureHostStarted() throws {
-        let needsStart = lock.withLock {
-            if shutdownLatched { return false }
-            if let host, host.isAlive { return false }
-            return true
-        }
-        guard needsStart else {
-            if lock.withLock({ shutdownLatched }) {
-                throw WhisperTranscribeError.transcriptionFailed(-1)
-            }
-            return
-        }
-        try startHost()
-    }
-
-    private func startHost() throws {
-        let hostConfig = WhisperSubprocessHost.Configuration(
-            binaryURL: configuration.binaryURL,
-            socketDirectory: configuration.socketDirectory,
-            lockPath: nil,
-            forceCPU: configuration.forceCPU,
-            spawnTimeout: .seconds(10),
-            initTimeout: configuration.respawnDeadline)
-        let newHost = hostFactory(hostConfig, logger)
-        do {
-            try newHost.startAndInitialize(model: configuration.modelURL.path)
-        } catch let e as WhisperSubprocessHost.HostError {
-            // Non-recoverable from the refinement queue's POV: surface
-            // as a model-load failure so the job fails cleanly.
-            throw Self.toModelLoadFailed(e)
-        } catch {
-            throw WhisperTranscribeError.modelLoadFailed("\(error)")
-        }
-        lock.withLock { self.host = newHost }
-    }
-
-    private func currentHostOrThrow() throws -> WhisperHostProtocol {
-        guard let h = (lock.withLock { host }) else {
-            throw WhisperTranscribeError.transcriptionFailed(-1)
-        }
-        return h
-    }
-
-    private func sigkillCurrentHost() {
-        let h = lock.withLock {
-            let host = self.host
-            self.host = nil
-            return host
-        }
-        h?.sigkill()
-    }
-
-    /// React to a host error from `decode`. On a recoverable wedge
-    /// (timeout / EOF / writeFailed / subprocessGone) we SIGKILL the
-    /// host, spawn a fresh one with throttled-log backoff, and re-Init
-    /// — then return normally so the caller can throw the
-    /// `transcriptionFailed` for this wedged region. On a
-    /// non-recoverable spawn failure during the respawn, we re-throw
-    /// as `.modelLoadFailed`.
-    private func handleHostError(
-        _ error: WhisperSubprocessHost.HostError
-    ) throws {
-        switch error {
-        case .readTimedOut, .readEOF, .writeFailed, .subprocessGone:
-            // Refinement-specific wording so log greps disambiguate
-            // refinement from live. Interpolate the actual `HostError`
-            // variant — the 2026-05-27 incident showed a 12-second
-            // failure logged as "exceeded deadline" with a 120-second
-            // budget configured: the underlying error was a
-            // `subprocessGone` / `readEOF`, not a real timeout. The
-            // variant turns that ambiguity into one log line.
-            logger.warning(
-                "whisper region decode exceeded deadline; killing subprocess for respawn (\(error))")
-            sigkillCurrentHost()
-            try respawnWithBackoffLog()
-        case .binaryNotFound, .spawnFailed, .initRefused,
-             .handshakeTimedOut, .handshakeMalformed, .connectFailed:
-            // We shouldn't see these from a steady-state `decode` (they
-            // surface only from `startAndInitialize`). Defensively
-            // map to model-load-failed so a buggy subprocess doesn't
-            // wedge the refiner indefinitely.
-            sigkillCurrentHost()
-            throw Self.toModelLoadFailed(error)
-        }
-    }
-
-    /// Spawn a replacement host. While the spawn is in flight, kick
-    /// off a `Task` that emits the throttled-backoff log line — if the
-    /// respawn finishes quickly (the normal case) the task is
-    /// cancelled before the first emission and no extra log appears.
-    private func respawnWithBackoffLog() throws {
-        var throttle = RespawnLogThrottle(
-            initial: configuration.logBackoffInitial,
-            cap: configuration.logBackoffCap)
-        // Sendable-safe snapshot of values the backoff task needs.
-        let log = logger
-
-        // Bound the total respawn wait by `respawnDeadline`; past
-        // that we give up and let the refinement fail with
-        // `.modelLoadFailed`. The backoff task is also bounded by
-        // this deadline.
-        let respawnStart = ContinuousClock.now
-        let respawnDeadline = configuration.respawnDeadline
-
-        let backoffTask = Task<Void, Never> {
-            while !Task.isCancelled {
-                let delay = throttle.nextDelay()
-                do {
-                    try await Task.sleep(for: delay)
-                } catch {
-                    return
-                }
-                if Task.isCancelled { return }
-                let elapsed = ContinuousClock.now - respawnStart
-                log.warning(
-                    "still waiting for whisper subprocess respawn (elapsed≈\(secondsString(elapsed))s)")
-                if elapsed >= respawnDeadline { return }
-            }
-        }
-        defer { backoffTask.cancel() }
-
-        do {
-            try startHost()
-        } catch {
-            // Log the actual spawn failure before propagating. The
-            // refinement-failed event uses `errorClass = transcribeFailed`
-            // (per `RefinementJobError.classify`) and the queue surfaces
-            // only that coarse class to the UI; this log line is the
-            // only place the *cause* (binary-not-found, lock-held,
-            // handshake-timed-out, etc.) is preserved.
-            logger.error("whisper subprocess respawn failed: \(error)")
-            throw error
-        }
-    }
-
-    /// Convert a host-side error into the `WhisperTranscribeError`
-    /// shape the refiner surfaces for non-recoverable failures.
-    private static func toModelLoadFailed(
-        _ e: WhisperSubprocessHost.HostError
-    ) -> WhisperTranscribeError {
-        switch e {
-        case .binaryNotFound(let p):
-            return .modelLoadFailed("pulsartrace-whisper not found: \(p)")
-        case .spawnFailed(let m):
-            return .modelLoadFailed("spawn failed: \(m)")
-        case .initRefused(let m):
-            return .modelLoadFailed("init refused: \(m)")
-        case .handshakeTimedOut:
-            return .modelLoadFailed("handshake timed out")
-        case .handshakeMalformed(let s):
-            return .modelLoadFailed("handshake malformed: \(s)")
-        case .connectFailed(let errnoVal):
-            return .modelLoadFailed("UDS connect failed: errno \(errnoVal)")
-        case .readTimedOut, .readEOF, .writeFailed, .subprocessGone:
-            return .modelLoadFailed("subprocess unhealthy: \(e)")
-        }
+        core.shutdown()
     }
 
     /// Convert a `WhisperIPCDecoded` payload into the engine's
@@ -414,18 +263,4 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
         let idx = Int((time.seconds * Double(AudioFormat.sampleRate)).rounded())
         return min(max(idx, 0), sampleCount)
     }
-}
-
-// MARK: - Helpers
-
-private func millis(_ d: Duration) -> Int64 {
-    let parts = d.components
-    let secMs = parts.seconds &* 1000
-    let attoMs = parts.attoseconds / 1_000_000_000_000_000
-    return secMs &+ attoMs
-}
-
-private func secondsString(_ d: Duration) -> String {
-    let parts = d.components
-    return "\(parts.seconds)"
 }
