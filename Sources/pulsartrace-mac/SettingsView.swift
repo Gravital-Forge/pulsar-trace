@@ -91,8 +91,16 @@ struct SettingsView: View {
             }
 
             Section("Shortcut") {
-                Text(settings.globalHotkey.map { "Hotkey set (key \($0.keyCode))" }
-                    ?? "No global hotkey set")
+                HStack {
+                    Text("Global record shortcut")
+                    Spacer()
+                    HotkeyRecorderField(combo: $settings.globalHotkey)
+                    Button("Clear") { settings.globalHotkey = nil }
+                        .disabled(settings.globalHotkey == nil)
+                }
+                Text("Toggles recording from anywhere. Click the field, then "
+                    + "press a key with at least one of ⌃⌥⇧⌘.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
