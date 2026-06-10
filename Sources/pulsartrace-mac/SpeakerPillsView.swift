@@ -71,7 +71,10 @@ struct SpeakerPillsView: View {
             .background(style.background, in: Capsule())
             .frame(maxWidth: 160, alignment: .leading)
             // The kind is otherwise encoded by colour only — name it for
-            // VoiceOver alongside the label.
+            // VoiceOver alongside the label. `.combine` folds the inner Text
+            // into this element so VoiceOver reads one label, not a doubled
+            // "Alice, Alice, microphone".
+            .accessibilityElement(children: .combine)
             .accessibilityLabel("\(speaker.label), \(kindDescription(for: speaker))")
     }
 

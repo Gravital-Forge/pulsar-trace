@@ -29,7 +29,10 @@ struct MenuBarMenuView: View {
             // A determinate bar under the status line while a refinement is
             // running — same data the "Refining N% · Stage" text reads, just
             // visual. Padding matches the status text so the bar spans the
-            // panel's content width.
+            // panel's content width. Conditionally present (the idle panel
+            // shouldn't carry ~30pt of reserved dead space) but animated so
+            // the rows below slide rather than snap when a refine starts or
+            // finishes while the panel is open.
             if let progress = runningProgress {
                 VStack(alignment: .leading, spacing: 2) {
                     ProgressView(value: progress.fraction)
@@ -40,6 +43,7 @@ struct MenuBarMenuView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 4)
+                .transition(.opacity)
             }
 
             menuDivider
@@ -61,6 +65,10 @@ struct MenuBarMenuView: View {
         }
         .padding(6)
         .frame(width: 250)
+        // Drives the progress block's insertion/removal transition: rows
+        // below it slide smoothly instead of snapping when a refinement
+        // starts or finishes while the panel is open.
+        .animation(.default, value: runningProgress != nil)
     }
 
     /// Start/stop plus the state-specific actions (live transcript, crash
