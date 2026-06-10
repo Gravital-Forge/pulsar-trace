@@ -105,6 +105,13 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
         (WhisperFrameCodec.maxPayloadBytes - envelopeAllowanceBytes) * 3 / 4
             / MemoryLayout<Float>.size
 
+    /// Today's actual envelope is a few hundred bytes, so 64 KiB is
+    /// generous — but re-check it if `WhisperIPCOptions` ever grows a
+    /// large field (e.g. a long prompt/vocabulary string): the
+    /// `maxChunkSamples` derivation lands exactly on the frame cap when
+    /// the envelope hits this allowance, and only the
+    /// `maxChunkRegionStaysSingleRequest` test (which encodes a real
+    /// request at the ceiling) would catch an overrun empirically.
     private static let envelopeAllowanceBytes = 64 * 1024
 
     /// Closure used to manufacture a new host. The default returns a
