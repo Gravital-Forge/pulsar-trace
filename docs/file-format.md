@@ -83,7 +83,7 @@ A file begins with a marker comment and a heading:
     name it was given before, and its stable `spk_<ulid>` id is recorded in
     `metadata.json`. When an utterance is talked over by two speakers, both
     names are surfaced joined with `+` (e.g. `Steve+Unknown #1`); an utterance
-    that overlaps no diarized span keeps the fallback label `Speaker_?`.
+    that overlaps no diarized span keeps the fallback label `Unrecognized`.
     - *Historical note:* Epic 2 emitted a single placeholder label `Speaker`;
       Epic 3 replaced it with diarized `Speaker_0`, `Speaker_1`, … labels;
       Epic 5 replaced those positional labels with persistent library names.
