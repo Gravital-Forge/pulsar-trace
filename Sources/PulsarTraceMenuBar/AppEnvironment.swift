@@ -155,8 +155,7 @@ public final class AppEnvironment {
             whisperOptions: refineWhisperOptions)
         await queueVM.setQueue(q)
         queueVM.onJobsTerminated = { [weak self] _ in
-            guard let self else { return }
-            Task { await self.scanner.refresh() }
+            Task { [weak self] in await self?.scanner.refresh() }
         }
         // Single process-wide poller. The menubar dropdown and the
         // recordings-list RefineBadge both read from queueVM; before this

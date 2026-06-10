@@ -11,7 +11,7 @@ import PulsarTraceEngine
 /// before that suspend in `awaitReady()`. Replaces the trio of anonymous
 /// boxes (EnqueueBox/AsyncCallBox/QueueReadyGate) with one named seam.
 @MainActor
-public final class RefinementQueueHandle {
+final class RefinementQueueHandle {
 
     /// The real queue, once `bootstrap()` has built it. `nil` until then.
     private var queue: RefinementJobQueue?
@@ -23,13 +23,13 @@ public final class RefinementQueueHandle {
     /// the model between recordings, so it must not be captured up-front.
     private let settings: MenuBarSettings
 
-    public init(settings: MenuBarSettings) {
+    init(settings: MenuBarSettings) {
         self.settings = settings
     }
 
     /// Install the real queue and resume every suspended enqueue. Idempotent
     /// in effect: later calls just swap the queue (no waiters remain).
-    public func install(_ queue: RefinementJobQueue) {
+    func install(_ queue: RefinementJobQueue) {
         self.queue = queue
         isReady = true
         let waiters = readyWaiters
@@ -38,7 +38,7 @@ public final class RefinementQueueHandle {
     }
 
     /// Suspend until `install(_:)` has run; returns immediately afterwards.
-    public func awaitReady() async {
+    func awaitReady() async {
         if isReady { return }
         await withCheckedContinuation { readyWaiters.append($0) }
     }
@@ -49,7 +49,7 @@ public final class RefinementQueueHandle {
     /// silently dropping. The refine model is resolved from live settings at
     /// enqueue time; an enqueue failure is logged to stderr (home-redacted),
     /// never thrown at the recording flow.
-    public func enqueueAutoRefine(folderURL: URL, recordingId: String) async {
+    func enqueueAutoRefine(folderURL: URL, recordingId: String) async {
         await awaitReady()
         guard let queue else {
             // Unreachable after a normal install — kept as the same guard the
@@ -74,13 +74,13 @@ public final class RefinementQueueHandle {
     /// Pause: NO-OP before bootstrap (matches the old AsyncCallBox impls
     /// that read `self?.queue` and dropped the call when nil) — a recording
     /// started before the queue exists has nothing to pause.
-    public func pauseForRecording() async {
+    func pauseForRecording() async {
         guard isReady, let queue else { return }
         await queue.pauseForRecording()
     }
 
     /// Resume: NO-OP before bootstrap, same rationale as `pauseForRecording`.
-    public func resumeAfterRecording() async {
+    func resumeAfterRecording() async {
         guard isReady, let queue else { return }
         await queue.resumeAfterRecording()
     }
