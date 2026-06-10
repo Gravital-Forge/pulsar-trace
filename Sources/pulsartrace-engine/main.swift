@@ -258,8 +258,20 @@ struct EngineMain {
 
         // --- speaker library, READ-ONLY (R18/R32) ---------------------------
         // The live pass only ever reads the library; only the post-pass writes.
-        let library = try? await SpeakerLibrary(
-            databaseURL: AppPaths.standard.speakersDatabaseURL)
+        let library: SpeakerLibrary?
+        do {
+            library = try await SpeakerLibrary(
+                databaseURL: AppPaths.standard.speakersDatabaseURL)
+        } catch {
+            // Live continues without name lookups, but a corrupt library must
+            // be diagnosable — this was previously a silent `try?`.
+            Logger(label: LogSubsystem.engine).error(
+                """
+                speaker library unavailable for live pass — continuing \
+                without name lookups: \(PathRedactor.redactHome("\(error)"))
+                """)
+            library = nil
+        }
 
         // Optional per-window language allow-list (e.g.
         // `--allowed-languages en,pl`). Empty → unrestricted auto-detect
