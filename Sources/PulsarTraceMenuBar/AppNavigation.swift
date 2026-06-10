@@ -38,5 +38,10 @@ public final class AppNavigation {
     /// The sidebar section the unified window currently shows.
     public var section: AppSection = .recordings
 
+    /// The recording selected in the Recordings pane's master list (§4.1).
+    /// Process-lifetime, like `section`, so the selection survives the window
+    /// being closed and re-opened.
+    public var selectedRecordingID: String?
+
     public init() {}
 }
