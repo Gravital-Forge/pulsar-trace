@@ -34,10 +34,31 @@ struct SpeakerEditorView: View {
     /// existing name is highlighted and typing replaces it in one keystroke.
     @FocusState private var renameFieldFocused: Bool
 
+    /// The speaker awaiting the delist ("Don't recognize") confirmation —
+    /// just the two fields the dialog needs. A full `Speaker` also carries a
+    /// 256-float centroid; no reason to park that in view state.
+    private struct PendingDelist {
+        let id: String
+        let name: String
+    }
+
+    /// Non-nil while the delist confirmation dialog is up (Task 7a) —
+    /// delisting rewrites `final.md` files on disk, so it must be confirmed.
+    @State private var pendingDelist: PendingDelist?
+    /// How many recordings the pending delist would rewrite — fetched from
+    /// `appearances(ofSpeaker:)` before presenting the dialog.
+    @State private var pendingDelistCount = 0
+
     // Merge sheet state.
     @State private var showMerge = false
     @State private var mergePrimaryId: String?
     @State private var mergeOtherId: String?
+    /// True while the merge confirmation dialog is up (Task 7b) — merging
+    /// rewrites `final.md` files on disk, so it must be confirmed.
+    @State private var showMergeConfirm = false
+    /// How many recordings the pending merge would rewrite — the merged-away
+    /// speaker's appearance count, fetched before presenting the dialog.
+    @State private var pendingMergeCount = 0
 
     // Split sheet state.
     @State private var showSplit = false
@@ -131,6 +152,26 @@ struct SpeakerEditorView: View {
             }
             .overlay(alignment: .top) { errorBanner(viewModel) }
             .overlay(alignment: .bottom) { undoBanner(viewModel) }
+            // Task 7a — delisting rewrites every final.md the speaker appears
+            // in, so it is confirmed with the impact count fetched when the
+            // context-menu item staged `pendingDelist`.
+            .confirmationDialog(
+                "Stop recognizing \(pendingDelist?.name ?? "")?",
+                isPresented: Binding(
+                    get: { pendingDelist != nil },
+                    set: { if !$0 { pendingDelist = nil } })
+            ) {
+                Button("Stop Recognizing", role: .destructive) {
+                    if let s = pendingDelist {
+                        Task { await viewModel.delist(speakerId: s.id) }
+                    }
+                    pendingDelist = nil
+                }
+            } message: {
+                Text(pendingDelistCount == 0
+                     ? "Their lines become “Unrecognized”. Undoable for 30 days."
+                     : "\(pendingDelistCount) recording\(pendingDelistCount == 1 ? "" : "s") will be rewritten. Their lines become “Unrecognized”. Undoable for 30 days.")
+            }
         }
     }
 
@@ -242,27 +283,54 @@ struct SpeakerEditorView: View {
                 .disabled(renameText
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             } else {
-                Text(speaker.name)
-                Spacer()
-                Button("Rename") {
+                // Double-click renames; everything else is in the context
+                // menu. The gesture and menu are scoped to this branch (not
+                // the whole row) so they can't fire while the rename
+                // TextField is up — a double-click selecting a word inside
+                // the field must not reset `renameText`.
+                HStack {
+                    Text(speaker.name)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
                     renameText = speaker.name
                     renameTarget = speaker.id
                 }
-                // "Don't recognize this speaker" — hidden for the mic speaker
-                // (name `"You"`), matching the ViewModel's mic-rejection guard.
-                // The library doesn't carry an `isMicrophone` flag on a
-                // `Speaker` today, so the UI mirrors the same name-based
-                // policy. See SpeakerEditorViewModel.delist for the rationale.
-                if speaker.name != "You" {
-                    Button("Don't recognize") {
-                        Task { await viewModel.delist(speakerId: speaker.id) }
+                .contextMenu {
+                    Button("Rename") {
+                        renameText = speaker.name
+                        renameTarget = speaker.id
                     }
-                    .help("Stop recognizing this speaker. Their lines in "
-                        + "transcripts become 'Unrecognized'. Undoable for "
-                        + "30 days.")
-                }
-                Button("Delete") {
-                    Task { await viewModel.delete(speakerId: speaker.id) }
+                    // "Don't Recognize This Speaker" — hidden for the mic
+                    // speaker (name `"You"`), matching the ViewModel's
+                    // mic-rejection guard. The library doesn't carry an
+                    // `isMicrophone` flag on a `Speaker` today, so the UI
+                    // mirrors the same name-based policy. See
+                    // SpeakerEditorViewModel.delist for the rationale.
+                    // Delisting rewrites final.md files, so this only stages
+                    // the confirmation (Task 7a) — the dialog on the List
+                    // performs the actual delist.
+                    if speaker.name != "You" {
+                        Button("Don't Recognize This Speaker") {
+                            Task {
+                                pendingDelistCount = await viewModel
+                                    .appearances(ofSpeaker: speaker.id).count
+                                pendingDelist = PendingDelist(
+                                    id: speaker.id, name: speaker.name)
+                            }
+                        }
+                        .help("Stop recognizing this speaker. Their lines in "
+                            + "transcripts become 'Unrecognized'. Undoable for "
+                            + "30 days.")
+                    }
+                    Divider()
+                    // One-click + undo toast, no confirmation — locked
+                    // decision; delete is a soft tombstone and rewrites
+                    // nothing on disk.
+                    Button("Delete", role: .destructive) {
+                        Task { await viewModel.delete(speakerId: speaker.id) }
+                    }
                 }
             }
         }
@@ -294,15 +362,18 @@ struct SpeakerEditorView: View {
             HStack {
                 Spacer()
                 Button("Cancel") { showMerge = false }
+                // Task 7b — merging rewrites every final.md the merged-away
+                // speaker appears in, so this only fetches the impact count
+                // and raises the confirmation dialog; the dialog's
+                // destructive Merge performs the merge and closes the sheet.
                 Button("Merge") {
-                    if let primary = mergePrimaryId,
-                       let other = mergeOtherId, primary != other {
+                    if let other = mergeOtherId {
                         Task {
-                            await viewModel.merge(
-                                primaryId: primary, otherId: other)
+                            pendingMergeCount = await viewModel
+                                .appearances(ofSpeaker: other).count
+                            showMergeConfirm = true
                         }
                     }
-                    showMerge = false
                 }
                 .disabled(mergePrimaryId == nil || mergeOtherId == nil
                     || mergePrimaryId == mergeOtherId)
@@ -310,6 +381,32 @@ struct SpeakerEditorView: View {
         }
         .padding(16)
         .frame(width: 320)
+        .confirmationDialog(
+            "Merge ‘\(speakerName(mergeOtherId, in: viewModel))’ into "
+                + "‘\(speakerName(mergePrimaryId, in: viewModel))’?",
+            isPresented: $showMergeConfirm
+        ) {
+            Button("Merge", role: .destructive) {
+                if let primary = mergePrimaryId,
+                   let other = mergeOtherId, primary != other {
+                    Task {
+                        await viewModel.merge(
+                            primaryId: primary, otherId: other)
+                    }
+                }
+                showMerge = false
+            }
+        } message: {
+            Text("\(pendingMergeCount) recording\(pendingMergeCount == 1 ? "" : "s") will be rewritten.")
+        }
+    }
+
+    /// Resolve a speaker id to its display name from the live list — used by
+    /// the merge confirmation's title.
+    private func speakerName(
+        _ id: String?, in viewModel: SpeakerEditorViewModel
+    ) -> String {
+        viewModel.liveSpeakers.first { $0.id == id }?.name ?? ""
     }
 
     // MARK: - Split

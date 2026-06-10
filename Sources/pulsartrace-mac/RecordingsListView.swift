@@ -92,10 +92,21 @@ struct RecordingsListView: View {
                 }
             }
             Spacer()
-            Button("View") { viewing = recording }
-            Button("Reveal") {
+            // The one always-visible affordance — a quiet chevron for the
+            // primary action. Everything else lives in the context menu.
+            Button { viewing = recording } label: { Image(systemName: "chevron.right") }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("View transcript")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { viewing = recording }
+        .contextMenu {
+            Button("View Transcript") { viewing = recording }
+            Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([recording.folderURL])
             }
+            Divider()
             // "Refine" enqueues into the refinement job queue (E3). Disabled
             // while a job for this recording is already running or queued.
             Button("Refine") {
