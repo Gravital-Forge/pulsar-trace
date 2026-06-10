@@ -91,6 +91,9 @@ private struct MenuBarLabel: View {
             // Red waveform + elapsed time — unambiguous "live" state (R40).
             // MenuBarExtra labels are template-rendered, so the red tint may
             // be flattened to monochrome; the timer is the primary signal.
+            // The TimelineView ticks at 1 Hz for the whole recording (the
+            // menubar never goes offscreen) — measured cost is negligible,
+            // but it's a continuous timer, not throttled.
             HStack(spacing: 3) {
                 Image(systemName: "waveform.badge.microphone")
                     .symbolRenderingMode(.palette)
