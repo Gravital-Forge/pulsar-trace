@@ -1,6 +1,7 @@
 // Sources/PulsarTraceMenuBar/AppEnvironment.swift
 import Foundation
 import PulsarTraceEngine
+import UserNotifications
 
 /// Owns the app's long-lived ViewModels and their bootstrap wiring.
 ///
@@ -154,8 +155,25 @@ public final class AppEnvironment {
             paths: paths,
             whisperOptions: refineWhisperOptions)
         await queueVM.setQueue(q)
-        queueVM.onJobsTerminated = { [weak self] _ in
+        queueVM.onJobsTerminated = { [weak self] jobs in
             Task { [weak self] in await self?.scanner.refresh() }
+            // Bare-binary dev runs (`.build/debug/pulsartrace-mac`) have no
+            // bundle — UN APIs crash in non-bundled processes.
+            guard Bundle.main.bundleIdentifier != nil else { return }
+            for job in jobs {
+                guard let content = RefinementNotification.from(job: job) else { continue }
+                let c = UNMutableNotificationContent()
+                c.title = content.title
+                c.body = content.body
+                UNUserNotificationCenter.current().add(
+                    UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
+            }
+        }
+        // Provisional auth: delivers quietly to Notification Center without a
+        // permission dialog. Same bundle guard — crashes in bare dev runs.
+        if Bundle.main.bundleIdentifier != nil {
+            _ = try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .provisional])
         }
         // Single process-wide poller. The menubar dropdown and the
         // recordings-list RefineBadge both read from queueVM; before this
