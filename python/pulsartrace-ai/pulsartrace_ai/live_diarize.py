@@ -89,7 +89,7 @@ from pulsartrace_ai._common import (
 from pulsartrace_ai.diarize import load_pipeline
 
 
-def _parse_request(request: dict) -> tuple[Path, float]:
+def _parse_request(request: dict[str, Any]) -> tuple[Path, float]:
     """Validate one stdin request; raises DiarizationError on a missing field."""
     if "window_wav" not in request:
         raise DiarizationError("request missing required field: window_wav")
@@ -108,7 +108,7 @@ def diarize_window(
     caller rather than crashing the long-lived loop.
 
     RNG determinism note (R16): :func:`main` calls
-    :func:`pulsartrace_ai.diarize._seed_everything` **once per subprocess**,
+    :func:`pulsartrace_ai._common._seed_everything` **once per subprocess**,
     before the loop. RNG state is therefore *seeded once and shared across
     every window* — it is **not** re-seeded per call. So the offline
     determinism guarantee (a fixed WAV → byte-identical output) does **not**

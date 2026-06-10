@@ -80,7 +80,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from pulsartrace_ai._common import (  # noqa: F401 — re-exported for compat
+# All of these are used internally below. DiarizationError, MODEL_ID, and
+# Span are additionally re-exported on purpose — existing consumers (the
+# tests, conftest) import them from this module. The underscore helpers are
+# NOT a compat surface: new code imports those from pulsartrace_ai._common.
+from pulsartrace_ai._common import (
     DiarizationError,
     MODEL_ID,
     Span,

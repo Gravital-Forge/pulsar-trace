@@ -48,6 +48,13 @@ def test_parse_request_defaults_window_start_to_zero() -> None:
     assert start == 0.0
 
 
+def test_parse_request_non_numeric_window_start_raises() -> None:
+    """A junk `window_start` raises ValueError — the loop's broad except
+    degrades it to an `error` response rather than crashing."""
+    with pytest.raises(ValueError):
+        _parse_request({"window_wav": "/tmp/w.wav", "window_start": "bad"})
+
+
 # Mirrors `LiveDiarizer.Configuration.windowTimeout` (LiveDiarizer.swift): a
 # window whose pyannote inference overruns this is given up on by the Swift
 # side and the live pass degrades. Staying within it is the live pass's core
