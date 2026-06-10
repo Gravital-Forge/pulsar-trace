@@ -21,6 +21,14 @@ struct PathRedactorTests {
         #expect(PathRedactor.redactHome("plain message") == "plain message")
     }
 
+    @Test("redactHome replaces the process temp directory with $TMPDIR/")
+    func redactHomeReplacesTempDir() {
+        let raw = "listening on \(NSTemporaryDirectory())PulsarTrace/w-1a2b3c4d.sock"
+        let out = PathRedactor.redactHome(raw)
+        #expect(!out.contains(NSTemporaryDirectory()))
+        #expect(out.contains("$TMPDIR/PulsarTrace/w-1a2b3c4d.sock"))
+    }
+
     @Test("redact strips both folder.path and NSHomeDirectory()")
     func redactStripsBoth() {
         let folder = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Recording-A")
