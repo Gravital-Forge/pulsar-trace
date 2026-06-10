@@ -359,21 +359,25 @@ struct SpeakerEditorViewModelTests {
 
         let vm = SpeakerEditorViewModel(
             library: library, settings: try settings(outputRoot: root),
-            toastLifetime: .milliseconds(80))
+            toastLifetime: .milliseconds(300))
         await vm.reload()
 
         await vm.delete(speakerId: alice.id)
         #expect(vm.undoToast?.message.contains("Alice") == true)
 
         // Delete Bob mid-lifetime: his toast replaces Alice's and the
-        // dismiss clock restarts from zero.
-        try await Task.sleep(for: .milliseconds(50), tolerance: .zero)
+        // dismiss clock restarts from zero. Margins are deliberately wide
+        // for CI pool starvation: only the SECOND sleep's lateness can
+        // flake this (Bob's clock has 300−150 = 150 ms of headroom at the
+        // assertion; Task.sleep never fires early, so a late first sleep
+        // only strengthens the Alice-expired precondition).
+        try await Task.sleep(for: .milliseconds(200), tolerance: .zero)
         await vm.delete(speakerId: bob.id)
-        try await Task.sleep(for: .milliseconds(60), tolerance: .zero)
+        try await Task.sleep(for: .milliseconds(150), tolerance: .zero)
 
-        // ~110 ms after Alice's delete — her 80 ms clock would have fired
+        // ≥350 ms after Alice's delete — her 300 ms clock would have fired
         // by now if Bob's delete had not restarted it (Bob's clock is only
-        // ~60 ms in, and Task.sleep never fires early).
+        // ~150 ms in).
         let toast = try #require(vm.undoToast)
         #expect(toast.message.contains("Bob"))
 

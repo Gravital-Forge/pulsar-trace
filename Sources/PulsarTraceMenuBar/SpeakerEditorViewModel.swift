@@ -463,6 +463,15 @@ public final class SpeakerEditorViewModel {
     /// Run a mutating op with the `isRewriting` flag, error capture, and a
     /// reload afterwards.
     private func withRewrite(_ body: () async throws -> Void) async {
+        // Reentrancy guard: a confirmation dialog staged before a rewrite
+        // began can still confirm mid-flight (dialogs are window-modal, not
+        // part of the disabled List's subtree). Two interleaved withRewrite
+        // calls would drop `isRewriting` early and clobber `lastError` —
+        // refuse the second op instead.
+        guard !isRewriting else {
+            lastError = "Another rewrite is still in progress — try again in a moment."
+            return
+        }
         isRewriting = true
         lastError = nil
         do {
