@@ -29,6 +29,8 @@ There are no tagged releases yet; everything to date is under Unreleased.
 ### Fixed
 
 - Microphone and screen-recording permissions are requested and checked before a recording starts, instead of racing the OS prompt mid-start.
+- Refinement no longer fails permanently on recordings containing more than ~98 seconds of uninterrupted speech: long speech regions are now split into chunks (cut at the quietest nearby moment) before being sent to whisper, instead of exceeding the transcription channel's frame limit on every retry.
+- Near-silent recordings no longer crash diarization: a speaker whose voice sample is too sparse to fingerprint keeps its spans and label, and refinement completes — previously the whole job failed (`diarizeCrashed`) on every retry. The same fix stops live diarization from discarding such windows mid-recording.
 
 ### Security
 
