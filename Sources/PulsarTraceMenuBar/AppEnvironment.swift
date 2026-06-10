@@ -165,8 +165,11 @@ public final class AppEnvironment {
                 let c = UNMutableNotificationContent()
                 c.title = content.title
                 c.body = content.body
+                // recordingId as the identifier: a re-refine of the same
+                // recording REPLACES the stale notification instead of
+                // stacking a second one.
                 UNUserNotificationCenter.current().add(
-                    UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
+                    UNNotificationRequest(identifier: job.recordingId, content: c, trigger: nil))
             }
         }
         // Provisional auth: delivers quietly to Notification Center without a
