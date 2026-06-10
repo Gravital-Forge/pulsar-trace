@@ -29,7 +29,6 @@ There are no tagged releases yet; everything to date is under Unreleased.
 ### Fixed
 
 - Microphone and screen-recording permissions are requested and checked before a recording starts, instead of racing the OS prompt mid-start.
-- Refinement honors the language allow-list from Settings; previously each region auto-detected its language freely, so a quiet stretch could drift to another language.
 
 ### Security
 
