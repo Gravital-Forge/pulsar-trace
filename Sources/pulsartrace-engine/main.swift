@@ -116,7 +116,7 @@ struct EngineMain {
     ///
     /// Live diarization is best-effort: if the pyannote subprocess cannot
     /// start it is skipped and system speakers stay the generic
-    /// `Them (provisional)`. `--no-live-diarization` skips it outright.
+    /// `Them?`. `--no-live-diarization` skips it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
         // --- resolve the source(s) ------------------------------------------
         let source: any AudioFrameSource

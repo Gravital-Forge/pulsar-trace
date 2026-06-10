@@ -638,7 +638,7 @@ final class LiveRunner: Sendable {
 
     /// Resolve the provisional speaker label for a committed system utterance:
     /// the live diarizer's stitched key, optionally upgraded to a library name
-    /// (read-only lookup, R18). Always carries the `(provisional)` suffix (R16).
+    /// (read-only lookup, R18). Always carries the `?` provisional suffix (R16).
     ///
     /// `internal` (not `private`) so the R18 library-lookup path can be tested
     /// directly — see `LiveRunnerLibraryLookupTests`.
@@ -674,11 +674,11 @@ final class LiveRunner: Sendable {
                        for: centroid,
                        modelRevision: revision,
                        threshold: SpeakerLibrary.defaultMatchThreshold) {
-                    return "\(match.speaker.name) (provisional)"
+                    return "\(match.speaker.name)?"
                 }
             }
         }
-        return "\(key) (provisional)"
+        return "\(key)?"
     }
 
     // MARK: - Helpers

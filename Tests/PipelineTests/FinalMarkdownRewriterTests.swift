@@ -266,7 +266,7 @@ struct FinalMarkdownRewriterTests {
             <!-- pulsartrace:live -->
             ## Transcript — 2026-05-01 09:00
 
-            **[00:00:03] Unknown #1 (provisional):** Morning everyone.
+            **[00:00:03] Unknown #1?:** Morning everyone.
 
             """
         let liveURL = folder.appendingPathComponent(

@@ -89,8 +89,8 @@ A file begins with a marker comment and a heading:
       Epic 5 replaced those positional labels with persistent library names.
       A `final.md` written before Epic 5 (or one refined with the speaker
       library unavailable) still carries `Speaker_N` labels.
-  - `(provisional)` — present in `live.md` only, on speakers whose identity is
-    not yet confirmed. Removed in `final.md`.
+  - `?` speaker suffix — present in `live.md` only, on speakers whose identity
+    is not yet confirmed (e.g. `Them?`). Removed in `final.md`.
 
 ## `live.md` — the live pass (Epic 6)
 
@@ -132,19 +132,19 @@ a torn line or a partial UTF-8 character. Concretely:
 ### Provisional speaker labels (R14 / R16 / R18)
 
 System-stream speakers in `live.md` are **provisional** — best-effort live
-diarization, corrected by the post-pass. Their labels always carry a
-`(provisional)` suffix so an agent can tell them apart from `final.md`'s
-confirmed labels:
+diarization, corrected by the post-pass. Their labels always carry a `?`
+suffix (`Them?`) so an agent can tell them apart from `final.md`'s confirmed
+labels:
 
-- `**[HH:MM:SS] Them (provisional):** …` — a system speaker the live pass has
-  not matched to a known person.
-- `**[HH:MM:SS] Them #2 (provisional):** …` — a second (third, …) live system
-  speaker. Live diarization may spawn more provisional speakers than there
-  really are (a known limitation — the post-pass reconciles them).
-- `**[HH:MM:SS] Steve (provisional):** …` — when the live speaker's centroid
-  matches a known speaker in the library, the library **name** is shown. The
-  match is a *read-only* library lookup (the live pass never writes the
-  library); the label is still marked `(provisional)`.
+- `**[HH:MM:SS] Them?:** …` — a system speaker the live pass has not matched
+  to a known person.
+- `**[HH:MM:SS] Them #2?:** …` — a second (third, …) live system speaker.
+  Live diarization may spawn more provisional speakers than there really are
+  (a known limitation — the post-pass reconciles them).
+- `**[HH:MM:SS] Steve?:** …` — when the live speaker's centroid matches a
+  known speaker in the library, the library **name** is shown. The match is a
+  *read-only* library lookup (the live pass never writes the library); the
+  label still carries the `?` suffix.
 - `**[HH:MM:SS] You:** …` — the microphone stream. Always `You`, never
   diarized, never marked provisional (the mic is the local user by
   definition — R17).

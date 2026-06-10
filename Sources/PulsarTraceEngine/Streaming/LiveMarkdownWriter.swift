@@ -107,8 +107,8 @@ public actor LiveMarkdownWriter {
     /// Append a formatted utterance line for a streaming utterance.
     ///
     /// Renders the R13/Appendix shape: `**[HH:MM:SS] <speaker>:** <text>`.
-    /// `speakerLabel` already carries any `(provisional)` suffix the caller
-    /// wants (mic is `You`, system speakers are `Them (provisional)` etc.).
+    /// `speakerLabel` already carries any provisional `?` suffix the caller
+    /// wants (mic is `You`, system speakers are `Them?` etc.).
     public func appendUtterance(
         offset: Duration,
         speakerLabel: String,
