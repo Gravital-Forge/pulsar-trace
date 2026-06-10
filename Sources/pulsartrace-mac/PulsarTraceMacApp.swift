@@ -49,7 +49,9 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.queueVM)
                 .environment(environment.navigation)
         } label: {
-            Image(systemName: environment.recording.status.menuBarSymbol)
+            MenuBarLabel(
+                status: environment.recording.status,
+                isRefining: environment.queueVM.running != nil)
         }
         .menuBarExtraStyle(.window)
 
@@ -76,15 +78,47 @@ struct PulsarTraceMacApp: App {
     }
 }
 
-extension RecordingStatus {
-    /// SF Symbol for the menubar icon, driven by the recording state.
-    var menuBarSymbol: String {
-        switch self {
-        case .idle: return "waveform"
-        case .launching: return "waveform.badge.plus"
-        case .recording: return "waveform.badge.microphone"
-        case .crashed: return "exclamationmark.triangle"
-        case .error: return "exclamationmark.triangle"
+/// The menubar icon, a pure function of recording status + refine activity —
+/// the three states R40 requires to be distinct at a glance: idle, recording
+/// (red waveform + live elapsed timer), and refining (pulsing sync symbol).
+private struct MenuBarLabel: View {
+    let status: RecordingStatus
+    let isRefining: Bool
+
+    var body: some View {
+        switch status {
+        case .recording(_, let startedAt):
+            // Red waveform + elapsed time — unambiguous "live" state (R40).
+            // MenuBarExtra labels are template-rendered, so the red tint may
+            // be flattened to monochrome; the timer is the primary signal.
+            HStack(spacing: 3) {
+                Image(systemName: "waveform.badge.microphone")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Color.red, Color.primary)
+                TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                    Text(timerString(from: startedAt, to: context.date))
+                        .font(.system(.body, design: .monospaced))
+                }
+            }
+            .accessibilityLabel("PulsarTrace, recording")
+        case .launching:
+            Image(systemName: "waveform.badge.plus")
+                .accessibilityLabel("PulsarTrace, starting recording")
+        case .crashed, .error:
+            Image(systemName: "exclamationmark.triangle")
+                .accessibilityLabel("PulsarTrace, needs attention")
+        case .idle:
+            Image(systemName: isRefining ? "arrow.triangle.2.circlepath" : "waveform")
+                .symbolEffect(.pulse, isActive: isRefining)
+                .accessibilityLabel(isRefining
+                    ? "PulsarTrace, refining a transcript"
+                    : "PulsarTrace, idle")
         }
+    }
+
+    private func timerString(from start: Date, to now: Date) -> String {
+        let s = max(0, Int(now.timeIntervalSince(start)))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
+                         : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
