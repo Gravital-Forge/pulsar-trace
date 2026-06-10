@@ -206,17 +206,28 @@ current `autoScroll: AutoScrollController?` parameter works. Wins:
   `performTextFinderAction(_:)`; verify during implementation and wire
   explicitly if needed.
 
-**Provisional labels render as a symbol.** The live pipeline writes speaker
-labels with a " (provisional)" suffix into `live.md` (R16's provisional
-marker — an on-disk public-contract detail this spec does NOT change). At
-render time the suffix is replaced by a trailing `*` on the speaker name:
-"Them*" instead of "Them (provisional)". A small display helper in
-`PulsarTraceMenuBar` (extension on `TranscriptLine`'s utterance speaker)
-owns the suffix split so it is unit-tested — only the exact " (provisional)"
-*suffix* is replaced; the substring elsewhere in a name is left alone. The
-parser itself is unchanged (its suffix-retention behavior is pinned by
-existing tests). Applies in both the main-window detail and the detached
-live window automatically, since both use the single renderer.
+**Provisional labels render as a symbol.** `live.md` is a machine-facing
+public surface: the PRD's purpose for it is agent consumption during the
+call, and the verbose `(provisional)` suffix is documented in
+`docs/file-format.md` as existing "so an agent can tell them apart" (R16,
+P0). The file keeps that marker — this is not a display patch over a wart
+but the same parse-then-render path the app already applies to every line
+(the `**` bold syntax, the `<!-- pulsartrace:live -->` comment, and raw
+timestamps are never shown either). The renderer displays the parsed
+provisional flag as a trailing `*` on the speaker name: "Them*" instead of
+"Them (provisional)". A display helper in `PulsarTraceMenuBar` (extension
+on `TranscriptLine`'s utterance speaker) owns the suffix split so it is
+unit-tested — only the exact " (provisional)" *suffix* maps to the flag; the
+substring elsewhere in a name is left alone. The parser itself is unchanged
+(its suffix-retention behavior is pinned by existing tests). Applies in both
+the main-window detail and the detached live window automatically, since
+both use the single renderer.
+
+**Copy copies what you see.** Today the Copy buttons put the raw Markdown
+lines on the pasteboard (bold syntax, `(provisional)` suffix and all), which
+would no longer match the rendered text. Copy switches to the rendered plain
+text (what selection + ⌘C from the NSTextView already yields); the raw file
+remains one Reveal-in-Finder away for anyone who wants the source form.
 
 Two explicit requirements (not discoveries):
 
