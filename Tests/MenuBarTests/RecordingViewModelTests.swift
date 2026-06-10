@@ -18,12 +18,14 @@ struct RecordingViewModelTests {
         let startError: Error?
         private let exitGate = Gate()
         private(set) var stopped = false
+        private(set) var startCalled = false
 
         init(startError: Error? = nil) {
             self.startError = startError
         }
 
         func start(readyTimeout: Duration) async throws {
+            startCalled = true
             if let startError { throw startError }
         }
 
@@ -74,13 +76,15 @@ struct RecordingViewModelTests {
     }
 
     /// Build a VM around a given stub orchestrator and a no-op enqueue closure.
+    /// `preflight: .granted` — unit tests must never hit real TCC prompts.
     private func makeVM(
         settings: MenuBarSettings,
         orchestrator: StubOrchestrator
     ) -> RecordingViewModel {
         RecordingViewModel(
             settings: settings,
-            orchestratorFactory: { _, _ in orchestrator })
+            orchestratorFactory: { _, _ in orchestrator },
+            preflight: .granted)
     }
 
     // MARK: - Tests
@@ -97,7 +101,8 @@ struct RecordingViewModelTests {
             orchestratorFactory: { _, _ in stub },
             enqueueAutoRefine: { url, recordingId in
                 await enqueued.record(url: url, recordingId: recordingId)
-            })
+            },
+            preflight: .granted)
 
         #expect(vm.status == .idle)
         await vm.startRecording()
@@ -172,19 +177,28 @@ struct RecordingViewModelTests {
         #expect(vm.status == .idle)
     }
 
-    @Test("starting with no output folder surfaces .error")
-    func noOutputFolderError() async {
-        let defaults = UserDefaults(suiteName: "pt-rvm-noout-\(UUID().uuidString)")!
-        let settings = MenuBarSettings(defaults: defaults)   // no output folder
-        let vm = RecordingViewModel(
-            settings: settings,
-            orchestratorFactory: { _, _ in StubOrchestrator() })
+    // Replaces the old "starting with no output folder surfaces .error" test:
+    // `outputFolderURL` now defaults to `~/Documents/PulsarTrace`, so a fresh
+    // settings can no longer trip the missing-folder guard. The defensive
+    // folder-creation error path is covered instead.
+    @Test("an uncreatable recording folder surfaces .error (defensive path)")
+    func uncreatableOutputFolderError() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // The configured output root nests under a regular *file*, so the
+        // per-recording folder cannot be created.
+        let file = root.appendingPathComponent("not-a-dir")
+        try Data().write(to: file)
+        let settings = try settings(
+            outputRoot: file.appendingPathComponent("nested"))
+        let vm = makeVM(settings: settings, orchestrator: StubOrchestrator())
 
         await vm.startRecording()
-        guard case .error = vm.status else {
-            Issue.record("expected .error")
+        guard case .error(let message) = vm.status else {
+            Issue.record("expected .error, got \(vm.status)")
             return
         }
+        #expect(message.contains("Cannot create the recording folder"))
     }
 
     @Test("recoverFromCrash enqueues the partial folder and returns to idle")
@@ -199,7 +213,8 @@ struct RecordingViewModelTests {
             orchestratorFactory: { _, _ in stub },
             enqueueAutoRefine: { url, recordingId in
                 await enqueued.record(url: url, recordingId: recordingId)
-            })
+            },
+            preflight: .granted)
 
         await vm.startRecording()
         await stub.signalEngineExit()
@@ -226,7 +241,8 @@ struct RecordingViewModelTests {
         let stub = StubOrchestrator()
         let vm = RecordingViewModel(
             settings: try settings(outputRoot: root),
-            orchestratorFactory: { _, _ in stub })
+            orchestratorFactory: { _, _ in stub },
+            preflight: .granted)
 
         #expect(vm.liveMarkdownURL == nil)
 
@@ -287,7 +303,8 @@ struct RecordingViewModelTests {
             // and that the enqueue path is taken after stop.
             enqueueAutoRefine: { url, recordingId in
                 await enqueued.record(url: url, recordingId: recordingId)
-            })
+            },
+            preflight: .granted)
 
         await vm.startRecording()
         let plan = try #require(await planBox.value())
@@ -314,7 +331,8 @@ struct RecordingViewModelTests {
             settings: try settings(outputRoot: root),
             orchestratorFactory: { _, _ in stub },
             pauseRefinement: { await counter.incrementPause() },
-            resumeRefinement: { await counter.incrementResume() })
+            resumeRefinement: { await counter.incrementResume() },
+            preflight: .granted)
 
         await vm.startRecording()
         if case .recording = vm.status {} else { Issue.record("expected .recording") }
@@ -333,7 +351,8 @@ struct RecordingViewModelTests {
             settings: try settings(outputRoot: root),
             orchestratorFactory: { _, _ in stub },
             pauseRefinement: { await counter.incrementPause() },
-            resumeRefinement: { await counter.incrementResume() })
+            resumeRefinement: { await counter.incrementResume() },
+            preflight: .granted)
 
         await vm.startRecording()
         await vm.stopRecording()
@@ -354,7 +373,8 @@ struct RecordingViewModelTests {
             settings: try settings(outputRoot: root),
             orchestratorFactory: { _, _ in stub },
             pauseRefinement: { await counter.incrementPause() },
-            resumeRefinement: { await counter.incrementResume() })
+            resumeRefinement: { await counter.incrementResume() },
+            preflight: .granted)
 
         await vm.startRecording()
         guard case .error = vm.status else {
@@ -389,7 +409,8 @@ struct RecordingViewModelTests {
             orchestratorFactory: { _, _ in stub },
             pauseRefinement: { await counter.incrementPause() },
             resumeRefinement: { await counter.incrementResume() },
-            waitForWhisperLockFree: { throw ProbeTimeoutError() })
+            waitForWhisperLockFree: { throw ProbeTimeoutError() },
+            preflight: .granted)
 
         await vm.startRecording()
         guard case .error(let message) = vm.status else {
@@ -429,7 +450,8 @@ struct RecordingViewModelTests {
             orchestratorFactory: { _, _ in
                 WatchingOrchestrator(observer: observer)
             },
-            waitForWhisperLockFree: { throw ProbeTimeoutError() })
+            waitForWhisperLockFree: { throw ProbeTimeoutError() },
+            preflight: .granted)
 
         await vm.startRecording()
         guard case .error = vm.status else {
@@ -460,7 +482,8 @@ struct RecordingViewModelTests {
                 // counter so we can assert the probe was actually
                 // invoked (Layer B is wired in, not a no-op).
                 await probeCalls.incrementPause()
-            })
+            },
+            preflight: .granted)
 
         await vm.startRecording()
         if case .recording = vm.status {} else {
@@ -472,10 +495,104 @@ struct RecordingViewModelTests {
         #expect(await counter.resumeCount == 0)
     }
 
+    // MARK: - Permission preflight
+
+    @Test("denied microphone surfaces .error and never calls orchestrator.start")
+    func deniedMicrophoneBlocksStart() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+
+        let vm = RecordingViewModel(
+            settings: try settings(outputRoot: root),
+            orchestratorFactory: { _, _ in stub },
+            preflight: PermissionPreflight(
+                microphone: { false },
+                screenRecording: { true }))
+
+        await vm.startRecording()
+        guard case .error(let message) = vm.status else {
+            Issue.record("expected .error, got \(vm.status)")
+            return
+        }
+        #expect(message.contains("Microphone"))
+        #expect(stub.startCalled == false)
+    }
+
+    @Test("denied screen recording with system audio on surfaces .error, start never called")
+    func deniedScreenRecordingBlocksStart() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+
+        let settings = try settings(outputRoot: root)
+        settings.systemAudioEnabled = true
+        let vm = RecordingViewModel(
+            settings: settings,
+            orchestratorFactory: { _, _ in stub },
+            preflight: PermissionPreflight(
+                microphone: { true },
+                screenRecording: { false }))
+
+        await vm.startRecording()
+        guard case .error(let message) = vm.status else {
+            Issue.record("expected .error, got \(vm.status)")
+            return
+        }
+        #expect(message.contains("Screen Recording"))
+        #expect(stub.startCalled == false)
+    }
+
+    @Test("denied screen recording is ignored when system audio is off")
+    func deniedScreenRecordingIgnoredWithoutSystemAudio() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+
+        let settings = try settings(outputRoot: root)
+        settings.systemAudioEnabled = false
+        let vm = RecordingViewModel(
+            settings: settings,
+            orchestratorFactory: { _, _ in stub },
+            preflight: PermissionPreflight(
+                microphone: { true },
+                screenRecording: { false }))
+
+        await vm.startRecording()
+        if case .recording = vm.status {} else {
+            Issue.record("expected .recording, got \(vm.status)")
+        }
+        await vm.stopRecording()
+    }
+
+    @Test("both grants flow through to .recording")
+    func grantedPreflightReachesRecording() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubOrchestrator()
+        let vm = makeVM(settings: try settings(outputRoot: root), orchestrator: stub)
+
+        await vm.startRecording()
+        if case .recording = vm.status {} else {
+            Issue.record("expected .recording, got \(vm.status)")
+        }
+        #expect(stub.startCalled == true)
+        await vm.stopRecording()
+    }
+
     private actor PlanMailbox {
         private var plan: RecordPlan?
         func set(_ p: RecordPlan) { plan = p }
         func value() -> RecordPlan? { plan }
+    }
+}
+
+extension PermissionPreflight {
+    /// All-granted preflight for tests — never touches real TCC. Every VM
+    /// construction in this target must pass an explicit preflight; the
+    /// production default `.live` would hit the OS permission machinery.
+    static var granted: PermissionPreflight {
+        PermissionPreflight(microphone: { true }, screenRecording: { true })
     }
 }
 

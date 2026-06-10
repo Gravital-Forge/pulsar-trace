@@ -29,6 +29,19 @@ import Logging
 /// log line (5/10/20/40/… s, capped at 600 s) so the user sees the
 /// stall but the engine log isn't flooded.
 ///
+/// **Chunking.** The wire format is one length-prefixed JSON frame per
+/// request, capped at `WhisperFrameCodec.maxPayloadBytes` (8 MiB). A
+/// long continuous-speech region overflows it: the 2026-06-05
+/// production failure was a single 125.9 s VAD region whose request
+/// frame came to 10.75 MB, so the codec refused the write, the failure
+/// was misread as a wedged decode (SIGKILL + respawn), and the
+/// refinement job re-failed deterministically on every retry of the
+/// identical region. `transcribeRegion` therefore splits any slice
+/// longer than `maxChunkSamples` (~97.5 s) into near-equal chunks —
+/// boundaries snapped to the quietest nearby audio so a forced cut
+/// lands on a pause — decodes them sequentially through the same
+/// error machinery, and merges the results.
+///
 /// **Deadline.** Refinement regions can be much longer than the live
 /// path's 8s windows (VAD typically yields 5-30s regions), and the
 /// refinement model is `large-v3`, which is substantially slower than
@@ -81,6 +94,26 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
         }
     }
 
+    // MARK: - Chunk sizing
+
+    /// Hard ceiling on samples per `decodeRegion` request, derived
+    /// from the IPC frame cap: base64 inflates the raw Float32 bytes
+    /// by 4/3 and the JSON envelope (request id, bounds, options)
+    /// needs headroom.
+    /// (8 MiB − 64 KiB) × 3/4 ÷ 4 = 1_560_576 samples ≈ 97.5 s at 16 kHz.
+    static let maxChunkSamples: Int =
+        (WhisperFrameCodec.maxPayloadBytes - envelopeAllowanceBytes) * 3 / 4
+            / MemoryLayout<Float>.size
+
+    /// Today's actual envelope is a few hundred bytes, so 64 KiB is
+    /// generous — but re-check it if `WhisperIPCOptions` ever grows a
+    /// large field (e.g. a long prompt/vocabulary string): the
+    /// `maxChunkSamples` derivation lands exactly on the frame cap when
+    /// the envelope hits this allowance, and only the
+    /// `maxChunkRegionStaysSingleRequest` test (which encodes a real
+    /// request at the ceiling) would catch an overrun empirically.
+    private static let envelopeAllowanceBytes = 64 * 1024
+
     /// Closure used to manufacture a new host. The default returns a
     /// real `WhisperSubprocessHost`; tests pass a closure that returns
     /// a fake conforming to `WhisperHostProtocol` so the deadline /
@@ -93,12 +126,10 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
 
     private let configuration: Configuration
     private let logger: Logger
-    private let hostFactory: HostFactory
-
-    /// Guards `host` and `shutdownLatched`.
-    private let lock = NSLock()
-    private var host: WhisperHostProtocol?
-    private var shutdownLatched = false
+    /// Owns the host + every lifecycle policy (lazy start, deadline
+    /// kill, respawn with throttled backoff, latched shutdown). See
+    /// `RemoteTranscriberCore`.
+    private let core: RemoteTranscriberCore
 
     // MARK: - Init
 
@@ -111,11 +142,33 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
     ) {
         self.configuration = configuration
         self.logger = logger
-        self.hostFactory = hostFactory
+        self.core = RemoteTranscriberCore(
+            policy: RemoteTranscriberCore.Policy(
+                hostConfiguration: WhisperSubprocessHost.Configuration(
+                    binaryURL: configuration.binaryURL,
+                    socketDirectory: configuration.socketDirectory,
+                    lockPath: nil,
+                    forceCPU: configuration.forceCPU,
+                    // Deliberately not a Configuration field (unlike the
+                    // window transcriber's): refinement always uses the
+                    // spawn-handshake default. Surface it only when a
+                    // caller actually needs to tune it.
+                    spawnTimeout: .seconds(10),
+                    initTimeout: configuration.respawnDeadline),
+                modelPath: configuration.modelURL.path,
+                respawnDeadline: configuration.respawnDeadline,
+                logBackoffInitial: configuration.logBackoffInitial,
+                logBackoffCap: configuration.logBackoffCap,
+                // Refinement-specific wording so log greps disambiguate
+                // refinement from live.
+                deadlineKillMessage:
+                    "whisper region decode exceeded deadline; killing subprocess for respawn"),
+            logger: logger,
+            hostFactory: hostFactory)
     }
 
     deinit {
-        shutdown()
+        core.shutdown()
     }
 
     // MARK: - RegionTranscribing
@@ -145,245 +198,108 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
             return TranscriptionResult(segments: [], language: "unknown")
         }
         let slice = Array(samples[lo..<hi])
-        let sliceDurationMs = Int64(lo.distance(to: hi) * 1000 / AudioFormat.sampleRate)
 
         // Lazy-start the host on first call so a `RemoteRegionTranscriber`
         // constructed at queue-job boot but never reached (e.g. a job
         // cancelled before any region runs) doesn't spawn a subprocess.
-        try ensureHostStarted()
+        try core.ensureHostStarted()
 
-        // Wire format: the subprocess only sees [0..sliceDurationMs)
-        // because that's all we sent. The recording-absolute shift is
-        // applied below, on this side, after the response comes back.
-        let request = WhisperIPCRequest.decodeRegion(
-            WhisperIPCDecodeRegion(
-                requestId: UUID(),
-                samplesBase64: WhisperIPCSamples.encode(slice),
-                regionStartMs: 0,
-                regionEndMs: sliceDurationMs,
-                options: WhisperIPCOptions(from: options)))
+        // A slice longer than `maxChunkSamples` cannot fit in one IPC
+        // frame; send it as near-equal chunks instead (single range for
+        // the common short region — identical request shape to before).
+        // Any chunk failure fails the whole region with the same error
+        // the unchunked path threw; no partial results.
+        var mergedSegments: [TranscriptSegment] = []
+        var firstLanguage: String?
+        var pickedLanguage: String?
 
-        let response: WhisperIPCResponse
-        do {
-            response = try currentHostOrThrow().decode(
-                request, deadline: configuration.decodeDeadline)
-        } catch let e as WhisperSubprocessHost.HostError {
-            try handleHostError(e)
-            // After `handleHostError` returns, the wedged region is
-            // discarded and `ResumableRefiner` upstream will surface
-            // this throw. Spec §6: "killed region just resumes from the
-            // previous checkpoint."
-            throw WhisperTranscribeError.transcriptionFailed(-1)
-        }
+        for r in Self.chunkRanges(for: slice, maxChunk: Self.maxChunkSamples) {
+            // Wire format: the subprocess only sees [0..chunkDurationMs)
+            // because that's all we sent. The recording-absolute shift
+            // is applied below, on this side, after the response comes
+            // back.
+            let request = WhisperIPCRequest.decodeRegion(
+                WhisperIPCDecodeRegion(
+                    requestId: UUID(),
+                    samplesBase64: WhisperIPCSamples.encode(Array(slice[r])),
+                    regionStartMs: 0,
+                    regionEndMs: Int64(r.count * 1000 / AudioFormat.sampleRate),
+                    options: WhisperIPCOptions(from: options)))
 
-        switch response {
-        case .decoded(let payload):
-            // Subprocess sees regionStartMs=0 → returns region-relative
-            // segment times. Shift them back onto the recording
-            // timeline by the *original* region.start so callers see
-            // the same recording-absolute timestamps the in-process
-            // `WhisperTranscriber.transcribeRegion` produces.
-            return Self.makeResult(from: payload, shiftedBy: region.start)
-        case .error(let err):
-            // Subprocess-reported error: surface as a transcribe error.
-            switch err.kind {
-            case "model_not_found":
-                throw WhisperTranscribeError.modelNotFound(err.message)
-            case "model_load_failed":
-                throw WhisperTranscribeError.modelLoadFailed(err.message)
-            case "empty_audio":
-                throw WhisperTranscribeError.emptyAudio
-            default:
-                // The fallthrough error collapses to `transcriptionFailed(-1)`
-                // on the wire, but the subprocess's `kind` + `message`
-                // is the only thing that identifies the real cause.
-                // Log it so a wedged region is diagnosable from the
-                // operational log alone (mac-app refinement: see
-                // `LogSystem.bootstrap` wired into `PulsarTraceMacApp`).
-                logger.error("whisper subprocess returned error [\(err.kind)]: \(err.message)")
+            let response: WhisperIPCResponse
+            do {
+                response = try core.currentHostOrThrow().decode(
+                    request, deadline: configuration.decodeDeadline)
+            } catch let e as WhisperSubprocessHost.HostError {
+                try core.handleHostError(e)
+                // After `handleHostError` returns, the wedged region is
+                // discarded and `ResumableRefiner` upstream will surface
+                // this throw. Spec §6: "killed region just resumes from the
+                // previous checkpoint."
                 throw WhisperTranscribeError.transcriptionFailed(-1)
             }
-        case .ready:
-            // A `.ready` response to a decode is a protocol bug. The
-            // safe action is to discard the host and treat this region
-            // as failed.
-            logger.error("whisper subprocess returned .ready to a region decode")
-            sigkillCurrentHost()
-            throw WhisperTranscribeError.transcriptionFailed(-1)
+
+            switch response {
+            case .decoded(let payload):
+                // Subprocess sees regionStartMs=0 → returns chunk-relative
+                // segment times. Shift them back onto the recording
+                // timeline by the *original* region.start plus this
+                // chunk's offset into the slice, so callers see the same
+                // recording-absolute timestamps the in-process
+                // `WhisperTranscriber.transcribeRegion` produces.
+                let shift = region.start + .milliseconds(
+                    Int64(r.lowerBound) * 1000 / Int64(AudioFormat.sampleRate))
+                mergedSegments.append(
+                    contentsOf: Self.makeResult(from: payload, shiftedBy: shift)
+                        .segments)
+                if firstLanguage == nil {
+                    firstLanguage = payload.language
+                }
+                if pickedLanguage == nil,
+                   !payload.language.isEmpty, payload.language != "unknown" {
+                    pickedLanguage = payload.language
+                }
+            case .error(let err):
+                // Subprocess-reported error: surface as a transcribe error.
+                switch err.kind {
+                case "model_not_found":
+                    throw WhisperTranscribeError.modelNotFound(err.message)
+                case "model_load_failed":
+                    throw WhisperTranscribeError.modelLoadFailed(err.message)
+                case "empty_audio":
+                    throw WhisperTranscribeError.emptyAudio
+                default:
+                    // The fallthrough error collapses to `transcriptionFailed(-1)`
+                    // on the wire, but the subprocess's `kind` + `message`
+                    // is the only thing that identifies the real cause.
+                    // Log it so a wedged region is diagnosable from the
+                    // operational log alone (mac-app refinement: see
+                    // `LogSystem.bootstrap` wired into `PulsarTraceMacApp`).
+                    logger.error("whisper subprocess returned error [\(err.kind)]: \(err.message)")
+                    throw WhisperTranscribeError.transcriptionFailed(-1)
+                }
+            case .ready:
+                // A `.ready` response to a decode is a protocol bug. The
+                // safe action is to discard the host and treat this region
+                // as failed.
+                logger.error("whisper subprocess returned .ready to a region decode")
+                core.sigkillCurrentHost()
+                throw WhisperTranscribeError.transcriptionFailed(-1)
+            }
         }
+
+        // Language: the first chunk that committed to a real language
+        // wins; otherwise fall back to whatever the first chunk said.
+        // (`slice` is non-empty, so there is always at least one chunk.)
+        return TranscriptionResult(
+            segments: mergedSegments,
+            language: pickedLanguage ?? firstLanguage ?? "unknown")
     }
 
     /// Cooperative shutdown — SIGTERM the host with a short grace.
     /// Idempotent: a second call is a no-op.
     public func shutdown() {
-        let host = lock.withLock {
-            guard !shutdownLatched else { return WhisperHostProtocol?.none }
-            shutdownLatched = true
-            let h = self.host
-            self.host = nil
-            return h
-        }
-        host?.terminate(grace: .seconds(2))
-    }
-
-    // MARK: - Host lifecycle
-
-    private func ensureHostStarted() throws {
-        let needsStart = lock.withLock {
-            if shutdownLatched { return false }
-            if let host, host.isAlive { return false }
-            return true
-        }
-        guard needsStart else {
-            if lock.withLock({ shutdownLatched }) {
-                throw WhisperTranscribeError.transcriptionFailed(-1)
-            }
-            return
-        }
-        try startHost()
-    }
-
-    private func startHost() throws {
-        let hostConfig = WhisperSubprocessHost.Configuration(
-            binaryURL: configuration.binaryURL,
-            socketDirectory: configuration.socketDirectory,
-            lockPath: nil,
-            forceCPU: configuration.forceCPU,
-            spawnTimeout: .seconds(10),
-            initTimeout: configuration.respawnDeadline)
-        let newHost = hostFactory(hostConfig, logger)
-        do {
-            try newHost.startAndInitialize(model: configuration.modelURL.path)
-        } catch let e as WhisperSubprocessHost.HostError {
-            // Non-recoverable from the refinement queue's POV: surface
-            // as a model-load failure so the job fails cleanly.
-            throw Self.toModelLoadFailed(e)
-        } catch {
-            throw WhisperTranscribeError.modelLoadFailed("\(error)")
-        }
-        lock.withLock { self.host = newHost }
-    }
-
-    private func currentHostOrThrow() throws -> WhisperHostProtocol {
-        guard let h = (lock.withLock { host }) else {
-            throw WhisperTranscribeError.transcriptionFailed(-1)
-        }
-        return h
-    }
-
-    private func sigkillCurrentHost() {
-        let h = lock.withLock {
-            let host = self.host
-            self.host = nil
-            return host
-        }
-        h?.sigkill()
-    }
-
-    /// React to a host error from `decode`. On a recoverable wedge
-    /// (timeout / EOF / writeFailed / subprocessGone) we SIGKILL the
-    /// host, spawn a fresh one with throttled-log backoff, and re-Init
-    /// — then return normally so the caller can throw the
-    /// `transcriptionFailed` for this wedged region. On a
-    /// non-recoverable spawn failure during the respawn, we re-throw
-    /// as `.modelLoadFailed`.
-    private func handleHostError(
-        _ error: WhisperSubprocessHost.HostError
-    ) throws {
-        switch error {
-        case .readTimedOut, .readEOF, .writeFailed, .subprocessGone:
-            // Refinement-specific wording so log greps disambiguate
-            // refinement from live. Interpolate the actual `HostError`
-            // variant — the 2026-05-27 incident showed a 12-second
-            // failure logged as "exceeded deadline" with a 120-second
-            // budget configured: the underlying error was a
-            // `subprocessGone` / `readEOF`, not a real timeout. The
-            // variant turns that ambiguity into one log line.
-            logger.warning(
-                "whisper region decode exceeded deadline; killing subprocess for respawn (\(error))")
-            sigkillCurrentHost()
-            try respawnWithBackoffLog()
-        case .binaryNotFound, .spawnFailed, .initRefused,
-             .handshakeTimedOut, .handshakeMalformed, .connectFailed:
-            // We shouldn't see these from a steady-state `decode` (they
-            // surface only from `startAndInitialize`). Defensively
-            // map to model-load-failed so a buggy subprocess doesn't
-            // wedge the refiner indefinitely.
-            sigkillCurrentHost()
-            throw Self.toModelLoadFailed(error)
-        }
-    }
-
-    /// Spawn a replacement host. While the spawn is in flight, kick
-    /// off a `Task` that emits the throttled-backoff log line — if the
-    /// respawn finishes quickly (the normal case) the task is
-    /// cancelled before the first emission and no extra log appears.
-    private func respawnWithBackoffLog() throws {
-        var throttle = RespawnLogThrottle(
-            initial: configuration.logBackoffInitial,
-            cap: configuration.logBackoffCap)
-        // Sendable-safe snapshot of values the backoff task needs.
-        let log = logger
-
-        // Bound the total respawn wait by `respawnDeadline`; past
-        // that we give up and let the refinement fail with
-        // `.modelLoadFailed`. The backoff task is also bounded by
-        // this deadline.
-        let respawnStart = ContinuousClock.now
-        let respawnDeadline = configuration.respawnDeadline
-
-        let backoffTask = Task<Void, Never> {
-            while !Task.isCancelled {
-                let delay = throttle.nextDelay()
-                do {
-                    try await Task.sleep(for: delay)
-                } catch {
-                    return
-                }
-                if Task.isCancelled { return }
-                let elapsed = ContinuousClock.now - respawnStart
-                log.warning(
-                    "still waiting for whisper subprocess respawn (elapsed≈\(secondsString(elapsed))s)")
-                if elapsed >= respawnDeadline { return }
-            }
-        }
-        defer { backoffTask.cancel() }
-
-        do {
-            try startHost()
-        } catch {
-            // Log the actual spawn failure before propagating. The
-            // refinement-failed event uses `errorClass = transcribeFailed`
-            // (per `RefinementJobError.classify`) and the queue surfaces
-            // only that coarse class to the UI; this log line is the
-            // only place the *cause* (binary-not-found, lock-held,
-            // handshake-timed-out, etc.) is preserved.
-            logger.error("whisper subprocess respawn failed: \(error)")
-            throw error
-        }
-    }
-
-    /// Convert a host-side error into the `WhisperTranscribeError`
-    /// shape the refiner surfaces for non-recoverable failures.
-    private static func toModelLoadFailed(
-        _ e: WhisperSubprocessHost.HostError
-    ) -> WhisperTranscribeError {
-        switch e {
-        case .binaryNotFound(let p):
-            return .modelLoadFailed("pulsartrace-whisper not found: \(p)")
-        case .spawnFailed(let m):
-            return .modelLoadFailed("spawn failed: \(m)")
-        case .initRefused(let m):
-            return .modelLoadFailed("init refused: \(m)")
-        case .handshakeTimedOut:
-            return .modelLoadFailed("handshake timed out")
-        case .handshakeMalformed(let s):
-            return .modelLoadFailed("handshake malformed: \(s)")
-        case .connectFailed(let errnoVal):
-            return .modelLoadFailed("UDS connect failed: errno \(errnoVal)")
-        case .readTimedOut, .readEOF, .writeFailed, .subprocessGone:
-            return .modelLoadFailed("subprocess unhealthy: \(e)")
-        }
+        core.shutdown()
     }
 
     /// Convert a `WhisperIPCDecoded` payload into the engine's
@@ -404,6 +320,98 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
             language: payload.language)
     }
 
+    // MARK: - Chunk-range computation
+
+    /// Snap search radius around each equal-split boundary: ±5 s.
+    private static let snapRadiusSamples = 5 * AudioFormat.sampleRate
+    /// Snap candidate stride: 10 ms.
+    private static let snapStepSamples = AudioFormat.sampleRate / 100
+    /// Energy window evaluated per candidate: 100 ms, centered.
+    private static let snapWindowSamples = AudioFormat.sampleRate / 10
+
+    /// Split `count` samples into near-equal consecutive ranges, each
+    /// at most `maxChunk` long. Interior boundaries are snapped to the
+    /// quietest 100 ms window within ±5 s of the equal-split point so
+    /// a forced cut lands on a pause instead of mid-word. If snapping
+    /// would push any chunk past `maxChunk`, fall back to the plain
+    /// equal split (correctness over cut quality). The returned ranges
+    /// exactly tile `0..<samples.count` — contiguous, no gaps or
+    /// overlaps.
+    static func chunkRanges(
+        for samples: [Float], maxChunk: Int
+    ) -> [Range<Int>] {
+        precondition(maxChunk > 0, "maxChunk must be positive")
+        let n = samples.count
+        if n <= maxChunk { return [0..<n] }
+
+        // Integer math throughout — same input, same split, always.
+        let numChunks = (n + maxChunk - 1) / maxChunk
+        let equalBoundaries = (1..<numChunks).map { $0 * n / numChunks }
+
+        var snapped: [Int] = []
+        var previous = 0
+        for b in equalBoundaries {
+            let lower = max(b - snapRadiusSamples, previous + 1)
+            let upper = min(b + snapRadiusSamples, n - 1)
+            var bestIndex = b
+            var bestEnergy = Double.infinity
+            var candidate = lower
+            while candidate <= upper {
+                let energy = Self.windowEnergy(
+                    samples, centeredOn: candidate)
+                // Strict `<`: ties resolve to the lowest index.
+                if energy < bestEnergy {
+                    bestEnergy = energy
+                    bestIndex = candidate
+                }
+                candidate += snapStepSamples
+            }
+            snapped.append(bestIndex)
+            previous = bestIndex
+        }
+
+        // Snapping can stretch a neighbor past `maxChunk`; the equal
+        // split satisfies the bound by construction, so prefer it over
+        // a nicer cut that would re-break the frame cap.
+        let snappedRanges = Self.ranges(from: snapped, total: n)
+        let valid = snappedRanges.allSatisfy {
+            (1...maxChunk).contains($0.count)
+        }
+        if valid { return snappedRanges }
+        return Self.ranges(from: equalBoundaries, total: n)
+    }
+
+    /// Sum of squares over the 100 ms window centered on `center`,
+    /// clamped to the array bounds.
+    private static func windowEnergy(
+        _ samples: [Float], centeredOn center: Int
+    ) -> Double {
+        let half = snapWindowSamples / 2
+        let lo = max(center - half, 0)
+        let hi = min(center + half, samples.count)
+        var sum = 0.0
+        for i in lo..<hi {
+            let s = Double(samples[i])
+            sum += s * s
+        }
+        return sum
+    }
+
+    /// Turn interior boundary indices into consecutive ranges tiling
+    /// `0..<total`.
+    private static func ranges(
+        from boundaries: [Int], total: Int
+    ) -> [Range<Int>] {
+        var out: [Range<Int>] = []
+        var start = 0
+        for b in boundaries {
+            out.append(start..<b)
+            start = b
+        }
+        out.append(start..<total)
+        return out
+    }
+
     /// Clamp a recording-relative time to a valid sample index in
     /// `[0, count]`. Same contract as
     /// `WhisperTranscriber.sampleIndex`, kept private to this file so
@@ -414,18 +422,4 @@ public final class RemoteRegionTranscriber: RegionTranscribing, @unchecked Senda
         let idx = Int((time.seconds * Double(AudioFormat.sampleRate)).rounded())
         return min(max(idx, 0), sampleCount)
     }
-}
-
-// MARK: - Helpers
-
-private func millis(_ d: Duration) -> Int64 {
-    let parts = d.components
-    let secMs = parts.seconds &* 1000
-    let attoMs = parts.attoseconds / 1_000_000_000_000_000
-    return secMs &+ attoMs
-}
-
-private func secondsString(_ d: Duration) -> String {
-    let parts = d.components
-    return "\(parts.seconds)"
 }

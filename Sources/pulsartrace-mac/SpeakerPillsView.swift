@@ -70,6 +70,20 @@ struct SpeakerPillsView: View {
             .padding(.vertical, 2)
             .background(style.background, in: Capsule())
             .frame(maxWidth: 160, alignment: .leading)
+            // The kind is otherwise encoded by colour only — name it for
+            // VoiceOver alongside the label. `.combine` folds the inner Text
+            // into this element so VoiceOver reads one label, not a doubled
+            // "Alice, Alice, microphone".
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(speaker.label), \(kindDescription(for: speaker))")
+    }
+
+    /// Spoken counterpart of `pillStyle(for:)` — mirrors the same predicate
+    /// order (mic wins over the unknown-placeholder check).
+    private func kindDescription(for speaker: RecordingSpeaker) -> String {
+        if speaker.isMicrophone { return "microphone" }
+        if speaker.isUnknownPlaceholder { return "unnamed speaker" }
+        return "known speaker"
     }
 
     /// Pick the chip tint based on speaker kind. Order matters: the mic

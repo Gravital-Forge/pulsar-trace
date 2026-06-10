@@ -18,23 +18,28 @@ import Foundation
 ///     `refine-progress.json` `lastError` field.
 public enum PathRedactor {
 
-    /// Replace any occurrence of the user's home directory with `~` so a
-    /// rendered error string does not leak `/Users/<name>/…` into a log or
-    /// UI surface.
+    /// Replace any occurrence of the user's home directory with `~` (and the
+    /// process temp directory with `$TMPDIR/`) so a rendered error string
+    /// does not leak `/Users/<name>/…` — or the uid-keyed
+    /// `/var/folders/…/T/` socket paths — into a log or UI surface.
     public static func redactHome(_ s: String) -> String {
-        s.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        var out = s.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        // `NSTemporaryDirectory()` ends with a trailing `/` on Darwin, so the
+        // replacement yields `$TMPDIR/PulsarTrace/…`. The subprocess shares
+        // this process's uid, so its $TMPDIR resolves to the same string.
+        out = out.replacingOccurrences(
+            of: NSTemporaryDirectory(), with: "$TMPDIR/")
+        return out
     }
 
-    /// Replace `folder.path` with `<folder>` and `NSHomeDirectory()` with
-    /// `~`, in that order. Order matters: `folder.path` is the longer,
-    /// more-specific prefix on a typical layout, so stripping it first
-    /// produces a cleaner `<folder>/…` substring; the second pass then
-    /// catches any home-directory references outside the folder. The second
-    /// replacement never double-rewrites because `<folder>` does not contain
-    /// `/Users/…`.
+    /// Replace `folder.path` with `<folder>`, then apply `redactHome` (home
+    /// directory → `~`, temp directory → `$TMPDIR/`), in that order. Order
+    /// matters: `folder.path` is the longer, more-specific prefix on a
+    /// typical layout, so stripping it first produces a cleaner `<folder>/…`
+    /// substring; the second pass then catches any home-directory references
+    /// outside the folder. The second replacement never double-rewrites
+    /// because `<folder>` does not contain `/Users/…`.
     public static func redact(_ s: String, folder: URL) -> String {
-        var out = s.replacingOccurrences(of: folder.path, with: "<folder>")
-        out = out.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-        return out
+        redactHome(s.replacingOccurrences(of: folder.path, with: "<folder>"))
     }
 }

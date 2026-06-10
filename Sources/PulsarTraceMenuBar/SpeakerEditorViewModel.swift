@@ -48,28 +48,54 @@ public final class SpeakerEditorViewModel {
     public private(set) var isRewriting = false
     /// The last error surfaced to the user, or `nil`.
     public private(set) var lastError: String?
-    /// The active undo toast, or `nil`.
-    public var undoToast: UndoToast?
+    /// The active undo toast, or `nil`. Set via `showToast` (which arms the
+    /// auto-dismiss clock) and cleared via `dismissToast` or the clock.
+    public private(set) var undoToast: UndoToast?
 
     private let library: SpeakerLibrary
     private let events: EventWriter?
     private let settings: MenuBarSettings
     private let rewriter: FinalMarkdownRewriter
+    /// How long an undo toast stays up before auto-dismissing.
+    private let toastLifetime: Duration
+    /// The pending auto-dismiss for the current toast — cancelled when the
+    /// toast is replaced (`showToast`) or explicitly dismissed
+    /// (`dismissToast`). Not UI state, so not observation-tracked.
+    @ObservationIgnored private var toastDismissTask: Task<Void, Never>?
 
     /// - Parameters:
     ///   - library: the persistent speaker library actor.
     ///   - events: events writer; `nil` disables event emission (unit tests
     ///     that do not assert on the log).
     ///   - settings: provides the output folder roots the rewriter scans.
+    ///   - toastLifetime: how long the undo toast stays up before
+    ///     auto-dismissing (tests shrink it to milliseconds).
     public init(
         library: SpeakerLibrary,
         events: EventWriter? = nil,
-        settings: MenuBarSettings
+        settings: MenuBarSettings,
+        toastLifetime: Duration = .seconds(8)
     ) {
         self.library = library
         self.events = events
         self.settings = settings
         self.rewriter = FinalMarkdownRewriter()
+        self.toastLifetime = toastLifetime
+    }
+
+    /// Opens the speaker library at the standard path and returns a ready
+    /// VM — the one place the editor flow touches `AppPaths`/`SpeakerLibrary`,
+    /// so the view layer never constructs engine objects. A failure to open
+    /// the library throws; the view surfaces it as its error state (I6).
+    public static func load(
+        events: EventWriter?, settings: MenuBarSettings
+    ) async throws -> SpeakerEditorViewModel {
+        let library = try await SpeakerLibrary(
+            databaseURL: AppPaths.standard.speakersDatabaseURL, events: events)
+        let vm = SpeakerEditorViewModel(
+            library: library, events: events, settings: settings)
+        await vm.reload()
+        return vm
     }
 
     // MARK: - Load
@@ -191,9 +217,9 @@ public final class SpeakerEditorViewModel {
             try await self.library.delete(speakerId: speakerId)
         }
         if lastError == nil {
-            undoToast = UndoToast(message: "Deleted \(name)") { [weak self] in
+            showToast(UndoToast(message: "Deleted \(name)") { [weak self] in
                 await self?.undelete(speakerId: speakerId)
-            }
+            })
         }
     }
 
@@ -249,10 +275,10 @@ public final class SpeakerEditorViewModel {
             await self.emitRewriteEvents(results, reason: .speakerDelisted)
         }
         if lastError == nil {
-            undoToast = UndoToast(message: "Stopped recognizing \(name)") {
+            showToast(UndoToast(message: "Stopped recognizing \(name)") {
                 [weak self] in
                 await self?.undelist(speakerId: speakerId)
-            }
+            })
         }
     }
 
@@ -359,6 +385,37 @@ public final class SpeakerEditorViewModel {
         }
     }
 
+    // MARK: - Toast lifecycle
+
+    /// Show an undo toast and (re)arm its auto-dismiss clock. A newer toast
+    /// replaces the current one and restarts the clock — cancellation plus
+    /// MainActor serialization guarantee a superseded clock can never clear
+    /// the replacement toast.
+    private func showToast(_ toast: UndoToast) {
+        undoToast = toast
+        toastDismissTask?.cancel()
+        toastDismissTask = Task { [weak self] in
+            guard let lifetime = self?.toastLifetime else { return }
+            try? await Task.sleep(for: lifetime)
+            guard !Task.isCancelled else { return }
+            self?.undoToast = nil
+        }
+    }
+
+    /// Dismiss the current toast and cancel its auto-dismiss clock — the
+    /// view calls this after a tapped Undo has run `toast.action()`.
+    public func dismissToast() {
+        toastDismissTask?.cancel()
+        toastDismissTask = nil
+        undoToast = nil
+    }
+
+    /// Dismiss the error banner (the view's ✕ button). `lastError` is
+    /// `private(set)`, so this is the view's clearing seam.
+    public func clearError() {
+        lastError = nil
+    }
+
     // MARK: - Name validation
 
     /// Validate a speaker name before a rename/split. A name containing `+`,
@@ -406,6 +463,15 @@ public final class SpeakerEditorViewModel {
     /// Run a mutating op with the `isRewriting` flag, error capture, and a
     /// reload afterwards.
     private func withRewrite(_ body: () async throws -> Void) async {
+        // Reentrancy guard: a confirmation dialog staged before a rewrite
+        // began can still confirm mid-flight (dialogs are window-modal, not
+        // part of the disabled List's subtree). Two interleaved withRewrite
+        // calls would drop `isRewriting` early and clobber `lastError` —
+        // refuse the second op instead.
+        guard !isRewriting else {
+            lastError = "Another rewrite is still in progress — try again in a moment."
+            return
+        }
         isRewriting = true
         lastError = nil
         do {

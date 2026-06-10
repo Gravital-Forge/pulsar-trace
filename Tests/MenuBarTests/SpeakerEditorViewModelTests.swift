@@ -315,6 +315,80 @@ struct SpeakerEditorViewModelTests {
         #expect(vm.deletedSpeakers.isEmpty)
     }
 
+    @Test("the undo toast auto-dismisses after its lifetime")
+    func toastAutoDismisses() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let library = try await SpeakerLibrary(
+            databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.3), modelRevision: "rev1",
+            recordingId: "rec_x", recordingFolderName: "x")
+
+        let vm = SpeakerEditorViewModel(
+            library: library, settings: try settings(outputRoot: root),
+            toastLifetime: .milliseconds(80))
+        await vm.reload()
+
+        await vm.delete(speakerId: steve.id)
+        #expect(vm.undoToast != nil)
+
+        // Bounded poll (2 s ceiling) for the auto-dismiss — short sleeps so
+        // the MainActor stays free for the VM's dismiss task to run.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while vm.undoToast != nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(vm.undoToast == nil)
+    }
+
+    @Test("a new delete replaces the toast and restarts its dismiss clock")
+    func newDeleteReplacesToastAndRestartsClock() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let library = try await SpeakerLibrary(
+            databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let alice = try await library.createSpeaker(
+            name: "Alice", centroid: centroid(0.3), modelRevision: "rev1",
+            recordingId: "rec_a", recordingFolderName: "a")
+        let bob = try await library.createSpeaker(
+            name: "Bob", centroid: centroid(0.4), modelRevision: "rev1",
+            recordingId: "rec_b", recordingFolderName: "b")
+
+        let vm = SpeakerEditorViewModel(
+            library: library, settings: try settings(outputRoot: root),
+            toastLifetime: .milliseconds(300))
+        await vm.reload()
+
+        await vm.delete(speakerId: alice.id)
+        #expect(vm.undoToast?.message.contains("Alice") == true)
+
+        // Delete Bob mid-lifetime: his toast replaces Alice's and the
+        // dismiss clock restarts from zero. Margins are deliberately wide
+        // for CI pool starvation: only the SECOND sleep's lateness can
+        // flake this (Bob's clock has 300−150 = 150 ms of headroom at the
+        // assertion; Task.sleep never fires early, so a late first sleep
+        // only strengthens the Alice-expired precondition).
+        try await Task.sleep(for: .milliseconds(200), tolerance: .zero)
+        await vm.delete(speakerId: bob.id)
+        try await Task.sleep(for: .milliseconds(150), tolerance: .zero)
+
+        // ≥350 ms after Alice's delete — her 300 ms clock would have fired
+        // by now if Bob's delete had not restarted it (Bob's clock is only
+        // ~150 ms in).
+        let toast = try #require(vm.undoToast)
+        #expect(toast.message.contains("Bob"))
+
+        // And Bob's toast still auto-dismisses on its own clock.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while vm.undoToast != nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(vm.undoToast == nil)
+    }
+
     @Test("delist emits speaker_delisted BEFORE final_md_rewritten and lists only changed recordings")
     func delistEventOrderingAndAppliedTo() async throws {
         let root = MenuBarFixtures.tempDir()

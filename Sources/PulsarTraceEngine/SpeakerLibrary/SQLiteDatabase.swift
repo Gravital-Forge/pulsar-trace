@@ -55,6 +55,11 @@ final class SQLiteDatabase {
             handle = nil
             throw SQLiteError.open(rc, message)
         }
+        // sqlite3_open_v2 creates the file with the process umask (0644);
+        // the library holds voice embeddings and names, so restrict to
+        // owner before the WAL pragma — -wal/-shm inherit the database
+        // file's mode when SQLite creates them.
+        SecureFiles.restrictToOwner(url)
         // WAL (R32a): a concurrent reader (the live engine) and a
         // single writer coexist; two writers serialize on SQLite's lock.
         //
@@ -71,6 +76,9 @@ final class SQLiteDatabase {
         }
         try exec("PRAGMA foreign_keys=ON;")
         try exec("PRAGMA busy_timeout=5000;")
+        // Journals from a pre-hardening run were created 0644 — repair.
+        SecureFiles.restrictToOwner(URL(fileURLWithPath: url.path + "-wal"))
+        SecureFiles.restrictToOwner(URL(fileURLWithPath: url.path + "-shm"))
     }
 
     deinit {
@@ -208,6 +216,9 @@ final class SQLiteDatabase {
             throw SQLiteError.backupFailed(openRC, message)
         }
         defer { sqlite3_close_v2(dest) }
+        // Restrict before any page is copied: the destination must never be
+        // readable mid-copy, and a failed backup must not leave a 0644 partial.
+        SecureFiles.restrictToOwner(destinationURL)
 
         guard let backup = sqlite3_backup_init(dest, "main", handle, "main") else {
             throw SQLiteError.backupFailed(

@@ -1,5 +1,4 @@
 import AppKit
-import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
 
@@ -19,15 +18,34 @@ struct RecordingsListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Dismissible enqueue-error banner. Primary text on an orange
+            // tint (not white-on-orange, which failed WCAG contrast) so it
+            // reads in both light and dark appearances.
             if let err = queueVM.lastEnqueueError {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(err)
+                        .font(.caption)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        queueVM.clearEnqueueError()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Dismiss error")
+                }
+                .foregroundStyle(.primary)
+                .padding(8)
+                .background(
+                    Color.orange.opacity(0.15),
+                    in: RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.orange.opacity(0.4)))
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
             }
             Group {
                 if scanner.recordings.isEmpty {
@@ -76,7 +94,8 @@ struct RecordingsListView: View {
                 // refinement status icon. The icon is hover-only — full
                 // text moved into `.help()` tooltips to keep the line tight.
                 HStack(spacing: 8) {
-                    Text(recording.displayName)
+                    Text(recording.displayTitle)
+                        .help(recording.displayName)
                     if recording.isRefined {
                         Text(RecordingEntry.formatDuration(recording.durationSeconds))
                             .font(.caption)
@@ -92,21 +111,30 @@ struct RecordingsListView: View {
                 }
             }
             Spacer()
-            Button("View") { viewing = recording }
-            Button("Reveal") {
+            // The one always-visible affordance — a quiet chevron for the
+            // primary action. Everything else lives in the context menu.
+            Button { viewing = recording } label: { Image(systemName: "chevron.right") }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("View transcript")
+                .help("View transcript")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { viewing = recording }
+        .contextMenu {
+            Button("View Transcript") { viewing = recording }
+            Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([recording.folderURL])
             }
+            Divider()
             // "Refine" enqueues into the refinement job queue (E3). Disabled
             // while a job for this recording is already running or queued.
             Button("Refine") {
                 Task {
-                    let model = ModelCatalog.model(named: settings.refineModelName)
-                        ?? ModelCatalog.base
                     await queueVM.enqueueManual(
                         folderURL: recording.folderURL,
                         recordingId: recording.id,
-                        modelName: model.name,
-                        modelSHA256: model.sha256)
+                        refineModelName: settings.refineModelName)
                 }
             }
             .disabled(jobInFlight(recording.id))
@@ -170,6 +198,9 @@ private struct RefineStatusIcon: View {
             .font(.caption)
             .foregroundStyle(tint)
             .help(help)
+            // Without this VoiceOver reads the SF Symbol name; the tooltip
+            // strings are already user-quality, so reuse them.
+            .accessibilityLabel(help)
     }
 }
 
@@ -188,7 +219,7 @@ struct RecordedTranscriptSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(recording.displayName).font(.headline)
+                Text(recording.displayTitle).font(.headline)
                 Spacer()
                 Button {
                     copyTranscriptToPasteboard(lines)
@@ -222,10 +253,8 @@ struct RecordedTranscriptSheet: View {
     /// when no transcript file exists yet (placeholder shown), and `nil` when
     /// a file exists but could not be read (an explicit error line shown).
     private func load() async {
-        let finalURL = recording.folderURL.appendingPathComponent(
-            RecordingFolder.FileName.final)
-        let liveURL = recording.folderURL.appendingPathComponent(
-            RecordingFolder.FileName.live)
+        let finalURL = recording.finalURL
+        let liveURL = recording.liveURL
         let result: [String]? = await Task.detached(priority: .utility) {
             let fm = FileManager.default
             let url = fm.fileExists(atPath: finalURL.path) ? finalURL : liveURL

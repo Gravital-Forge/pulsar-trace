@@ -102,13 +102,10 @@ public actor RefinementJobStore {
     }
 
     private func ensureDirectoryExists() throws {
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: directory.path) {
-            do {
-                try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-            } catch {
-                throw StoreError.directoryCreateFailed("\(error)")
-            }
+        do {
+            try SecureFiles.ensurePrivateDirectory(at: directory)
+        } catch {
+            throw StoreError.directoryCreateFailed("\(error)")
         }
     }
 }

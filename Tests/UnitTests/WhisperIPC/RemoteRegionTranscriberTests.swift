@@ -582,6 +582,235 @@ struct RemoteRegionTranscriberTests {
     }
 }
 
+/// Chunking coverage for the IPC frame cap. 2026-06-05 production
+/// failure: a single 125.9 s VAD region of continuous speech encoded
+/// to a 10,753,208-byte request frame — over
+/// `WhisperFrameCodec.maxPayloadBytes` (8 MiB) — so the frame write
+/// was refused, misread as a wedged decode (SIGKILL + respawn), and
+/// the refinement job failed deterministically on every retry.
+/// Regions longer than `maxChunkSamples` must be split into chunks
+/// that each fit in one frame.
+///
+/// `.serialized`, deliberately: every test here pushes multi-
+/// megasample buffers through the real base64 wire path, which is
+/// CPU-heavy in debug builds. Run in parallel they monopolize the
+/// cooperative pool and starve timing-sensitive suites elsewhere in
+/// UnitTests (DiarGate / WhisperLockProbe / WhisperSubprocessHost
+/// drain budgets are ~2 s) — observed as 12 spurious failures in a
+/// full `--filter UnitTests` run.
+@Suite("RemoteRegionTranscriber chunking", .serialized)
+struct RemoteRegionTranscriberChunkingTests {
+
+    @Test("a 126 s region splits into 2 decode requests, each under the IPC frame cap")
+    func longRegionSplitsIntoFrameSizedChunks() throws {
+        let fake = FakeHost()
+        fake.cannedDecodeQueue = [
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "first", startMs: 0, endMs: 1_000)],
+                language: "en")),
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "second", startMs: 0, endMs: 1_000)],
+                language: "en")),
+        ]
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        // 126 s at 16 kHz = 2_016_000 samples > maxChunkSamples.
+        let samples = [Float](repeating: 0, count: 2_016_000)
+        let region = SpeechRegion(start: .zero, end: .seconds(126))
+        _ = try trans.transcribeRegion(
+            samples, region: region, options: WhisperOptions())
+
+        #expect(fake.decodeCalls == 2)
+        let payloads = decodeRegionPayloads(fake.requests)
+        #expect(payloads.count == 2)
+        var totalSamples = 0
+        for payload in payloads {
+            let chunk = try WhisperIPCSamples.decode(payload.samplesBase64)
+            totalSamples += chunk.count
+            #expect(chunk.count <= RemoteRegionTranscriber.maxChunkSamples)
+            // Chunk-relative bounds, like the unchunked request shape.
+            #expect(payload.regionStartMs == 0)
+            #expect(payload.regionEndMs
+                    == Int64(chunk.count * 1000 / AudioFormat.sampleRate))
+        }
+        // No samples dropped or duplicated across the split.
+        #expect(totalSamples == samples.count)
+        // The invariant the bug violated: every chunked request must
+        // survive the frame codec's payload cap.
+        for request in fake.requests {
+            let jsonBytes = try JSONEncoder().encode(request)
+            #expect(throws: Never.self) {
+                _ = try WhisperFrameCodec.encode(jsonBytes: jsonBytes)
+            }
+        }
+    }
+
+    @Test("chunk segment times come back shifted by region.start + the chunk's offset")
+    func chunkSegmentTimesShiftedByChunkOffset() throws {
+        let fake = FakeHost()
+        fake.cannedDecodeQueue = [
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "first", startMs: 0, endMs: 500)],
+                language: "en")),
+            // Chunk-relative 1000–2000 ms inside the SECOND chunk.
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "second", startMs: 1_000, endMs: 2_000)],
+                language: "en")),
+        ]
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        // 136 s buffer; region covers 10 s → 136 s (126 s slice → 2 chunks).
+        let samples = [Float](repeating: 0, count: 2_176_000)
+        let region = SpeechRegion(start: .seconds(10), end: .seconds(136))
+        let result = try trans.transcribeRegion(
+            samples, region: region, options: WhisperOptions())
+
+        // Derive the second chunk's offset from the first captured
+        // request — the boundary is snap-dependent, don't guess it.
+        let payloads = decodeRegionPayloads(fake.requests)
+        try #require(payloads.count == 2)
+        let firstChunkCount = try WhisperIPCSamples.decode(payloads[0].samplesBase64).count
+        let chunkOffset: Duration = .milliseconds(
+            Int64(firstChunkCount) * 1000 / Int64(AudioFormat.sampleRate))
+
+        try #require(result.segments.count == 2)
+        #expect(result.segments[1].text == "second")
+        #expect(result.segments[1].start == .seconds(10) + chunkOffset + .seconds(1))
+        #expect(result.segments[1].end == .seconds(10) + chunkOffset + .seconds(2))
+    }
+
+    @Test("merged result concatenates segments in chunk order and takes the first non-unknown language")
+    func mergedResultOrderAndLanguage() throws {
+        let fake = FakeHost()
+        fake.cannedDecodeQueue = [
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "a", startMs: 0, endMs: 1_000)],
+                language: "unknown")),
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "b", startMs: 0, endMs: 1_000)],
+                language: "pl")),
+        ]
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        let samples = [Float](repeating: 0, count: 2_016_000)
+        let result = try trans.transcribeRegion(
+            samples,
+            region: SpeechRegion(start: .zero, end: .seconds(126)),
+            options: WhisperOptions())
+
+        #expect(result.segments.map(\.text) == ["a", "b"])
+        #expect(result.language == "pl")
+    }
+
+    @Test("chunk boundary snaps into a quiet stretch near the equal-split point")
+    func chunkBoundarySnapsToQuietGap() throws {
+        let fake = FakeHost()
+        fake.cannedDecodeQueue = [decodedResponse(), decodedResponse()]
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        // 126 s of loud audio with a 2 s silent stretch starting 3 s
+        // after the equal-split midpoint (sample 1_008_000). The snap
+        // search (±5 s) must move the boundary into the silence.
+        var samples = [Float](repeating: 0.5, count: 2_016_000)
+        let quiet = 1_056_000..<1_088_000
+        for i in quiet { samples[i] = 0 }
+
+        _ = try trans.transcribeRegion(
+            samples,
+            region: SpeechRegion(start: .zero, end: .seconds(126)),
+            options: WhisperOptions())
+
+        let payloads = decodeRegionPayloads(fake.requests)
+        try #require(payloads.count == 2)
+        let boundary = try WhisperIPCSamples.decode(payloads[0].samplesBase64).count
+        #expect(quiet.contains(boundary),
+                "boundary \(boundary) should land inside the quiet stretch \(quiet)")
+    }
+
+    @Test("a region of exactly maxChunkSamples still goes out as a single request")
+    func maxChunkRegionStaysSingleRequest() throws {
+        let fake = FakeHost()
+        fake.cannedDecode = decodedResponse()
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        let count = RemoteRegionTranscriber.maxChunkSamples
+        let samples = [Float](repeating: 0, count: count)
+        let endMs = Int64(count * 1000 / AudioFormat.sampleRate)
+        _ = try trans.transcribeRegion(
+            samples,
+            region: SpeechRegion(start: .zero, end: .milliseconds(endMs)),
+            options: WhisperOptions())
+
+        #expect(fake.decodeCalls == 1)
+        let payloads = decodeRegionPayloads(fake.requests)
+        try #require(payloads.count == 1)
+        #expect(payloads[0].regionEndMs == endMs)
+        let jsonBytes = try JSONEncoder().encode(fake.requests[0])
+        #expect(throws: Never.self) {
+            _ = try WhisperFrameCodec.encode(jsonBytes: jsonBytes)
+        }
+    }
+
+    // MARK: - chunkRanges (pure)
+
+    @Test("chunkRanges: n <= maxChunk yields one full range")
+    func chunkRangesSingle() {
+        let samples = [Float](repeating: 0, count: 1_000)
+        #expect(RemoteRegionTranscriber.chunkRanges(for: samples, maxChunk: 1_000)
+                == [0..<1_000])
+        #expect(RemoteRegionTranscriber.chunkRanges(for: samples, maxChunk: 5_000)
+                == [0..<1_000])
+    }
+
+    @Test("chunkRanges: ranges exactly tile 0..<n and never exceed maxChunk")
+    func chunkRangesTiling() {
+        let maxChunk = 200_000
+        let realMax = RemoteRegionTranscriber.maxChunkSamples
+        let cases: [(n: Int, maxChunk: Int)] = [
+            (2 * maxChunk, maxChunk),
+            (2 * maxChunk + 1, maxChunk),
+            (5 * maxChunk - 7, maxChunk),
+            (2 * realMax, realMax),
+            (2 * realMax + 1, realMax),
+        ]
+        for (n, cap) in cases {
+            let samples = [Float](repeating: 0, count: n)
+            let ranges = RemoteRegionTranscriber.chunkRanges(
+                for: samples, maxChunk: cap)
+            var cursor = 0
+            for r in ranges {
+                #expect(r.lowerBound == cursor,
+                        "gap/overlap at \(r) for n=\(n)")
+                #expect(r.count >= 1 && r.count <= cap,
+                        "range \(r) outside 1...\(cap) for n=\(n)")
+                cursor = r.upperBound
+            }
+            #expect(cursor == n, "ranges must cover 0..<\(n), got \(cursor)")
+        }
+    }
+
+    @Test("chunkRanges: deterministic — same input produces the same split")
+    func chunkRangesDeterministic() {
+        // Non-uniform energy so snapping actually has choices to make.
+        let samples = (0..<450_000).map { Float($0 % 997) / 997.0 }
+        let a = RemoteRegionTranscriber.chunkRanges(for: samples, maxChunk: 200_000)
+        let b = RemoteRegionTranscriber.chunkRanges(for: samples, maxChunk: 200_000)
+        #expect(a == b)
+    }
+
+}
+
 // MARK: - Test fixtures
 
 private func makeTranscriber(
@@ -605,186 +834,20 @@ private func makeTranscriber(
         hostFactory: factory)
 }
 
+/// Extract the `decodeRegion` payloads from captured requests, in
+/// arrival order — chunking tests assert per-chunk request shape.
+private func decodeRegionPayloads(
+    _ requests: [WhisperIPCRequest]
+) -> [WhisperIPCDecodeRegion] {
+    requests.compactMap {
+        if case .decodeRegion(let payload) = $0 { return payload }
+        return nil
+    }
+}
+
 /// 16 seconds of silence (256_000 samples at 16 kHz) — big enough to
 /// cover every region used by the tests in this file after the
 /// client-side slicing fix landed. Without this, tests that pass
 /// `[0.1]` with multi-second regions short-circuit to an empty
 /// `TranscriptionResult` before ever touching the IPC layer.
 private let sixteenSeconds: [Float] = [Float](repeating: 0, count: 256_000)
-
-private func decodedResponse() -> WhisperIPCResponse {
-    .decoded(WhisperIPCDecoded(
-        requestId: UUID(),
-        segments: [WhisperIPCSegment(text: "ok", startMs: 0, endMs: 100)],
-        language: "en"))
-}
-
-/// Fake `WhisperHostProtocol` for unit tests. One canned decode +
-/// optional canned error; counts calls so tests can assert sigkill +
-/// respawn happened. Records the last request so callers can assert
-/// the request shape (e.g. that a `decodeRegion` carries the right
-/// region bounds).
-private final class FakeHost: WhisperHostProtocol, @unchecked Sendable {
-    /// What `decode` returns (if no error is configured).
-    var cannedDecode: WhisperIPCResponse?
-    /// What `decode` throws (takes precedence over `cannedDecode`).
-    var cannedDecodeError: WhisperSubprocessHost.HostError?
-    /// Delay applied inside `startAndInitialize` — used to let the
-    /// backoff log fire before init returns.
-    var startDelay: Duration = .zero
-
-    private let lock = NSLock()
-    private var _startCalls = 0
-    private var _decodeCalls = 0
-    private var _terminateCalls = 0
-    private var _sigkillCalls = 0
-    private var _alive = false
-    private var _lastRequest: WhisperIPCRequest?
-
-    var startCalls: Int { lock.withLock { _startCalls } }
-    var decodeCalls: Int { lock.withLock { _decodeCalls } }
-    var terminateCalls: Int { lock.withLock { _terminateCalls } }
-    var sigkillCalls: Int { lock.withLock { _sigkillCalls } }
-    var isAlive: Bool { lock.withLock { _alive } }
-    var lastRequest: WhisperIPCRequest? { lock.withLock { _lastRequest } }
-
-    func startAndInitialize(model: String) throws {
-        if startDelay > .zero {
-            let ms = millis(startDelay)
-            Thread.sleep(forTimeInterval: TimeInterval(ms) / 1000.0)
-        }
-        lock.withLock {
-            _startCalls += 1
-            _alive = true
-        }
-    }
-
-    func decode(
-        _ request: WhisperIPCRequest, deadline: Duration
-    ) throws -> WhisperIPCResponse {
-        lock.withLock {
-            _decodeCalls += 1
-            _lastRequest = request
-        }
-        if let err = cannedDecodeError {
-            throw err
-        }
-        guard let resp = cannedDecode else {
-            throw WhisperSubprocessHost.HostError.readTimedOut
-        }
-        return resp
-    }
-
-    func terminate(grace: Duration) {
-        lock.withLock {
-            _terminateCalls += 1
-            _alive = false
-        }
-    }
-
-    func sigkill() {
-        lock.withLock {
-            _sigkillCalls += 1
-            _alive = false
-        }
-    }
-}
-
-private func millis(_ d: Duration) -> Int {
-    let parts = d.components
-    return Int(parts.seconds) * 1000
-        + Int(parts.attoseconds / 1_000_000_000_000_000)
-}
-
-/// Factory that always returns the same fake host.
-private final class SingleHostFactory: @unchecked Sendable {
-    let host: FakeHost
-    private let lock = NSLock()
-    private var _callCount = 0
-    var callCount: Int { lock.withLock { _callCount } }
-
-    init(host: FakeHost) { self.host = host }
-
-    var factory: RemoteRegionTranscriber.HostFactory {
-        return { _, _ in
-            self.lock.withLock { self._callCount += 1 }
-            return self.host
-        }
-    }
-}
-
-/// Factory that returns a sequence of hosts, optionally injecting
-/// `startAndInitialize` errors at specific calls (the `startErrors[i]`,
-/// if non-nil, makes the i'th host throw on start).
-private final class SequencedHostFactory: @unchecked Sendable {
-    let hosts: [FakeHost]
-    let startErrors: [WhisperSubprocessHost.HostError?]
-    private let lock = NSLock()
-    private var _callCount = 0
-    var callCount: Int { lock.withLock { _callCount } }
-
-    init(
-        hosts: [FakeHost],
-        startErrors: [WhisperSubprocessHost.HostError?] = []
-    ) {
-        self.hosts = hosts
-        self.startErrors = startErrors
-    }
-
-    var factory: RemoteRegionTranscriber.HostFactory {
-        return { [self] _, _ in
-            let idx: Int = lock.withLock {
-                let i = _callCount
-                _callCount += 1
-                return i
-            }
-            // If a start error is configured for this call, return a
-            // throwing fake. Otherwise return the i'th canned host.
-            if idx < startErrors.count, let err = startErrors[idx] {
-                return ThrowingStartHost(error: err)
-            }
-            // If we've exhausted the canned hosts, return a fresh
-            // empty one — tests that don't care about subsequent
-            // calls won't reach this path.
-            if idx < hosts.count {
-                return hosts[idx]
-            }
-            return FakeHost()
-        }
-    }
-}
-
-/// Host whose `startAndInitialize` always throws — used to simulate
-/// non-recoverable spawn failure in the respawn path.
-private final class ThrowingStartHost: WhisperHostProtocol, @unchecked Sendable {
-    let error: WhisperSubprocessHost.HostError
-    init(error: WhisperSubprocessHost.HostError) { self.error = error }
-
-    var isAlive: Bool { false }
-
-    func startAndInitialize(model: String) throws { throw error }
-    func decode(
-        _ request: WhisperIPCRequest, deadline: Duration
-    ) throws -> WhisperIPCResponse {
-        throw error
-    }
-    func terminate(grace: Duration) {}
-    func sigkill() {}
-}
-
-/// Lock-protected log sink — same shape as the window-variant tests.
-private final class CapturingLogHandler: LogHandler, @unchecked Sendable {
-    private let lock = NSLock()
-    private var _m: [String] = []
-    var logLevel: Logger.Level = .trace
-    var metadata: Logger.Metadata = [:]
-    subscript(metadataKey k: String) -> Logger.Metadata.Value? {
-        get { metadata[k] } set { metadata[k] = newValue }
-    }
-    var messages: [String] { lock.withLock { _m } }
-    func log(level: Logger.Level, message: Logger.Message,
-             metadata: Logger.Metadata?, source: String,
-             file: String, function: String, line: UInt) {
-        lock.withLock { _m.append("\(message)") }
-    }
-}

@@ -34,10 +34,33 @@ struct SpeakerEditorView: View {
     /// existing name is highlighted and typing replaces it in one keystroke.
     @FocusState private var renameFieldFocused: Bool
 
+    /// The speaker awaiting the delist ("Don't recognize") confirmation —
+    /// just the two fields the dialog needs. A full `Speaker` also carries a
+    /// 256-float centroid; no reason to park that in view state.
+    private struct PendingDelist {
+        let id: String
+        let name: String
+        /// How many recordings the delist would rewrite — fetched from
+        /// `appearances(ofSpeaker:)`. Carried here (not as separate state)
+        /// so the dialog always shows a consistent (id, name, count) triple
+        /// even if two right-clicks race across the await.
+        let count: Int
+    }
+
+    /// Non-nil while the delist confirmation dialog is up (Task 7a) —
+    /// delisting rewrites `final.md` files on disk, so it must be confirmed.
+    @State private var pendingDelist: PendingDelist?
+
     // Merge sheet state.
     @State private var showMerge = false
     @State private var mergePrimaryId: String?
     @State private var mergeOtherId: String?
+    /// True while the merge confirmation dialog is up (Task 7b) — merging
+    /// rewrites `final.md` files on disk, so it must be confirmed.
+    @State private var showMergeConfirm = false
+    /// How many recordings the pending merge would rewrite — the merged-away
+    /// speaker's appearance count, fetched before presenting the dialog.
+    @State private var pendingMergeCount = 0
 
     // Split sheet state.
     @State private var showSplit = false
@@ -62,14 +85,28 @@ struct SpeakerEditorView: View {
             // Always present (disabled until usable) so the window toolbar —
             // and thus the chrome — does not change as the library loads.
             ToolbarItemGroup {
+                // Busy indicator while a retroactive final.md rewrite is in
+                // flight — paired with `.disabled(isRewriting)` on the list.
+                // Conditionally present, NOT opacity-hidden: macOS draws
+                // button-like chrome around a toolbar item even at opacity 0,
+                // leaving a ghost "empty button" next to Merge/Split. The
+                // toolbar reflows naturally when this appears.
+                if viewModel?.isRewriting == true {
+                    ProgressView()
+                        .controlSize(.small)
+                        .help("Rewriting transcripts…")
+                        .accessibilityLabel("Rewriting transcripts")
+                }
                 Button("Merge…") {
                     if let viewModel { startMerge(viewModel) }
                 }
-                .disabled((viewModel?.liveSpeakers.count ?? 0) < 2)
+                .disabled((viewModel?.liveSpeakers.count ?? 0) < 2
+                    || viewModel?.isRewriting == true)
                 Button("Split…") {
                     if let viewModel { startSplit(viewModel) }
                 }
-                .disabled(viewModel?.liveSpeakers.isEmpty ?? true)
+                .disabled(viewModel?.liveSpeakers.isEmpty ?? true
+                    || viewModel?.isRewriting == true)
             }
         }
         .task { await loadLibrary() }
@@ -129,22 +166,64 @@ struct SpeakerEditorView: View {
                     }
                 }
             }
+            // A rewrite fans out over every affected final.md on disk — the
+            // list is disabled while one is in flight so edits cannot stack
+            // (the toolbar shows the paired busy indicator). Applied before
+            // the overlays so the error ✕ and Undo stay clickable.
+            .disabled(viewModel.isRewriting)
             .overlay(alignment: .top) { errorBanner(viewModel) }
             .overlay(alignment: .bottom) { undoBanner(viewModel) }
+            // Task 7a — delisting rewrites every final.md the speaker appears
+            // in, so it is confirmed with the impact count fetched when the
+            // context-menu item staged `pendingDelist`.
+            .confirmationDialog(
+                "Stop recognizing \(pendingDelist?.name ?? "")?",
+                isPresented: Binding(
+                    get: { pendingDelist != nil },
+                    set: { if !$0 { pendingDelist = nil } })
+            ) {
+                Button("Stop Recognizing", role: .destructive) {
+                    if let s = pendingDelist {
+                        Task { await viewModel.delist(speakerId: s.id) }
+                    }
+                    pendingDelist = nil
+                }
+            } message: {
+                let count = pendingDelist?.count ?? 0
+                Text(count == 0
+                     ? "Their lines become “Unrecognized”. Undoable for 30 days."
+                     : "\(count) recording\(count == 1 ? "" : "s") will be rewritten. Their lines become “Unrecognized”. Undoable for 30 days.")
+            }
         }
     }
 
-    /// A transient error banner for a failed edit (`viewModel.lastError`).
+    /// A dismissible error banner for a failed edit (`viewModel.lastError`).
+    /// Primary text on a red tint (not white-on-red, which failed WCAG
+    /// contrast) so it reads in both light and dark appearances.
     @ViewBuilder
     private func errorBanner(_ viewModel: SpeakerEditorViewModel) -> some View {
         if let error = viewModel.lastError {
-            Text(error)
-                .font(.callout)
-                .foregroundStyle(.white)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.red, in: RoundedRectangle(cornerRadius: 6))
-                .padding(12)
+            HStack(alignment: .firstTextBaseline) {
+                Text(error)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    viewModel.clearError()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss error")
+            }
+            .foregroundStyle(.primary)
+            .padding(8)
+            .background(
+                Color.red.opacity(0.15),
+                in: RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.red.opacity(0.4)))
+            .padding(12)
         }
     }
 
@@ -158,7 +237,9 @@ struct SpeakerEditorView: View {
                 Button("Undo") {
                     Task {
                         await toast.action()
-                        viewModel.undoToast = nil
+                        // Clears the toast AND cancels its auto-dismiss
+                        // clock (`undoToast` is private(set) on the VM).
+                        viewModel.dismissToast()
                     }
                 }
             }
@@ -242,27 +323,55 @@ struct SpeakerEditorView: View {
                 .disabled(renameText
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             } else {
-                Text(speaker.name)
-                Spacer()
-                Button("Rename") {
+                // Double-click renames; everything else is in the context
+                // menu. The gesture and menu are scoped to this branch (not
+                // the whole row) so they can't fire while the rename
+                // TextField is up — a double-click selecting a word inside
+                // the field must not reset `renameText`.
+                HStack {
+                    Text(speaker.name)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
                     renameText = speaker.name
                     renameTarget = speaker.id
                 }
-                // "Don't recognize this speaker" — hidden for the mic speaker
-                // (name `"You"`), matching the ViewModel's mic-rejection guard.
-                // The library doesn't carry an `isMicrophone` flag on a
-                // `Speaker` today, so the UI mirrors the same name-based
-                // policy. See SpeakerEditorViewModel.delist for the rationale.
-                if speaker.name != "You" {
-                    Button("Don't recognize") {
-                        Task { await viewModel.delist(speakerId: speaker.id) }
+                .contextMenu {
+                    Button("Rename") {
+                        renameText = speaker.name
+                        renameTarget = speaker.id
                     }
-                    .help("Stop recognizing this speaker. Their lines in "
-                        + "transcripts become 'Unrecognized'. Undoable for "
-                        + "30 days.")
-                }
-                Button("Delete") {
-                    Task { await viewModel.delete(speakerId: speaker.id) }
+                    // "Don't Recognize This Speaker" — hidden for the mic
+                    // speaker (name `"You"`), matching the ViewModel's
+                    // mic-rejection guard. The library doesn't carry an
+                    // `isMicrophone` flag on a `Speaker` today, so the UI
+                    // mirrors the same name-based policy. See
+                    // SpeakerEditorViewModel.delist for the rationale.
+                    // Delisting rewrites final.md files, so this only stages
+                    // the confirmation (Task 7a) — the dialog on the List
+                    // performs the actual delist.
+                    if speaker.name != "You" {
+                        Button("Don't Recognize This Speaker") {
+                            Task {
+                                let count = await viewModel
+                                    .appearances(ofSpeaker: speaker.id).count
+                                pendingDelist = PendingDelist(
+                                    id: speaker.id, name: speaker.name,
+                                    count: count)
+                            }
+                        }
+                        .help("Stop recognizing this speaker. Their lines in "
+                            + "transcripts become 'Unrecognized'. Undoable for "
+                            + "30 days.")
+                    }
+                    Divider()
+                    // One-click + undo toast, no confirmation — locked
+                    // decision; delete is a soft tombstone and rewrites
+                    // nothing on disk.
+                    Button("Delete", role: .destructive) {
+                        Task { await viewModel.delete(speakerId: speaker.id) }
+                    }
                 }
             }
         }
@@ -294,15 +403,18 @@ struct SpeakerEditorView: View {
             HStack {
                 Spacer()
                 Button("Cancel") { showMerge = false }
+                // Task 7b — merging rewrites every final.md the merged-away
+                // speaker appears in, so this only fetches the impact count
+                // and raises the confirmation dialog; the dialog's
+                // destructive Merge performs the merge and closes the sheet.
                 Button("Merge") {
-                    if let primary = mergePrimaryId,
-                       let other = mergeOtherId, primary != other {
+                    if let other = mergeOtherId {
                         Task {
-                            await viewModel.merge(
-                                primaryId: primary, otherId: other)
+                            pendingMergeCount = await viewModel
+                                .appearances(ofSpeaker: other).count
+                            showMergeConfirm = true
                         }
                     }
-                    showMerge = false
                 }
                 .disabled(mergePrimaryId == nil || mergeOtherId == nil
                     || mergePrimaryId == mergeOtherId)
@@ -310,6 +422,32 @@ struct SpeakerEditorView: View {
         }
         .padding(16)
         .frame(width: 320)
+        .confirmationDialog(
+            "Merge ‘\(speakerName(mergeOtherId, in: viewModel))’ into "
+                + "‘\(speakerName(mergePrimaryId, in: viewModel))’?",
+            isPresented: $showMergeConfirm
+        ) {
+            Button("Merge", role: .destructive) {
+                if let primary = mergePrimaryId,
+                   let other = mergeOtherId, primary != other {
+                    Task {
+                        await viewModel.merge(
+                            primaryId: primary, otherId: other)
+                    }
+                }
+                showMerge = false
+            }
+        } message: {
+            Text("\(pendingMergeCount) recording\(pendingMergeCount == 1 ? "" : "s") will be rewritten.")
+        }
+    }
+
+    /// Resolve a speaker id to its display name from the live list — used by
+    /// the merge confirmation's title.
+    private func speakerName(
+        _ id: String?, in viewModel: SpeakerEditorViewModel
+    ) -> String {
+        viewModel.liveSpeakers.first { $0.id == id }?.name ?? ""
     }
 
     // MARK: - Split
@@ -370,21 +508,18 @@ struct SpeakerEditorView: View {
         .frame(width: 380)
     }
 
-    /// Open the `SpeakerLibrary` at the standard app-support path and build the
-    /// ViewModel. A failure surfaces an error state (I6) instead of an
-    /// indefinite loading spinner.
+    /// Build the ViewModel via its `load` factory — the VM owns opening the
+    /// `SpeakerLibrary` at the standard path; this view never constructs
+    /// engine objects. A failure surfaces an error state (I6) instead of an
+    /// indefinite loading spinner; the rendered error is home-redacted so it
+    /// cannot leak `/Users/<name>/...` into the UI.
     private func loadLibrary() async {
         guard viewModel == nil else { return }
-        let paths = AppPaths.standard
         do {
-            let library = try await SpeakerLibrary(
-                databaseURL: paths.speakersDatabaseURL, events: events)
-            let vm = SpeakerEditorViewModel(
-                library: library, events: events, settings: settings)
-            await vm.reload()
-            viewModel = vm
+            viewModel = try await SpeakerEditorViewModel.load(
+                events: events, settings: settings)
         } catch {
-            loadError = "\(error)"
+            loadError = PathRedactor.redactHome("\(error)")
         }
     }
 }

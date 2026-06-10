@@ -28,14 +28,38 @@ struct TranscriptView: View {
             SmartScrollingTranscript(lines: lines, controller: autoScroll)
         } else {
             ScrollView {
-                // One `Text` for the whole transcript, not one per line, so a
-                // text selection can span multiple lines (a per-line `Text`
-                // confines the selection to a single line).
-                Text(lines.joined(separator: "\n"))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, raw in
+                        transcriptRow(raw)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    /// One styled row per parsed transcript line — raw Markdown source
+    /// (`**[00:01:23] Steve:** …`) is never shown; the marker and blank
+    /// lines are structural and dropped from display.
+    @ViewBuilder
+    private func transcriptRow(_ raw: String) -> some View {
+        switch TranscriptLine.parse(raw) {
+        case .utterance(let ts, let speaker, let text):
+            (Text("[\(ts)] ")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+             + Text("\(speaker)  ")
+                .font(.callout.weight(.semibold))
+             + Text(text)
+                .font(.callout))
+                .textSelection(.enabled)
+        case .header(let title):
+            Text(title).font(.headline).padding(.bottom, 2)
+        case .plain(let s):
+            Text(s).font(.callout).textSelection(.enabled)
+        case .marker, .blank:
+            EmptyView()
         }
     }
 }
@@ -131,7 +155,7 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
             width: 0,
             height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
-        textView.string = lines.joined(separator: "\n")
+        textView.textStorage?.setAttributedString(Self.attributed(from: lines))
 
         scrollView.documentView = textView
 
@@ -140,6 +164,7 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
         scrollView.contentView.postsBoundsChangedNotifications = true
         context.coordinator.observe(scrollView: scrollView, threshold: Self.bottomThreshold)
         context.coordinator.lastSeenLineCount = lines.count
+        context.coordinator.lastSeenRawText = lines.joined(separator: "\n")
 
         // Open at the bottom — user's intent is "show me the latest." We
         // need to wait one runloop turn so the text view has finished
@@ -155,8 +180,12 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
 
+        // Change detection compares the RAW joined lines (tracked in the
+        // coordinator), not `textView.string` — the rendered text is a
+        // styled reformatting that drops marker/blank lines, so it never
+        // equals the raw source.
         let newText = lines.joined(separator: "\n")
-        let textChanged = textView.string != newText
+        let textChanged = context.coordinator.lastSeenRawText != newText
 
         // ---- The before-render check the user asked for ----
         // Sample NOW, with the OLD text still in place.
@@ -165,7 +194,13 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
 
         if textChanged {
             let oldLineCount = context.coordinator.lastSeenLineCount
-            textView.string = newText
+            // Wholesale rebuild — same O(n) shape the old `string =` setter
+            // had. If long meetings ever make this measurable: live changes
+            // are suffix-only appends, so `textStorage.append` over
+            // `lines[oldCount...]` would work, with a full rebuild fallback
+            // when the line count decreases (truncation/overwrite).
+            textView.textStorage?.setAttributedString(Self.attributed(from: lines))
+            context.coordinator.lastSeenRawText = newText
             // Force layout so the document view's frame reflects the new
             // text before we measure or scroll.
             if let container = textView.textContainer {
@@ -205,6 +240,42 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
         return distance <= threshold
     }
 
+    /// Styled rendering of the raw transcript lines — same per-line shapes
+    /// as the static viewer's `transcriptRow` (timestamp dimmed +
+    /// monospaced digits, speaker semibold, text plain; marker and blank
+    /// lines dropped).
+    private static func attributed(from lines: [String]) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        let body: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let stamp: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(
+                ofSize: NSFont.smallSystemFontSize, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let name: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        for raw in lines {
+            switch TranscriptLine.parse(raw) {
+            case .utterance(let ts, let speaker, let text):
+                out.append(NSAttributedString(string: "[\(ts)] ", attributes: stamp))
+                out.append(NSAttributedString(string: "\(speaker)  ", attributes: name))
+                out.append(NSAttributedString(string: text + "\n", attributes: body))
+            case .header(let title):
+                out.append(NSAttributedString(string: title + "\n", attributes: name))
+            case .plain(let s):
+                out.append(NSAttributedString(string: s + "\n", attributes: body))
+            case .marker, .blank:
+                continue
+            }
+        }
+        return out
+    }
+
     static func scrollToBottom(in scrollView: NSScrollView, animated: Bool) {
         guard let documentView = scrollView.documentView else { return }
         let maxY = max(0, documentView.frame.height - scrollView.contentView.bounds.height)
@@ -228,6 +299,10 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
         private var scrollObserver: NSObjectProtocol?
         var lastSeenLineCount: Int = 0
         var lastSeenJumpGeneration: Int = 0
+        /// Raw `lines.joined(separator: "\n")` last rendered — change
+        /// detection compares against this, since the styled text in the
+        /// view no longer mirrors the raw source.
+        var lastSeenRawText: String = ""
 
         init(controller: AutoScrollController) {
             self.controller = controller

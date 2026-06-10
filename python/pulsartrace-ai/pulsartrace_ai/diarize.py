@@ -47,7 +47,10 @@ Output JSON contract (consumed by Swift ``Diarizer``)::
 ``spans`` preserves overlapping speech: when two speakers talk at once both
 attributions appear (their spans simply overlap in time). ``exclusive_spans``
 is pyannote 4.x's overlap-resolved variant, handy for clean transcript
-reconciliation. Times are seconds from the start of the WAV.
+reconciliation. Times are seconds from the start of the WAV. A speaker whose
+embedding row is non-finite (pyannote emits NaN for a cluster with no usable
+speech frames, e.g. a near-silent recording) is omitted from ``embeddings``;
+its ``spans`` and its entry in ``speakers`` remain.
 
 The model is cached under PulsarTrace's own cache dir (``HF_HOME`` is pointed
 at ``~/Library/Caches/PulsarTrace/huggingface``) rather than the shared
@@ -76,23 +79,28 @@ import os
 # var into the subprocess environment (defence in depth).
 os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
 
-import random
 import sys
-import wave
 from pathlib import Path
 from typing import Any
 
-# The gated pyannote model PulsarTrace standardises on (PRD §17).
-MODEL_ID = "pyannote/speaker-diarization-community-1"
+# All of these are used internally below. DiarizationError, MODEL_ID, and
+# Span are additionally re-exported on purpose — existing consumers (the
+# tests, conftest) import them from this module. The underscore helpers are
+# NOT a compat surface: new code imports those from pulsartrace_ai._common.
+from pulsartrace_ai._common import (
+    DiarizationError,
+    MODEL_ID,
+    Span,
+    _annotation_to_spans,
+    _embeddings_by_label,
+    _model_revision,
+    _seed_everything,
+    _wav_duration_seconds,
+)
 
 # Output schema version. Bump on a breaking change to the JSON contract; the
 # Swift Diarizer keys off it.
 SCHEMA_VERSION = 1
-
-# Fixed RNG seed. pyannote's clustering has stochastic steps; seeding torch,
-# numpy and Python's `random` makes a given WAV diarize identically run to run
-# (PRD §12 determinism rule).
-RANDOM_SEED = 1729
 
 
 def default_cache_dir() -> Path:
@@ -109,30 +117,6 @@ def default_cache_dir() -> Path:
         / "PulsarTrace"
         / "huggingface"
     )
-
-
-class DiarizationError(RuntimeError):
-    """Raised for any condition that should fail the subprocess cleanly.
-
-    The Swift ``Diarizer`` distinguishes a clean non-zero exit with a tagged
-    stderr message from a crash; this carries the human-readable reason.
-    """
-
-
-@dataclasses.dataclass(frozen=True)
-class Span:
-    """One speaker turn: a label active over ``[start, end]`` seconds."""
-
-    speaker: str
-    start: float
-    end: float
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "speaker": self.speaker,
-            "start": round(self.start, 3),
-            "end": round(self.end, 3),
-        }
 
 
 @dataclasses.dataclass(frozen=True)
@@ -163,45 +147,6 @@ class DiarizationResult:
         }
 
 
-def _seed_everything() -> None:
-    """Seed every RNG pyannote can reach so diarization is deterministic.
-
-    Note: `PYTHONHASHSEED` is *not* set here — by the time this module runs the
-    interpreter has already started, so mutating `os.environ["PYTHONHASHSEED"]`
-    has no effect on hash randomisation. The Swift `Diarizer` instead exports
-    `PYTHONHASHSEED` into the subprocess environment before launch, where it
-    actually takes effect.
-    """
-    random.seed(RANDOM_SEED)
-    import numpy as np
-    import torch
-
-    np.random.seed(RANDOM_SEED)
-    torch.manual_seed(RANDOM_SEED)
-    if torch.backends.mps.is_available():
-        torch.mps.manual_seed(RANDOM_SEED)
-    # Require deterministic algorithm selection. If a kernel on this hardware
-    # has no deterministic variant pyannote's inference path will raise — we
-    # surface that rather than silently producing non-reproducible output
-    # (PRD §12 determinism rule). Verified to pass on the Apple-Silicon MPS
-    # path with pyannote community-1 / torch 2.12.
-    torch.use_deterministic_algorithms(True, warn_only=False)
-
-
-def _wav_duration_seconds(wav_path: Path) -> float:
-    """Duration of a WAV file in seconds, read from its header."""
-    with wave.open(str(wav_path), "rb") as w:
-        frames = w.getnframes()
-        rate = w.getframerate()
-        if rate <= 0:
-            # Basename only — the operational log must never carry full user
-            # file paths (PRD §11 / R59, Hard Invariant #7).
-            raise DiarizationError(
-                f"WAV has invalid sample rate: {wav_path.name}"
-            )
-        return frames / float(rate)
-
-
 def _hf_token() -> str:
     """The Hugging Face token, required for the gated community-1 model.
 
@@ -218,45 +163,6 @@ def _hf_token() -> str:
             "https://huggingface.co/pyannote/speaker-diarization-community-1"
         )
     return token
-
-
-def _model_revision(token: str | None = None) -> str:
-    """The Hugging Face hub commit SHA of the diarization model checkpoint.
-
-    The speaker library refuses to match centroids across a *model* change
-    (Open Question #3). The pyannote.audio *library* version is not a
-    reliable proxy for that — the same library can load different checkpoints,
-    and a checkpoint can be re-uploaded under the same library version. So we
-    record the model repo's commit SHA: the actual checkpoint identity.
-
-    Resolved offline-first from the local snapshot already in the HF cache
-    (community-1 is downloaded before this runs); falls back to a hub query
-    only if that fails. Returns ``""`` if neither is reachable — the caller
-    keeps the library version as the secondary identity field.
-    """
-    # Prefer the locally cached snapshot's revision so this needs no network.
-    try:
-        from huggingface_hub import constants as hf_constants
-        from huggingface_hub.file_download import repo_folder_name
-
-        cache_root = Path(os.environ.get("HF_HOME", hf_constants.HF_HOME)) / "hub"
-        repo_dir = cache_root / repo_folder_name(repo_id=MODEL_ID, repo_type="model")
-        main_ref = repo_dir / "refs" / "main"
-        if main_ref.is_file():
-            sha = main_ref.read_text().strip()
-            if sha:
-                return sha
-    except Exception:  # noqa: BLE001 — fall through to a hub query
-        pass
-
-    try:
-        from huggingface_hub import model_info
-
-        info = model_info(MODEL_ID, token=token or os.environ.get("HF_TOKEN") or None)
-        return info.sha or ""
-    except Exception as exc:  # noqa: BLE001 — revision is best-effort
-        print(f"[diarize] model revision unavailable: {exc}", file=sys.stderr)
-        return ""
 
 
 def load_pipeline(
@@ -303,16 +209,6 @@ def load_pipeline(
         print(f"[diarize] MPS unavailable, using CPU: {exc}", file=sys.stderr)
 
     return pipeline
-
-
-def _annotation_to_spans(annotation) -> list[Span]:
-    """Flatten a pyannote ``Annotation`` into time-ordered ``Span`` objects."""
-    spans = [
-        Span(speaker=str(label), start=float(segment.start), end=float(segment.end))
-        for segment, _, label in annotation.itertracks(yield_label=True)
-    ]
-    spans.sort(key=lambda s: (s.start, s.end, s.speaker))
-    return spans
 
 
 def diarize(
@@ -363,14 +259,15 @@ def diarize(
     # unambiguous regardless of how a future pyannote version orders things.
     speakers = sorted(str(label) for label in diarization.labels())
 
-    embeddings: dict[str, list[float]] = {}
-    embedding_dim = 0
-    if raw_embeddings is not None and len(raw_embeddings) > 0:
-        embedding_dim = int(raw_embeddings.shape[1])
-        for index, label in enumerate(speakers):
-            if index < len(raw_embeddings):
-                row = raw_embeddings[index]
-                embeddings[label] = [float(x) for x in row]
+    embeddings, embedding_dim, dropped = _embeddings_by_label(raw_embeddings, speakers)
+    for label in dropped:
+        # Speaker labels (SPEAKER_NN) are pyannote-generated — safe for the
+        # operational log (no user content, no paths; Hard Invariant #7).
+        print(
+            f"[diarize] dropped non-finite embedding for {label} "
+            "(no usable speech frames)",
+            file=sys.stderr,
+        )
 
     return DiarizationResult(
         model_revision=model_revision,
@@ -412,6 +309,16 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     try:
         result = diarize(args.wav)
+        # Serialize fully BEFORE touching stdout: `json.dump` streams as it
+        # encodes, so a mid-encode failure would leave partial JSON on stdout
+        # for the Swift parent to choke on. allow_nan=False stays as the
+        # last-resort guard — embeddings are already sanitized at the source
+        # (`_embeddings_by_label` drops non-finite rows), so a NaN/Inf here is
+        # a bug, surfaced as a clean exit 2 (caught below) instead of
+        # `NaN`/`Infinity` tokens that Swift's strict JSONDecoder would reject.
+        payload = json.dumps(
+            result.as_dict(), separators=(",", ":"), allow_nan=False
+        )
     except DiarizationError as exc:
         print(f"[diarize] error: {exc}", file=sys.stderr)
         return 1
@@ -422,13 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         traceback.print_exc(file=sys.stderr)
         return 2
 
-    # allow_nan=False: a NaN/Inf embedding value raises a clean ValueError
-    # here (caught as an unexpected failure → exit 2) instead of emitting
-    # `NaN`/`Infinity` tokens that Swift's strict JSONDecoder would reject.
-    json.dump(
-        result.as_dict(), sys.stdout, separators=(",", ":"), allow_nan=False
-    )
-    sys.stdout.write("\n")
+    sys.stdout.write(payload + "\n")
     sys.stdout.flush()
     print(
         f"[diarize] ok: {len(result.speakers)} speaker(s), "

@@ -76,26 +76,25 @@ os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
 
 import sys
 import time
-import wave
 from pathlib import Path
 from typing import Any
 
-from pulsartrace_ai.diarize import (
+from pulsartrace_ai._common import (
     DiarizationError,
     Span,
     _annotation_to_spans,
+    _embeddings_by_label,
     _model_revision,
     _seed_everything,
-    load_pipeline,
 )
+from pulsartrace_ai.diarize import load_pipeline
 
 
-def _wav_duration_seconds(wav_path: Path) -> float:
-    with wave.open(str(wav_path), "rb") as w:
-        rate = w.getframerate()
-        if rate <= 0:
-            raise DiarizationError(f"WAV has invalid sample rate: {wav_path.name}")
-        return w.getnframes() / float(rate)
+def _parse_request(request: dict[str, Any]) -> tuple[Path, float]:
+    """Validate one stdin request; raises DiarizationError on a missing field."""
+    if "window_wav" not in request:
+        raise DiarizationError("request missing required field: window_wav")
+    return Path(request["window_wav"]), float(request.get("window_start", 0.0))
 
 
 def diarize_window(
@@ -110,7 +109,7 @@ def diarize_window(
     caller rather than crashing the long-lived loop.
 
     RNG determinism note (R16): :func:`main` calls
-    :func:`pulsartrace_ai.diarize._seed_everything` **once per subprocess**,
+    :func:`pulsartrace_ai._common._seed_everything` **once per subprocess**,
     before the loop. RNG state is therefore *seeded once and shared across
     every window* — it is **not** re-seeded per call. So the offline
     determinism guarantee (a fixed WAV → byte-identical output) does **not**
@@ -142,13 +141,17 @@ def diarize_window(
         for s in _annotation_to_spans(diarization)
     ]
 
-    embeddings: dict[str, list[float]] = {}
-    embedding_dim = 0
-    if raw_embeddings is not None and len(raw_embeddings) > 0:
-        embedding_dim = int(raw_embeddings.shape[1])
-        for index, label in enumerate(speakers):
-            if index < len(raw_embeddings):
-                embeddings[label] = [float(x) for x in raw_embeddings[index]]
+    # Non-finite rows (NaN — a cluster with no usable speech frames) are
+    # dropped at the source so the response line's `allow_nan=False` dump
+    # cannot fail; the Swift LiveDiarizer defaults a label with no embedding
+    # entry to an empty embedding and keeps the window's spans.
+    embeddings, embedding_dim, dropped = _embeddings_by_label(raw_embeddings, speakers)
+    for label in dropped:
+        print(
+            f"[live_diarize] window @{window_start:.1f}s dropped non-finite "
+            f"embedding for {label} (no usable speech frames)",
+            file=sys.stderr,
+        )
 
     print(
         f"[live_diarize] window @{window_start:.1f}s diarized in "
@@ -199,8 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         try:
             request = json.loads(line)
-            window_wav = Path(request["window_wav"])
-            window_start = float(request.get("window_start", 0.0))
+            window_wav, window_start = _parse_request(request)
             response = diarize_window(window_wav, window_start, pipeline)
             # allow_nan=False so a NaN/Inf embedding raises a clean ValueError
             # here rather than emitting non-standard JSON tokens Swift's

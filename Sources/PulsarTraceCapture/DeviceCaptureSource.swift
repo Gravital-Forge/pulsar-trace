@@ -113,8 +113,7 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     /// on the engine side.
     public func prepareForCapture() throws {
         let socketDir = configuration.micSocketPath.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: socketDir, withIntermediateDirectories: true)
+        try SecureFiles.ensurePrivateDirectory(at: socketDir)
         try micServer.start()
         if configuration.systemAudioEnabled {
             try systemServer.start()

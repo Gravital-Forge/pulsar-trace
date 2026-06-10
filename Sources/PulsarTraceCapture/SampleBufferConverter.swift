@@ -14,6 +14,12 @@ final class SampleBufferConverter {
     private var converter: AudioConverter?
     private var inputFormat: AVAudioFormat?
 
+    // This method runs per audio frame, so each failure kind is logged once
+    // per instance — repeated stderr writes on every frame would be worse
+    // than silence.
+    private var loggedInitFailure = false
+    private var loggedConvertFailure = false
+
     /// Convert one capture-API sample buffer; returns every complete
     /// 320-sample frame it (with carried-over residual) now yields.
     func frames(from sampleBuffer: CMSampleBuffer) -> [[Float]] {
@@ -21,9 +27,26 @@ final class SampleBufferConverter {
         if inputFormat == nil || inputFormat != pcm.format {
             inputFormat = pcm.format
             converter = try? AudioConverter(inputFormat: pcm.format)
+            if converter == nil, !loggedInitFailure {
+                loggedInitFailure = true
+                log("audio converter init failed — dropping frames for this format")
+            }
         }
         guard let converter else { return [] }
-        return (try? converter.convert(pcm)) ?? []
+        guard let frames = try? converter.convert(pcm) else {
+            if !loggedConvertFailure {
+                loggedConvertFailure = true
+                log("audio conversion failed — frame dropped")
+            }
+            return []
+        }
+        return frames
+    }
+
+    /// Operational diagnostic to stderr — the daemon's log channel.
+    private func log(_ message: String) {
+        FileHandle.standardError.write(
+            Data("pulsartrace-capture: \(message)\n".utf8))
     }
 
     /// Drain a final partial frame (zero-padded to 320) at end-of-stream.

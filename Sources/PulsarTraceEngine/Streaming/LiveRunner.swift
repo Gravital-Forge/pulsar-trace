@@ -64,9 +64,9 @@ final class LiveRunner: Sendable {
     private let writer: LiveMarkdownWriter
     private let logger: Logger
     private let library: SpeakerLibrary?
-    /// Test hook: invoked with `diarBuffer.count` after every system frame
-    /// (Fix C coverage — assert the buffer stays bounded over a long stream).
-    /// `nil` in production.
+    /// Test hook: invoked with the diar buffer's sample count after every
+    /// system frame (Fix C coverage — assert the buffer stays bounded over a
+    /// long stream). `nil` in production.
     private let diarBufferProbe: (@Sendable (Int) -> Void)?
     /// Per-stream silence-watchdog threshold (Fix A). Defaults to the
     /// production `defaultSilenceGapThreshold`; tests inject a short value.
@@ -181,23 +181,13 @@ final class LiveRunner: Sendable {
         // The full system + mic audio is streamed straight to disk as frames
         // arrive (see `systemWAVWriter` / `micWAVWriter` below) so a crash mid
         // recording still leaves a recording folder a later `pulsartrace
-        // refine` can consume. `diarBuffer` is kept only as the live-diarizer's
-        // window source — it no longer backs the WAV.
-        //
-        // Fix C: `diarBuffer` is **bounded**. The diarizer only ever slices its
-        // most recent `diarWindow` samples, so after each window is dispatched
-        // the buffer is trimmed from the front to at most `2 * diarWindow`
-        // (a small margin past what the next window needs). `diarBufferBase` is
-        // the recording-absolute sample index of `diarBuffer[0]` — mirroring
-        // `StreamingTranscriber.bufferBaseSample` — so `windowStart` stays
-        // recording-absolute-correct after a trim.
-        var diarBuffer: [Float] = []
-        var diarBufferBase = 0
+        // refine` can consume. `diarBuffers` is kept only as the live-diarizer's
+        // window source — it no longer backs the WAV. Cadence gating and the
+        // Fix C bounded trim live in `DiarBufferManager`.
         let diarStep = durationToSamples(configuration.diarizationStep)
         let diarWindow = durationToSamples(configuration.diarizationWindow)
-        /// Recording-absolute sample count at which the last diarization
-        /// window was dispatched (paces the step cadence; survives trims).
-        var lastDiarEnd = 0
+        var diarBuffers = DiarBufferManager(
+            stepSamples: diarStep, windowSamples: diarWindow)
         let diarState = DiarState()
         /// Bounds outstanding live-diarization work to a single window in
         /// flight (Fix B) and lets the run hand off any in-flight task at exit.
@@ -246,10 +236,6 @@ final class LiveRunner: Sendable {
             finalizeWAV(systemWAVWriter, stream: "system")
             finalizeWAV(micWAVWriter, stream: "mic")
         }
-
-        // Recording-absolute sample count fed to the diarizer so far — the
-        // diarizer's window is sliced from this, not the trimmed `diarBuffer`.
-        var diarTotalSamples: Int { diarBufferBase + diarBuffer.count }
 
         // --- diagnostic phase tracker + heartbeat ---------------------------
         // Records the current step of the run loop so a background task can
@@ -433,52 +419,31 @@ final class LiveRunner: Sendable {
                 }
                 lastSystemActivity = systemFrameNow
                 // Feed a diarization window on cadence — *off* the run loop's
-                // critical path (Fix B). The window samples + windowStart are
-                // captured as locals and a detached task runs `diarizeWindow`
-                // then `diarState.merge`; the run loop never `await`s the
-                // diarizer subprocess. At most one window is in flight — if the
-                // previous one has not finished, this window is skipped (live
-                // diarization is best-effort/provisional). Diarization stays on
-                // the drain (it is fast: a detached dispatch, Fix B/C).
-                diarBuffer.append(contentsOf: frame.samples)
-                if let liveDiarizer,
-                   diarTotalSamples - lastDiarEnd >= diarStep,
-                   diarTotalSamples >= diarWindow {
-                    let loAbs = max(0, diarTotalSamples - diarWindow)
-                    let lo = loAbs - diarBufferBase
-                    lastDiarEnd = diarTotalSamples
-                    phase.set("await-diarGate-tryAcquire")
-                    if lo >= 0, lo <= diarBuffer.count,
-                       await diarGate.tryAcquire() {
-                        // Copy the window out of `diarBuffer` up front: the
-                        // detached task owns this independent `[Float]`, so the
-                        // run loop's concurrent front-trim of `diarBuffer`
-                        // below cannot mutate the in-flight task's samples.
-                        let windowSamples = Array(diarBuffer[lo...])
-                        let windowStart = samplesToDuration(loAbs)
-                        Task.detached {
-                            let spans = await liveDiarizer.diarizeWindow(
-                                samples: windowSamples,
-                                windowStart: windowStart)
-                            await diarState.merge(spans)
-                            await diarGate.release()
+                // critical path (Fix B). `DiarBufferManager` owns the cadence
+                // gating, the window copy (an independent `[Float]` the
+                // detached task can safely own), and the Fix C bounded trim.
+                // A detached task runs `diarizeWindow` then `diarState.merge`;
+                // the run loop never `await`s the diarizer subprocess. At most
+                // one window is in flight — if the previous one has not
+                // finished, this window is skipped (live diarization is
+                // best-effort/provisional).
+                if let liveDiarizer {
+                    if let req = diarBuffers.append(frame.samples) {
+                        phase.set("await-diarGate-tryAcquire")
+                        if await diarGate.tryAcquire() {
+                            let windowStart = samplesToDuration(req.startSampleIndex)
+                            Task.detached {
+                                let spans = await liveDiarizer.diarizeWindow(
+                                    samples: req.samples, windowStart: windowStart)
+                                await diarState.merge(spans)
+                                await diarGate.release()
+                            }
                         }
                     }
+                } else {
+                    _ = diarBuffers.append(frame.samples)   // trim behavior unchanged without a diarizer
                 }
-                // Fix C: trim `diarBuffer` to its recent tail on *every* system
-                // frame — not only on a diarization trigger — so the buffer is
-                // held tight at `2 * diarWindow` (it never grows by a whole
-                // step between triggers). The diarizer only ever needs the last
-                // `diarWindow` samples; `2 * diarWindow` is the safety margin.
-                // `diarBufferBase` advances by exactly what is dropped, so the
-                // recording-absolute `windowStart`/`lo` above stay correct.
-                let diarKeep = 2 * diarWindow
-                if diarBuffer.count > diarKeep {
-                    let trim = diarBuffer.count - diarKeep
-                    diarBuffer.removeFirst(trim)
-                    diarBufferBase += trim
-                }
-                diarBufferProbe?(diarBuffer.count)
+                diarBufferProbe?(diarBuffers.bufferedSampleCount)
                 // Hand off to whisper — never blocks; drops oldest if behind.
                 phase.set("enqueue-system")
                 systemQueue.enqueue(frame)
@@ -814,225 +779,5 @@ private final class StreamerBox: @unchecked Sendable {
     init(system: StreamingTranscriber, mic: StreamingTranscriber?) {
         self.system = system
         self.mic = mic
-    }
-}
-
-/// Carries the whisper worker's end-of-stream detected language back to the run
-/// teardown, and a liveness timestamp the teardown uses to bound the wait.
-///
-/// The worker calls `noteProgress()` after every decoded window and
-/// `finish(language:)` once it has drained both queues and flushed. Teardown
-/// *polls* (it never `await`s the worker Task — a wedged decode is
-/// uncancellable, so awaiting it could hang the run forever). The bound is on
-/// *inactivity*, not total time: the run stops waiting once the worker has made
-/// no progress for the drain timeout. So a slow-but-progressing decode (e.g. a
-/// fast-fed fixture, or CPU whisper catching up on a backlog) runs to
-/// completion, while a genuinely wedged decode — no progress at all — releases
-/// the run after the timeout. The recording is already safe on disk regardless.
-actor WorkerLanguageResult {
-    private(set) var language: String?
-    private(set) var isFinished = false
-    private(set) var lastProgress = ContinuousClock.now
-
-    /// Mark that the worker made forward progress (a window decoded). Keeps the
-    /// teardown's inactivity deadline fresh.
-    func noteProgress() { lastProgress = ContinuousClock.now }
-
-    /// Reset the inactivity clock to now — call once when the teardown wait
-    /// begins so the bound measures inactivity *since teardown started*, not
-    /// since run-start. A first/final decode that is slow but progressing then
-    /// gets the full `workerDrainTimeout` of grace.
-    func armDeadline() { lastProgress = ContinuousClock.now }
-
-    func finish(language: String) {
-        self.language = language
-        self.isFinished = true
-    }
-}
-
-/// Bounds the outstanding live-diarization work to a single window in flight
-/// (Fix B).
-///
-/// The run loop dispatches each due diarization window to a detached task so a
-/// wedged diarizer subprocess cannot stall transcription or `live.md`. Without
-/// a bound, a slow diarizer would let detached tasks (and their captured window
-/// samples) pile up unboundedly. `DiarGate` is the bound: `tryAcquire()`
-/// succeeds only when no window is in flight; the detached task `release()`s
-/// when it finishes. A window that cannot acquire is simply skipped — live
-/// diarization is best-effort/provisional and the post-pass is the source of
-/// truth.
-actor DiarGate {
-    private var inFlight = false
-
-    /// Take the single in-flight slot. `true` → caller owns it and must
-    /// eventually `release()`; `false` → a window is already in flight, skip.
-    func tryAcquire() -> Bool {
-        guard !inFlight else { return false }
-        inFlight = true
-        return true
-    }
-
-    /// Release the in-flight slot (called by the detached diar task on finish).
-    func release() { inFlight = false }
-
-    /// At end of run, wait — bounded by `timeout` — for any in-flight window to
-    /// finish so a detached diar task does not outlive the run. A wedged
-    /// diarizer simply times out here; the run still returns.
-    ///
-    /// The poll loop is cancellation-aware: `Task.isCancelled` is part of the
-    /// loop condition, so a cancelled task exits promptly instead of swallowing
-    /// the `CancellationError` from `Task.sleep` and spinning to the deadline.
-    func drain(timeout: Duration) async {
-        let deadline = ContinuousClock.now + timeout
-        while inFlight && ContinuousClock.now < deadline, !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
-    }
-}
-
-/// Accumulates the live diarizer's provisional spans and answers
-/// "which provisional speaker dominates this time range?".
-actor DiarState {
-    private var spans: [LiveSpeakerSpan] = []
-
-    func merge(_ newSpans: [LiveSpeakerSpan]) {
-        spans.append(contentsOf: newSpans)
-    }
-
-    /// The provisional key whose spans overlap `[start, end]` the most.
-    func dominantKey(start: Duration, end: Duration) -> String? {
-        let range = start.seconds...max(start.seconds, end.seconds)
-        var overlapByKey: [String: Double] = [:]
-        for span in spans {
-            let lo = max(span.start.seconds, range.lowerBound)
-            let hi = min(span.end.seconds, range.upperBound)
-            let overlap = max(0, hi - lo)
-            if overlap > 0 {
-                overlapByKey[span.provisionalKey, default: 0] += overlap
-            }
-        }
-        return overlapByKey.max {
-            $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key
-        }?.key
-    }
-}
-
-/// Serializes all writes to `live.md` and owns the mic-echo dedup state.
-///
-/// Both streams append through this one actor, so the append-only `live.md`
-/// (R36) never sees a half-line from an interleaved write and the dedup state
-/// is consistent.
-actor LiveSink {
-    private let writer: LiveMarkdownWriter
-    private let recordingStart: Date
-    private var dedup = MicEchoDedup()
-    private var utteranceLines = 0
-    private var micEchoesDropped = 0
-    /// Lag samples for mid-stream commits only (the end-of-stream flush is
-    /// excluded — R10 is about live consumption, and the flush decodes the
-    /// whole tail at once which is not representative of in-call latency).
-    private var lagSamples: [Double] = []
-    private var systemLanguage = "en"
-
-    struct Stats: Sendable {
-        let utteranceLines: Int
-        let micEchoesDropped: Int
-        /// Median live lag in seconds across mid-stream commits (R10).
-        let medianLagSeconds: Double
-        /// Worst mid-stream lag observed.
-        let maxLagSeconds: Double
-        let systemLanguage: String
-    }
-
-    init(writer: LiveMarkdownWriter, recordingStart: Date) {
-        self.writer = writer
-        self.recordingStart = recordingStart
-    }
-
-    /// Append a system-stream utterance with its provisional label (R14, R16).
-    ///
-    /// `isFlush` marks the end-of-stream flush — its lag is not counted toward
-    /// the R10 median (it decodes the whole tail at once).
-    func appendSystemUtterance(
-        _ utterance: CommittedUtterance,
-        label: String,
-        realElapsed: Duration,
-        isFlush: Bool = false
-    ) async {
-        dedup.noteSystemUtterance(
-            text: utterance.text, start: utterance.start, end: utterance.end)
-        await append(
-            utterance, label: label, realElapsed: realElapsed, isFlush: isFlush)
-    }
-
-    /// Append a mic-stream utterance — always `You` (R17). Dropped when it is a
-    /// mic-echo of a recent system utterance (R19).
-    func appendMicUtterance(
-        _ utterance: CommittedUtterance,
-        realElapsed: Duration,
-        isFlush: Bool = false
-    ) async {
-        if dedup.isMicEcho(
-            text: utterance.text,
-            start: utterance.start,
-            end: utterance.end) {
-            micEchoesDropped += 1
-            return
-        }
-        await append(
-            utterance, label: "You", realElapsed: realElapsed, isFlush: isFlush)
-    }
-
-    /// Append a capture pause/resume gap annotation to `live.md` (R7). A
-    /// failed append must not crash the live pass.
-    func appendGap(_ kind: LiveMarkdownWriter.GapKind) async {
-        do {
-            try await writer.appendGapAnnotation(kind)
-        } catch {
-            // An annotation failure is non-fatal — the live pass continues.
-        }
-    }
-
-    func noteSystemLanguage(_ language: String) {
-        systemLanguage = language
-    }
-
-    func stats() -> Stats {
-        let median: Double
-        if lagSamples.isEmpty {
-            median = 0
-        } else {
-            let sorted = lagSamples.sorted()
-            median = sorted[sorted.count / 2]
-        }
-        return Stats(
-            utteranceLines: utteranceLines,
-            micEchoesDropped: micEchoesDropped,
-            medianLagSeconds: median,
-            maxLagSeconds: lagSamples.max() ?? 0,
-            systemLanguage: systemLanguage)
-    }
-
-    private func append(
-        _ utterance: CommittedUtterance,
-        label: String,
-        realElapsed: Duration,
-        isFlush: Bool
-    ) async {
-        // R10 lag: how far behind real time the utterance's end is at commit.
-        // The end-of-stream flush is excluded — it is not live latency.
-        if !isFlush {
-            let lag = max(0, realElapsed.seconds - utterance.end.seconds)
-            lagSamples.append(lag)
-        }
-        do {
-            try await writer.appendUtterance(
-                offset: utterance.start,
-                speakerLabel: label,
-                text: utterance.text)
-            utteranceLines += 1
-        } catch {
-            // A failed append must not crash the live pass.
-        }
     }
 }

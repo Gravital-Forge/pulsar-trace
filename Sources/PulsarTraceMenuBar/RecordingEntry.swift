@@ -101,6 +101,35 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
     /// The display name shown in the list — the recording folder's basename.
     public var displayName: String { folderURL.lastPathComponent }
 
+    /// Human title for a recording — "Today at 2:30 PM" / "Yesterday at …" /
+    /// "May 16, 2026 at 2:30 PM". The folder basename stays available as
+    /// `displayName` (tooltips, Reveal in Finder, diagnostics).
+    public var displayTitle: String {
+        Self.displayTitle(for: recordingStart, relativeTo: Date())
+    }
+
+    /// Injectable-now variant for deterministic tests.
+    public static func displayTitle(for start: Date, relativeTo now: Date) -> String {
+        let cal = Calendar.current
+        let time = start.formatted(date: .omitted, time: .shortened)
+        if cal.isDate(start, inSameDayAs: now) { return "Today at \(time)" }
+        if let yesterday = cal.date(byAdding: .day, value: -1, to: now),
+           cal.isDate(start, inSameDayAs: yesterday) { return "Yesterday at \(time)" }
+        return start.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// The recording's refined transcript (`final.md`) — present once a
+    /// refine pass has completed. Derived here so views read transcripts
+    /// without touching `RecordingFolder`'s file-name constants.
+    public var finalURL: URL {
+        folderURL.appendingPathComponent(RecordingFolder.FileName.final)
+    }
+
+    /// The recording's provisional live transcript (`live.md`).
+    public var liveURL: URL {
+        folderURL.appendingPathComponent(RecordingFolder.FileName.live)
+    }
+
     /// Format `durationSeconds` as `M:SS` when shorter than an hour, else
     /// `H:MM:SS`. Truncates fractional seconds. Negative or NaN inputs
     /// (defensive — `metadata.json` is trusted, but the field is `Double`)

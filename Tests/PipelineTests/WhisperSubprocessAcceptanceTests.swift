@@ -339,10 +339,8 @@ private final class SignallingLogHandler: LogHandler, @unchecked Sendable {
     var messages: [String] { lock.withLock { _m } }
     init(signalOn needle: String) { self.needle = needle }
 
-    func log(level: Logger.Level, message: Logger.Message,
-             metadata: Logger.Metadata?, source: String,
-             file: String, function: String, line: UInt) {
-        let text = "\(message)"
+    func log(event: LogEvent) {
+        let text = event.message.description
         let cont: CheckedContinuation<Bool, Never>? = lock.withLock {
             _m.append(text)
             guard !fired, text.contains(needle) else { return nil }

@@ -19,8 +19,15 @@ public final class RefinementJobQueueViewModel {
     public private(set) var pausedForRecording = false
 
     /// Last enqueue error, if any. The recordings list surfaces this as a
-    /// short alert string; it is cleared by the next successful enqueue.
+    /// dismissible banner; it is cleared by the next successful enqueue or
+    /// by `clearEnqueueError()` (the banner's ✕ button).
     public var lastEnqueueError: String?
+
+    /// Dismiss the enqueue-error banner without waiting for the next
+    /// successful enqueue.
+    public func clearEnqueueError() {
+        lastEnqueueError = nil
+    }
 
     /// Called once per `refresh()` tick with every refinement job that
     /// transitioned into a terminal state (completed / failed / cancelled)
@@ -113,6 +120,18 @@ public final class RefinementJobQueueViewModel {
     /// the call site in `enqueueManual` stays succinct.
     static func redactHome(_ s: String) -> String {
         PathRedactor.redactHome(s)
+    }
+
+    /// Forward a "Refine" button press, resolving the user's refine-model
+    /// setting to a pinned catalog entry (falling back to `base` for an
+    /// unknown name) — so the views never touch `ModelCatalog` themselves.
+    public func enqueueManual(folderURL: URL, recordingId: String,
+                              refineModelName: String) async {
+        let model = ModelCatalog.model(named: refineModelName)
+            ?? ModelCatalog.base
+        await enqueueManual(
+            folderURL: folderURL, recordingId: recordingId,
+            modelName: model.name, modelSHA256: model.sha256)
     }
 
     /// Forward a "Refine" button press.

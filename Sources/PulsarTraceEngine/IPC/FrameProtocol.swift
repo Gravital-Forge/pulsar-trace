@@ -142,7 +142,10 @@ public enum FrameProtocol {
         var samples = [Float](repeating: 0, count: count)
         if count > 0 {
             samples.withUnsafeMutableBytes { dst in
-                payload.copyBytes(to: dst.bindMemory(to: UInt8.self))
+                // copyBytes returns the byte count — discard it explicitly
+                // so the closure (and the withUnsafeMutableBytes call) is
+                // Void and the unused-result warning can't surface.
+                _ = payload.copyBytes(to: dst.bindMemory(to: UInt8.self))
             }
             // Bytes are little-endian; on a little-endian host (arm64) this is
             // a no-op, but normalize explicitly for correctness.

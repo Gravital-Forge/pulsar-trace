@@ -57,9 +57,41 @@ struct MenuBarSettingsTests {
         #expect(settings.systemAudioEnabled == true)
         #expect(settings.selectedMicDeviceID == nil)
         #expect(settings.outputFolderPath == nil)
-        #expect(settings.outputFolderURL == nil)
+        // No *stored* path, but `outputFolderURL` falls back to the default
+        // (`~/Documents/PulsarTrace`) so a first run can record immediately.
+        #expect(settings.outputFolderURL
+            == MenuBarSettings.defaultOutputFolderURL)
+        #expect(settings.outputFolderURL != nil)
         #expect(settings.globalHotkey == nil)
         #expect(settings.previousFolderPaths.isEmpty)
+    }
+
+    @Test("outputFolderURL defaults to ~/Documents/PulsarTrace; an explicit path wins; clearing re-defaults")
+    func outputFolderDefaultsToDocuments() {
+        let (defaults, suiteName) = tempSuite()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = MenuBarSettings(defaults: defaults)
+        let documents = FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask).first
+        let expected = documents?.appendingPathComponent(
+            "PulsarTrace", isDirectory: true)
+        #expect(expected != nil)
+        #expect(settings.outputFolderURL?.standardizedFileURL
+            == expected?.standardizedFileURL)
+        // The default is derived, never written into the store — clearing the
+        // user's choice must re-default on the next read.
+        #expect(defaults.string(forKey: "outputFolderPath") == nil)
+
+        // An explicitly-set path still wins over the default…
+        settings.outputFolderPath = "/Users/test/Chosen"
+        #expect(settings.outputFolderURL?.path == "/Users/test/Chosen")
+
+        // …and clearing it re-defaults (still without persisting the default).
+        settings.outputFolderPath = nil
+        #expect(settings.outputFolderURL?.standardizedFileURL
+            == expected?.standardizedFileURL)
+        #expect(defaults.string(forKey: "outputFolderPath") == nil)
     }
 
     @Test("a legacy `modelName` key migrates into `liveModelName` (D29)")

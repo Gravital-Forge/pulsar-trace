@@ -324,7 +324,7 @@ public actor ResumableRefiner {
         progress: RefinementProgress,
         diarization: DiarizationResult?,
         job: RefinementJob
-    ) async throws -> RefinementPipeline.AssembleResult {
+    ) async throws -> TranscriptAssembly.AssembleResult {
         let system = progress.systemSegments.map {
             TranscriptSegment(
                 start: .milliseconds($0.startMillis),
@@ -339,7 +339,7 @@ public actor ResumableRefiner {
         }
         let folderName = folder.directory.lastPathComponent
         let recordingStart = RecordingFolderTimestamp.parse(folderName) ?? Date()
-        return try await RefinementPipeline.assembleAndWrite(
+        return try await TranscriptAssembly.assembleAndWrite(
             folder: folder,
             systemSegments: system,
             micSegments: mic,

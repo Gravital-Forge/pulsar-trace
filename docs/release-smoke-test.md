@@ -46,19 +46,42 @@ The `pulsartrace-mac` app's surfaces are bindings over `PulsarTraceMenuBar`
 ViewModels (unit-tested); these items cover only what needs an interactive
 session — `MenuBarExtra` rendering, the global hotkey, audio playback.
 
-- [ ] `MenuBarExtra` icon appears; it changes between idle / recording /
-      refining / crashed.
-- [ ] The configurable global hotkey starts and stops a recording from another
-      app in the foreground.
+- [ ] `MenuBarExtra` icon shows distinct states at a glance: idle waveform,
+      red waveform + elapsed timer while recording, pulsing sync symbol while
+      refining, and the crashed state.
+- [ ] Record a global hotkey in Settings: click the field and type a combo —
+      it must include ⌘/⌃/⌥ and displays as ⌃⌥⇧⌘ glyphs; Clear removes it.
+      Without relaunching, the hotkey starts and stops a recording from
+      another app in the foreground.
 - [ ] Settings: change mic, model, output folder, system-audio toggle — all
       persist across an app relaunch.
-- [ ] Start a recording → the live-transcript popover shows lines in real time.
-- [ ] Stop → the refine pass runs and the recordings list picks up the new
+- [ ] With no output folder ever chosen, the first recording lands in
+      `~/Documents/PulsarTrace` (created automatically) instead of failing;
+      the mic + screen-recording permission prompts appear *before* the
+      recording starts, not mid-start.
+- [ ] Start a recording → the live-transcript popover shows styled rows
+      (timestamp / speaker / text) in real time.
+- [ ] Stop → the refine pass runs — the dropdown shows a determinate progress
+      bar with the stage name — and the recordings list picks up the new
       `final.md`.
-- [ ] Speaker rename in the editor rewrites every past `final.md`; a `.bak`
-      sits next to each rewritten file.
-- [ ] Speaker merge: the merged speaker is soft-deleted, past `final.md` files
-      update; the undo toast restores both the library and the transcripts.
+- [ ] (bundled `.app` only) When the refine completes, a "Transcript ready —
+      N speakers, M min" notification arrives; a failed refine posts a
+      failure notification, and the Refinements pane offers Retry.
+- [ ] Recordings list: rows are titled "Today at 2:30 PM"-style with the
+      folder name in the tooltip; double-click (or the chevron) opens the
+      transcript; right-click offers View Transcript / Reveal in Finder /
+      Refine.
+- [ ] Speaker rename in the editor rewrites every past `final.md`; the editor
+      disables with a toolbar spinner during the rewrite; a `.bak` sits next
+      to each rewritten file.
+- [ ] Speaker merge: the confirmation states how many recordings will be
+      rewritten; after confirming, the merged speaker is soft-deleted, past
+      `final.md` files update; the undo toast (auto-dismisses after ~8 s)
+      restores both the library and the transcripts.
+- [ ] "Don't recognize this speaker": the confirmation states the rewrite
+      count; affected `final.md` lines become "Unrecognized"; undoable for
+      30 days.
+- [ ] Speaker delete remains one-click — no confirmation, an undo toast.
 - [ ] Speaker split, then unsplit — `final.md` labels round-trip.
 - [ ] Play-sample on a speaker plays audio.
 - [ ] Engine crash mid-recording → the crash state shows; "recover from partial

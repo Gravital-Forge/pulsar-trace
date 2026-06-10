@@ -9,7 +9,7 @@ import Logging
 /// This path stays so the CLI can take a bare WAV (or a folder) without
 /// touching the queue: bare-WAV runs are typically one-shot scripts where
 /// pause/resume is not useful. The shared merge + write step is in
-/// `RefinementPipeline.assembleAndWrite`.
+/// `TranscriptAssembly.assembleAndWrite`.
 ///
 /// `OfflineRefiner` owns everything `RefinementPipeline` needs but does not
 /// build itself: ensuring the whisper + VAD models are available, wiring the

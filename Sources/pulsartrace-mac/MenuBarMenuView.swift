@@ -14,6 +14,7 @@ struct MenuBarMenuView: View {
     @Environment(RecordingViewModel.self) private var recording
     @Environment(RefinementJobQueueViewModel.self) private var queueVM
     @Environment(AppNavigation.self) private var navigation
+    @Environment(MenuBarSettings.self) private var settings
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -24,6 +25,26 @@ struct MenuBarMenuView: View {
                 .lineLimit(2)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
+
+            // A determinate bar under the status line while a refinement is
+            // running — same data the "Refining N% · Stage" text reads, just
+            // visual. Padding matches the status text so the bar spans the
+            // panel's content width. Conditionally present (the idle panel
+            // shouldn't carry ~30pt of reserved dead space) but animated so
+            // the rows below slide rather than snap when a refine starts or
+            // finishes while the panel is open.
+            if let progress = runningProgress {
+                VStack(alignment: .leading, spacing: 2) {
+                    ProgressView(value: progress.fraction)
+                        .controlSize(.small)
+                    Text(progress.stageName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+                .transition(.opacity)
+            }
 
             menuDivider
 
@@ -37,10 +58,17 @@ struct MenuBarMenuView: View {
 
             menuDivider
 
-            menuButton("Quit PulsarTrace") { NSApplication.shared.terminate(nil) }
+            // ⌘Q works while the panel is open (the panel is the key window).
+            menuButton("Quit PulsarTrace", shortcut: KeyboardShortcut("q")) {
+                NSApplication.shared.terminate(nil)
+            }
         }
         .padding(6)
         .frame(width: 250)
+        // Drives the progress block's insertion/removal transition: rows
+        // below it slide smoothly instead of snapping when a refinement
+        // starts or finishes while the panel is open.
+        .animation(.default, value: runningProgress != nil)
     }
 
     /// Start/stop plus the state-specific actions (live transcript, crash
@@ -48,13 +76,13 @@ struct MenuBarMenuView: View {
     @ViewBuilder private var recordControls: some View {
         switch recording.status {
         case .idle:
-            menuButton("Start Recording") {
+            menuButton("Start Recording", hint: hotkeyHint) {
                 Task { await recording.startRecording() }
             }
         case .launching:
             menuButton("Starting…", enabled: false) {}
         case .recording:
-            menuButton("Stop Recording") {
+            menuButton("Stop Recording", hint: hotkeyHint) {
                 Task { await recording.stopRecording() }
             }
             menuButton("Show Live Transcript…") {
@@ -71,14 +99,37 @@ struct MenuBarMenuView: View {
     }
 
     /// One dropdown row — a full-width, hover-highlighted button (#2).
+    ///
+    /// `hint` renders trailing secondary text (the global-hotkey glyphs on
+    /// Start/Stop); `shortcut` registers a local keyboard shortcut for the
+    /// row (⌘Q on Quit).
     private func menuButton(
         _ title: String,
+        hint: String? = nil,
+        shortcut: KeyboardShortcut? = nil,
         enabled: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
-        Button(title, action: action)
-            .buttonStyle(MenuRowButtonStyle())
-            .disabled(!enabled)
+        Button(action: action) {
+            HStack {
+                Text(title)
+                if let hint {
+                    Spacer()
+                    Text(hint)
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                }
+            }
+        }
+        .buttonStyle(MenuRowButtonStyle())
+        .keyboardShortcut(shortcut)
+        .disabled(!enabled)
+    }
+
+    /// The configured global hotkey as glyphs (e.g. ⇧⌘R) for the Start/Stop
+    /// row hint; `nil` (no hint) when no hotkey is set.
+    private var hotkeyHint: String? {
+        settings.globalHotkey.map(KeyComboFormatter.displayString(for:))
     }
 
     /// A divider inset to match the row padding.
@@ -120,6 +171,17 @@ struct MenuBarMenuView: View {
             return "\(queueVM.queued.count) queued"
         }
         return nil
+    }
+
+    /// Raw fraction + stage for the determinate bar — the same
+    /// `queueVM.running` state `queueStatus` reads, kept numeric rather than
+    /// re-parsed out of the composed status string.
+    private var runningProgress: (fraction: Double, stageName: String)? {
+        guard let running = queueVM.running,
+              case .running(let stage, _, _, _, _) = running.state,
+              let fraction = running.state.progressFraction
+        else { return nil }
+        return (fraction, stage.displayName)
     }
 
     /// Colour for the status line — red/orange keep a crash or error salient

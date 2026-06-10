@@ -216,9 +216,7 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
             throw HostError.binaryNotFound(configuration.binaryURL.path)
         }
 
-        try FileManager.default.createDirectory(
-            at: configuration.socketDirectory,
-            withIntermediateDirectories: true)
+        try SecureFiles.ensurePrivateDirectory(at: configuration.socketDirectory)
 
         // Keep this filename short — `sockaddr_un.sun_path` on macOS is 104
         // bytes (incl. NUL). The socket directory (production:
@@ -684,7 +682,7 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
                 // (`whisper_full: assertion failed at line …` etc.).
                 if !buffer.isEmpty {
                     let line = String(decoding: buffer, as: UTF8.self)
-                    logger.notice("[whisper-subprocess] \(line)")
+                    logger.notice("[whisper-subprocess] \(PathRedactor.redactHome(line))")
                 }
                 return
             }
@@ -694,7 +692,7 @@ public final class WhisperSubprocessHost: WhisperHostProtocol, @unchecked Sendab
                 let lineData = buffer[buffer.startIndex..<nl]
                 let line = String(decoding: lineData, as: UTF8.self)
                 if !line.isEmpty {
-                    logger.notice("[whisper-subprocess] \(line)")
+                    logger.notice("[whisper-subprocess] \(PathRedactor.redactHome(line))")
                 }
                 buffer.removeSubrange(buffer.startIndex...nl)
             }

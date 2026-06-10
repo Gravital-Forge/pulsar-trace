@@ -1,4 +1,5 @@
 import Foundation
+import PulsarTraceCapture
 import PulsarTraceEngine
 
 /// The orchestration seam the `RecordingViewModel` drives (R40, R45).
@@ -25,6 +26,40 @@ public protocol RecordingOrchestrating: Sendable {
 extension RecordOrchestrator: RecordingOrchestrating {
     public func stop() async {
         _ = await stop(engineGrace: .seconds(60))
+    }
+}
+
+/// Permission preflight seam — production asks the OS via
+/// `PermissionChecker` (PulsarTraceCapture); tests inject canned outcomes so
+/// the suite never touches TCC. `RecordingViewModel.startRecording()` runs it
+/// *before* any subprocess wiring, so the OS permission prompts fire up front
+/// instead of racing `orchestrator.start`.
+public struct PermissionPreflight: Sendable {
+    /// Resolves the Microphone grant, requesting it when undecided.
+    public var microphone: @Sendable () async -> Bool
+    /// Resolves the Screen Recording grant (system-audio capture needs it).
+    public var screenRecording: @Sendable () async -> Bool
+
+    public init(
+        microphone: @escaping @Sendable () async -> Bool,
+        screenRecording: @escaping @Sendable () async -> Bool
+    ) {
+        self.microphone = microphone
+        self.screenRecording = screenRecording
+    }
+
+    /// The production preflight — asks the OS via `PermissionChecker`.
+    /// `events: nil`: the capture daemon owns the `permission_changed`
+    /// baseline events at session start (`checkAndEmit`); this preflight
+    /// only gates the start.
+    public static var live: PermissionPreflight {
+        PermissionPreflight(
+            microphone: {
+                await PermissionChecker(events: nil).requestMicrophoneIfNeeded()
+            },
+            screenRecording: {
+                await PermissionChecker(events: nil).screenRecordingGranted()
+            })
     }
 }
 
@@ -98,6 +133,11 @@ public final class RecordingViewModel {
     /// for unit tests + the CLI; the mac-app injects the real probe.
     private let waitForWhisperLockFree: @Sendable () async throws -> Void
 
+    /// Mic/Screen-Recording permission gate run at the top of
+    /// `startRecording()`, before any subprocess wiring. Production default
+    /// is `.live` (asks the OS); tests inject canned outcomes.
+    private let preflight: PermissionPreflight
+
     /// The orchestrator for the in-flight session, if any.
     private var orchestrator: RecordingOrchestrating?
     /// The crash-watch task started after a successful `start()`.
@@ -130,6 +170,10 @@ public final class RecordingViewModel {
     ///     the VM surfaces a "refinement is still finishing up" `.error`.
     ///     Default is a no-op (unit tests + CLI); the mac-app injects the
     ///     real probe pointing at `paths.applicationSupport/whisper.lock`.
+    ///   - preflight: mic/screen-recording permission gate run before any
+    ///     subprocess wiring. Default `.live` asks the OS (and shows the TCC
+    ///     prompts up front); tests inject canned outcomes so the suite never
+    ///     touches real permissions.
     public init(
         settings: MenuBarSettings,
         paths: AppPaths = .standard,
@@ -141,9 +185,11 @@ public final class RecordingViewModel {
         enqueueAutoRefine: (@Sendable (URL, String) async -> Void)? = nil,
         pauseRefinement: (@Sendable () async -> Void)? = nil,
         resumeRefinement: (@Sendable () async -> Void)? = nil,
-        waitForWhisperLockFree: (@Sendable () async throws -> Void)? = nil
+        waitForWhisperLockFree: (@Sendable () async throws -> Void)? = nil,
+        preflight: PermissionPreflight = .live
     ) {
         self.settings = settings
+        self.preflight = preflight
         self.paths = paths
         self.clock = clock
         self.binaryURLResolver = binaryURLResolver
@@ -165,19 +211,39 @@ public final class RecordingViewModel {
         status = .launching
         progressMessage = "Starting capture…"
 
-        // Resolve the output folder; without one, surface an error.
+        // Resolve the output folder. `outputFolderURL` falls back to
+        // `~/Documents/PulsarTrace` when the user never chose one, so this
+        // guard effectively always passes — kept defensively for the
+        // theoretical case where the Documents directory cannot be resolved.
         guard let outputRoot = settings.outputFolderURL else {
-            status = .error(message: "Choose an output folder in Settings first.")
+            // Only reachable when FileManager can't resolve ~/Documents —
+            // "choose a folder in Settings" would be a wild-goose chase here.
+            status = .error(message: "Could not resolve an output folder. Set one explicitly in Settings.")
             progressMessage = ""
             return
+        }
+
+        // Permission preflight: request/check the TCC grants *before* any
+        // folder or subprocess is created, so the OS prompts fire up front
+        // instead of racing `orchestrator.start`.
+        guard await preflight.microphone() else {
+            status = .error(message: "Microphone access is required. Grant it in System Settings → Privacy & Security → Microphone, then try again.")
+            progressMessage = ""
+            return
+        }
+        if settings.systemAudioEnabled {
+            guard await preflight.screenRecording() else {
+                status = .error(message: "System-audio capture needs Screen Recording permission. Grant it in System Settings → Privacy & Security → Screen Recording, then try again.")
+                progressMessage = ""
+                return
+            }
         }
 
         let folderName = Self.recordingFolderName(at: clock())
         let outputFolder = outputRoot.appendingPathComponent(
             folderName, isDirectory: true)
         do {
-            try FileManager.default.createDirectory(
-                at: outputFolder, withIntermediateDirectories: true)
+            try SecureFiles.createDirectoryPrivateIfNew(at: outputFolder)
         } catch {
             status = .error(message: "Cannot create the recording folder.")
             progressMessage = ""
@@ -196,12 +262,11 @@ public final class RecordingViewModel {
         let orchestrator = orchestratorFactory(plan, binaryURLResolver)
         self.orchestrator = orchestrator
 
-        // KNOWN ISSUE (deferred — see the future first-run permissions wizard):
-        // starting without TCC mic/system-audio grants races the OS permission
-        // prompt — `orchestrator.start` can fail and surface a "permissions
-        // not granted" error before the user has finished responding to the
-        // prompt. Deliberately left as-is; the first-run wizard will
-        // request and confirm grants up front, before the first start.
+        // TCC grants were requested up front by the permission preflight
+        // above, so `orchestrator.start` no longer races the OS prompts.
+        // Remaining gap (future work, R46 first-run wizard): a user revoking
+        // a grant *mid-recording* is only surfaced as an engine exit, and
+        // there is no guided first-run permissions walkthrough yet.
         await pauseRefinement()
 
         // Phase 6 / Layer B: defence-in-depth wait for the binary-level

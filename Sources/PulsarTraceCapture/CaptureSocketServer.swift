@@ -118,6 +118,12 @@ final class CaptureSocketServer: @unchecked Sendable {
 
             let client = accept(listen, nil, nil)
             guard client >= 0 else { return }
+            // Defense in depth: only a process running as our own user may
+            // consume raw PCM. The socket dir is 0700; verify the peer too.
+            guard PeerCredentials.peerIsSameUser(fd: client) else {
+                close(client)
+                return
+            }
             configureClientSocket(client)
 
             lock.withLock { clientFD = client }
