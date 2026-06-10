@@ -582,6 +582,235 @@ struct RemoteRegionTranscriberTests {
     }
 }
 
+/// Chunking coverage for the IPC frame cap. 2026-06-05 production
+/// failure: a single 125.9 s VAD region of continuous speech encoded
+/// to a 10,753,208-byte request frame — over
+/// `WhisperFrameCodec.maxPayloadBytes` (8 MiB) — so the frame write
+/// was refused, misread as a wedged decode (SIGKILL + respawn), and
+/// the refinement job failed deterministically on every retry.
+/// Regions longer than `maxChunkSamples` must be split into chunks
+/// that each fit in one frame.
+///
+/// `.serialized`, deliberately: every test here pushes multi-
+/// megasample buffers through the real base64 wire path, which is
+/// CPU-heavy in debug builds. Run in parallel they monopolize the
+/// cooperative pool and starve timing-sensitive suites elsewhere in
+/// UnitTests (DiarGate / WhisperLockProbe / WhisperSubprocessHost
+/// drain budgets are ~2 s) — observed as 12 spurious failures in a
+/// full `--filter UnitTests` run.
+@Suite("RemoteRegionTranscriber chunking", .serialized)
+struct RemoteRegionTranscriberChunkingTests {
+
+    @Test("a 126 s region splits into 2 decode requests, each under the IPC frame cap")
+    func longRegionSplitsIntoFrameSizedChunks() throws {
+        let fake = FakeHost()
+        fake.cannedDecodeQueue = [
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "first", startMs: 0, endMs: 1_000)],
+                language: "en")),
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "second", startMs: 0, endMs: 1_000)],
+                language: "en")),
+        ]
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        // 126 s at 16 kHz = 2_016_000 samples > maxChunkSamples.
+        let samples = [Float](repeating: 0, count: 2_016_000)
+        let region = SpeechRegion(start: .zero, end: .seconds(126))
+        _ = try trans.transcribeRegion(
+            samples, region: region, options: WhisperOptions())
+
+        #expect(fake.decodeCalls == 2)
+        let payloads = decodeRegionPayloads(fake.requests)
+        #expect(payloads.count == 2)
+        var totalSamples = 0
+        for payload in payloads {
+            let chunk = try WhisperIPCSamples.decode(payload.samplesBase64)
+            totalSamples += chunk.count
+            #expect(chunk.count <= RemoteRegionTranscriber.maxChunkSamples)
+            // Chunk-relative bounds, like the unchunked request shape.
+            #expect(payload.regionStartMs == 0)
+            #expect(payload.regionEndMs
+                    == Int64(chunk.count * 1000 / AudioFormat.sampleRate))
+        }
+        // No samples dropped or duplicated across the split.
+        #expect(totalSamples == samples.count)
+        // The invariant the bug violated: every chunked request must
+        // survive the frame codec's payload cap.
+        for request in fake.requests {
+            let jsonBytes = try JSONEncoder().encode(request)
+            #expect(throws: Never.self) {
+                _ = try WhisperFrameCodec.encode(jsonBytes: jsonBytes)
+            }
+        }
+    }
+
+    @Test("chunk segment times come back shifted by region.start + the chunk's offset")
+    func chunkSegmentTimesShiftedByChunkOffset() throws {
+        let fake = FakeHost()
+        fake.cannedDecodeQueue = [
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "first", startMs: 0, endMs: 500)],
+                language: "en")),
+            // Chunk-relative 1000–2000 ms inside the SECOND chunk.
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "second", startMs: 1_000, endMs: 2_000)],
+                language: "en")),
+        ]
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        // 136 s buffer; region covers 10 s → 136 s (126 s slice → 2 chunks).
+        let samples = [Float](repeating: 0, count: 2_176_000)
+        let region = SpeechRegion(start: .seconds(10), end: .seconds(136))
+        let result = try trans.transcribeRegion(
+            samples, region: region, options: WhisperOptions())
+
+        // Derive the second chunk's offset from the first captured
+        // request — the boundary is snap-dependent, don't guess it.
+        let payloads = decodeRegionPayloads(fake.requests)
+        try #require(payloads.count == 2)
+        let firstChunkCount = try WhisperIPCSamples.decode(payloads[0].samplesBase64).count
+        let chunkOffset: Duration = .milliseconds(
+            Int64(firstChunkCount) * 1000 / Int64(AudioFormat.sampleRate))
+
+        try #require(result.segments.count == 2)
+        #expect(result.segments[1].text == "second")
+        #expect(result.segments[1].start == .seconds(10) + chunkOffset + .seconds(1))
+        #expect(result.segments[1].end == .seconds(10) + chunkOffset + .seconds(2))
+    }
+
+    @Test("merged result concatenates segments in chunk order and takes the first non-unknown language")
+    func mergedResultOrderAndLanguage() throws {
+        let fake = FakeHost()
+        fake.cannedDecodeQueue = [
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "a", startMs: 0, endMs: 1_000)],
+                language: "unknown")),
+            .decoded(WhisperIPCDecoded(
+                requestId: UUID(),
+                segments: [WhisperIPCSegment(text: "b", startMs: 0, endMs: 1_000)],
+                language: "pl")),
+        ]
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        let samples = [Float](repeating: 0, count: 2_016_000)
+        let result = try trans.transcribeRegion(
+            samples,
+            region: SpeechRegion(start: .zero, end: .seconds(126)),
+            options: WhisperOptions())
+
+        #expect(result.segments.map(\.text) == ["a", "b"])
+        #expect(result.language == "pl")
+    }
+
+    @Test("chunk boundary snaps into a quiet stretch near the equal-split point")
+    func chunkBoundarySnapsToQuietGap() throws {
+        let fake = FakeHost()
+        fake.cannedDecodeQueue = [decodedResponse(), decodedResponse()]
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        // 126 s of loud audio with a 2 s silent stretch starting 3 s
+        // after the equal-split midpoint (sample 1_008_000). The snap
+        // search (±5 s) must move the boundary into the silence.
+        var samples = [Float](repeating: 0.5, count: 2_016_000)
+        let quiet = 1_056_000..<1_088_000
+        for i in quiet { samples[i] = 0 }
+
+        _ = try trans.transcribeRegion(
+            samples,
+            region: SpeechRegion(start: .zero, end: .seconds(126)),
+            options: WhisperOptions())
+
+        let payloads = decodeRegionPayloads(fake.requests)
+        try #require(payloads.count == 2)
+        let boundary = try WhisperIPCSamples.decode(payloads[0].samplesBase64).count
+        #expect(quiet.contains(boundary),
+                "boundary \(boundary) should land inside the quiet stretch \(quiet)")
+    }
+
+    @Test("a region of exactly maxChunkSamples still goes out as a single request")
+    func maxChunkRegionStaysSingleRequest() throws {
+        let fake = FakeHost()
+        fake.cannedDecode = decodedResponse()
+        let factory = SingleHostFactory(host: fake)
+        let trans = makeTranscriber(factory: factory.factory)
+
+        let count = RemoteRegionTranscriber.maxChunkSamples
+        let samples = [Float](repeating: 0, count: count)
+        let endMs = Int64(count * 1000 / AudioFormat.sampleRate)
+        _ = try trans.transcribeRegion(
+            samples,
+            region: SpeechRegion(start: .zero, end: .milliseconds(endMs)),
+            options: WhisperOptions())
+
+        #expect(fake.decodeCalls == 1)
+        let payloads = decodeRegionPayloads(fake.requests)
+        try #require(payloads.count == 1)
+        #expect(payloads[0].regionEndMs == endMs)
+        let jsonBytes = try JSONEncoder().encode(fake.requests[0])
+        #expect(throws: Never.self) {
+            _ = try WhisperFrameCodec.encode(jsonBytes: jsonBytes)
+        }
+    }
+
+    // MARK: - chunkRanges (pure)
+
+    @Test("chunkRanges: n <= maxChunk yields one full range")
+    func chunkRangesSingle() {
+        let samples = [Float](repeating: 0, count: 1_000)
+        #expect(RemoteRegionTranscriber.chunkRanges(for: samples, maxChunk: 1_000)
+                == [0..<1_000])
+        #expect(RemoteRegionTranscriber.chunkRanges(for: samples, maxChunk: 5_000)
+                == [0..<1_000])
+    }
+
+    @Test("chunkRanges: ranges exactly tile 0..<n and never exceed maxChunk")
+    func chunkRangesTiling() {
+        let maxChunk = 200_000
+        let realMax = RemoteRegionTranscriber.maxChunkSamples
+        let cases: [(n: Int, maxChunk: Int)] = [
+            (2 * maxChunk, maxChunk),
+            (2 * maxChunk + 1, maxChunk),
+            (5 * maxChunk - 7, maxChunk),
+            (2 * realMax, realMax),
+            (2 * realMax + 1, realMax),
+        ]
+        for (n, cap) in cases {
+            let samples = [Float](repeating: 0, count: n)
+            let ranges = RemoteRegionTranscriber.chunkRanges(
+                for: samples, maxChunk: cap)
+            var cursor = 0
+            for r in ranges {
+                #expect(r.lowerBound == cursor,
+                        "gap/overlap at \(r) for n=\(n)")
+                #expect(r.count >= 1 && r.count <= cap,
+                        "range \(r) outside 1...\(cap) for n=\(n)")
+                cursor = r.upperBound
+            }
+            #expect(cursor == n, "ranges must cover 0..<\(n), got \(cursor)")
+        }
+    }
+
+    @Test("chunkRanges: deterministic — same input produces the same split")
+    func chunkRangesDeterministic() {
+        // Non-uniform energy so snapping actually has choices to make.
+        let samples = (0..<450_000).map { Float($0 % 997) / 997.0 }
+        let a = RemoteRegionTranscriber.chunkRanges(for: samples, maxChunk: 200_000)
+        let b = RemoteRegionTranscriber.chunkRanges(for: samples, maxChunk: 200_000)
+        #expect(a == b)
+    }
+
+}
+
 // MARK: - Test fixtures
 
 private func makeTranscriber(
@@ -603,6 +832,17 @@ private func makeTranscriber(
         configuration: config,
         logger: logger,
         hostFactory: factory)
+}
+
+/// Extract the `decodeRegion` payloads from captured requests, in
+/// arrival order — chunking tests assert per-chunk request shape.
+private func decodeRegionPayloads(
+    _ requests: [WhisperIPCRequest]
+) -> [WhisperIPCDecodeRegion] {
+    requests.compactMap {
+        if case .decodeRegion(let payload) = $0 { return payload }
+        return nil
+    }
 }
 
 /// 16 seconds of silence (256_000 samples at 16 kHz) — big enough to

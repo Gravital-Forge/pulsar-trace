@@ -28,6 +28,12 @@ func decodedResponse() -> WhisperIPCResponse {
 final class FakeHost: WhisperHostProtocol, @unchecked Sendable {
     /// What `decode` returns (if no error is configured).
     var cannedDecode: WhisperIPCResponse?
+    /// FIFO of decode responses consumed *before* `cannedDecode` — lets
+    /// a test return a different response per request when one call to
+    /// the transcriber fans out into several decodes (region chunking).
+    /// When the queue is empty, `decode` falls back to `cannedDecode`,
+    /// so existing single-response tests are unaffected.
+    var cannedDecodeQueue: [WhisperIPCResponse] = []
     /// What `decode` throws (takes precedence over `cannedDecode`).
     var cannedDecodeError: WhisperSubprocessHost.HostError?
     /// Delay applied inside `startAndInitialize` — used to let the
@@ -40,14 +46,17 @@ final class FakeHost: WhisperHostProtocol, @unchecked Sendable {
     private var _terminateCalls = 0
     private var _sigkillCalls = 0
     private var _alive = false
-    private var _lastRequest: WhisperIPCRequest?
+    private var _requests: [WhisperIPCRequest] = []
 
     var startCalls: Int { lock.withLock { _startCalls } }
     var decodeCalls: Int { lock.withLock { _decodeCalls } }
     var terminateCalls: Int { lock.withLock { _terminateCalls } }
     var sigkillCalls: Int { lock.withLock { _sigkillCalls } }
     var isAlive: Bool { lock.withLock { _alive } }
-    var lastRequest: WhisperIPCRequest? { lock.withLock { _lastRequest } }
+    var lastRequest: WhisperIPCRequest? { lock.withLock { _requests.last } }
+    /// Every request seen by `decode`, in arrival order — chunking
+    /// tests assert per-request payload shape, not just the last one.
+    var requests: [WhisperIPCRequest] { lock.withLock { _requests } }
 
     func startAndInitialize(model: String) throws {
         if startDelay > .zero {
@@ -65,10 +74,16 @@ final class FakeHost: WhisperHostProtocol, @unchecked Sendable {
     ) throws -> WhisperIPCResponse {
         lock.withLock {
             _decodeCalls += 1
-            _lastRequest = request
+            _requests.append(request)
         }
         if let err = cannedDecodeError {
             throw err
+        }
+        let queued: WhisperIPCResponse? = lock.withLock {
+            cannedDecodeQueue.isEmpty ? nil : cannedDecodeQueue.removeFirst()
+        }
+        if let queued {
+            return queued
         }
         guard let resp = cannedDecode else {
             throw WhisperSubprocessHost.HostError.readTimedOut
