@@ -20,7 +20,7 @@ Part of the Gravital Forge product family (sibling to OrbitNote).
 | Events log (`events/*.jsonl`) — machine-readable activity stream | ✅ Working |
 | Real microphone / system-audio capture (`pulsartrace-capture`) | ✅ Working |
 | Headless CLI — `pulsartrace record`, `doctor`, `events tail`, `install-cli` | ✅ Working |
-| Menubar app — record, settings, speaker editor, live transcript preview | ✅ Working (unsigned dev build) |
+| Menubar app — record, settings, speaker editor, live transcript preview, global hotkey, notifications | ✅ Working (unsigned dev build) |
 | Signed/notarized DMG, first-run permissions wizard | ⏳ Planned (Epic 10) |
 
 PulsarTrace is a complete **command-line tool** today: record a meeting with `pulsartrace record`, or feed it an existing WAV with `pulsartrace refine`. A **menubar app** (`pulsartrace-mac`) drives the same flow without a terminal — it runs today as an unsigned dev build. A signed/notarized DMG and a first-run permissions wizard are the remaining milestone — see [Roadmap](#roadmap). The entire AI pipeline is built and tested against an audio-source abstraction, so most of it builds and runs without touching audio hardware.
@@ -311,6 +311,8 @@ v0.1 (offline pipeline + streaming), real device capture, the full CLI, and the 
 ## Privacy
 
 Your audio never leaves your Mac. There is no telemetry, no analytics, no crash reporting that phones home, and no auto-update version checks. The **only** outbound network calls are first-launch model downloads — whisper models and the pyannote model, both from Hugging Face. After that, PulsarTrace works fully offline.
+
+The same posture holds on disk: transcripts, recordings, `metadata.json`, the events log, and the speaker library are written readable by your user account only (`0600` files, `0700` for the directories PulsarTrace creates), and looser permissions left behind by older versions are repaired. The Unix sockets PulsarTrace's own processes use to move audio between them verify that the connecting peer is the same user and reject anyone else.
 
 ---
 
