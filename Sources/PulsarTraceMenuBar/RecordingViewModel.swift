@@ -216,7 +216,9 @@ public final class RecordingViewModel {
         // guard effectively always passes — kept defensively for the
         // theoretical case where the Documents directory cannot be resolved.
         guard let outputRoot = settings.outputFolderURL else {
-            status = .error(message: "Choose an output folder in Settings first.")
+            // Only reachable when FileManager can't resolve ~/Documents —
+            // "choose a folder in Settings" would be a wild-goose chase here.
+            status = .error(message: "Could not resolve an output folder. Set one explicitly in Settings.")
             progressMessage = ""
             return
         }
