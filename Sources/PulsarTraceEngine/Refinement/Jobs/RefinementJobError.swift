@@ -12,7 +12,7 @@ import Foundation
 /// - `ResumableRefiner.run` → `Diarizer.DiarizeError` (non-.cancelled variants),
 ///   raw `WhisperTranscribeError`, I/O errors from `WAVReader` /
 ///   `AtomicFile`.
-/// - `RefinementPipeline.assembleAndWrite` → `RefinementPipeline.RefineError`
+/// - `TranscriptAssembly.assembleAndWrite` → `RefinementPipeline.RefineError`
 ///   (when the assemble step's reconciler / file writes wrap into the typed
 ///   RefineError). Each `RefineError` branch maps to a queue bucket.
 ///
