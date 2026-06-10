@@ -87,14 +87,16 @@ struct SpeakerEditorView: View {
             ToolbarItemGroup {
                 // Busy indicator while a retroactive final.md rewrite is in
                 // flight — paired with `.disabled(isRewriting)` on the list.
-                // Opacity-hidden (not conditionally absent) so the toolbar
-                // layout does not shift when a rewrite starts.
-                ProgressView()
-                    .controlSize(.small)
-                    .opacity(viewModel?.isRewriting == true ? 1 : 0)
-                    .help("Rewriting transcripts…")
-                    .accessibilityLabel("Rewriting transcripts")
-                    .accessibilityHidden(viewModel?.isRewriting != true)
+                // Conditionally present, NOT opacity-hidden: macOS draws
+                // button-like chrome around a toolbar item even at opacity 0,
+                // leaving a ghost "empty button" next to Merge/Split. The
+                // toolbar reflows naturally when this appears.
+                if viewModel?.isRewriting == true {
+                    ProgressView()
+                        .controlSize(.small)
+                        .help("Rewriting transcripts…")
+                        .accessibilityLabel("Rewriting transcripts")
+                }
                 Button("Merge…") {
                     if let viewModel { startMerge(viewModel) }
                 }
