@@ -107,8 +107,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
     public var displayName: String { folderURL.lastPathComponent }
 
     /// Human title — the custom title when one is set, else the date-based
-    /// default. The one source for the list, the detail header, and
-    /// notifications.
+    /// default. The one source for the detail header and notifications
+    /// (spec §4.1); list rows compose their own time · duration line.
     public var displayTitle: String {
         customTitle ?? defaultTitle
     }

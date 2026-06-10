@@ -12,12 +12,13 @@ public enum RecordingTitleStore {
     public static func normalized(_ raw: String) -> String? {
         let flattened = raw
             .components(separatedBy: .newlines)
+            .filter { !$0.isEmpty }
             .joined(separator: " ")
         let trimmed = flattened.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// The custom title stored in `folderURL`, or `nil` (absent or blank).
+    /// The custom title stored in `folderURL`, or `nil` (absent, unreadable, or blank).
     public static func read(folderURL: URL) -> String? {
         let url = folderURL.appendingPathComponent(RecordingFolder.FileName.title)
         guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
@@ -29,7 +30,11 @@ public enum RecordingTitleStore {
     public static func write(_ rawTitle: String, folderURL: URL) throws {
         let url = folderURL.appendingPathComponent(RecordingFolder.FileName.title)
         guard let title = normalized(rawTitle) else {
-            try? FileManager.default.removeItem(at: url)
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                // Clearing an absent sidecar is idempotent.
+            }
             return
         }
         try Data((title + "\n").utf8).write(to: url, options: .atomic)
