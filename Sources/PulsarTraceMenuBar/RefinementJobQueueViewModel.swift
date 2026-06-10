@@ -19,8 +19,15 @@ public final class RefinementJobQueueViewModel {
     public private(set) var pausedForRecording = false
 
     /// Last enqueue error, if any. The recordings list surfaces this as a
-    /// short alert string; it is cleared by the next successful enqueue.
+    /// dismissible banner; it is cleared by the next successful enqueue or
+    /// by `clearEnqueueError()` (the banner's ✕ button).
     public var lastEnqueueError: String?
+
+    /// Dismiss the enqueue-error banner without waiting for the next
+    /// successful enqueue.
+    public func clearEnqueueError() {
+        lastEnqueueError = nil
+    }
 
     /// Called once per `refresh()` tick with every refinement job that
     /// transitioned into a terminal state (completed / failed / cancelled)

@@ -18,15 +18,34 @@ struct RecordingsListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Dismissible enqueue-error banner. Primary text on an orange
+            // tint (not white-on-orange, which failed WCAG contrast) so it
+            // reads in both light and dark appearances.
             if let err = queueVM.lastEnqueueError {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(err)
+                        .font(.caption)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        queueVM.clearEnqueueError()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Dismiss error")
+                }
+                .foregroundStyle(.primary)
+                .padding(8)
+                .background(
+                    Color.orange.opacity(0.15),
+                    in: RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.orange.opacity(0.4)))
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
             }
             Group {
                 if scanner.recordings.isEmpty {

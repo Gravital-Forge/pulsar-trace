@@ -85,14 +85,26 @@ struct SpeakerEditorView: View {
             // Always present (disabled until usable) so the window toolbar —
             // and thus the chrome — does not change as the library loads.
             ToolbarItemGroup {
+                // Busy indicator while a retroactive final.md rewrite is in
+                // flight — paired with `.disabled(isRewriting)` on the list.
+                // Opacity-hidden (not conditionally absent) so the toolbar
+                // layout does not shift when a rewrite starts.
+                ProgressView()
+                    .controlSize(.small)
+                    .opacity(viewModel?.isRewriting == true ? 1 : 0)
+                    .help("Rewriting transcripts…")
+                    .accessibilityLabel("Rewriting transcripts")
+                    .accessibilityHidden(viewModel?.isRewriting != true)
                 Button("Merge…") {
                     if let viewModel { startMerge(viewModel) }
                 }
-                .disabled((viewModel?.liveSpeakers.count ?? 0) < 2)
+                .disabled((viewModel?.liveSpeakers.count ?? 0) < 2
+                    || viewModel?.isRewriting == true)
                 Button("Split…") {
                     if let viewModel { startSplit(viewModel) }
                 }
-                .disabled(viewModel?.liveSpeakers.isEmpty ?? true)
+                .disabled(viewModel?.liveSpeakers.isEmpty ?? true
+                    || viewModel?.isRewriting == true)
             }
         }
         .task { await loadLibrary() }
@@ -152,6 +164,11 @@ struct SpeakerEditorView: View {
                     }
                 }
             }
+            // A rewrite fans out over every affected final.md on disk — the
+            // list is disabled while one is in flight so edits cannot stack
+            // (the toolbar shows the paired busy indicator). Applied before
+            // the overlays so the error ✕ and Undo stay clickable.
+            .disabled(viewModel.isRewriting)
             .overlay(alignment: .top) { errorBanner(viewModel) }
             .overlay(alignment: .bottom) { undoBanner(viewModel) }
             // Task 7a — delisting rewrites every final.md the speaker appears
@@ -178,17 +195,33 @@ struct SpeakerEditorView: View {
         }
     }
 
-    /// A transient error banner for a failed edit (`viewModel.lastError`).
+    /// A dismissible error banner for a failed edit (`viewModel.lastError`).
+    /// Primary text on a red tint (not white-on-red, which failed WCAG
+    /// contrast) so it reads in both light and dark appearances.
     @ViewBuilder
     private func errorBanner(_ viewModel: SpeakerEditorViewModel) -> some View {
         if let error = viewModel.lastError {
-            Text(error)
-                .font(.callout)
-                .foregroundStyle(.white)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.red, in: RoundedRectangle(cornerRadius: 6))
-                .padding(12)
+            HStack(alignment: .firstTextBaseline) {
+                Text(error)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    viewModel.clearError()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss error")
+            }
+            .foregroundStyle(.primary)
+            .padding(8)
+            .background(
+                Color.red.opacity(0.15),
+                in: RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.red.opacity(0.4)))
+            .padding(12)
         }
     }
 
@@ -202,7 +235,9 @@ struct SpeakerEditorView: View {
                 Button("Undo") {
                     Task {
                         await toast.action()
-                        viewModel.undoToast = nil
+                        // Clears the toast AND cancels its auto-dismiss
+                        // clock (`undoToast` is private(set) on the VM).
+                        viewModel.dismissToast()
                     }
                 }
             }
