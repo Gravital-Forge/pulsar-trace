@@ -198,6 +198,9 @@ private struct RefineStatusIcon: View {
             .font(.caption)
             .foregroundStyle(tint)
             .help(help)
+            // Without this VoiceOver reads the SF Symbol name; the tooltip
+            // strings are already user-quality, so reuse them.
+            .accessibilityLabel(help)
     }
 }
 

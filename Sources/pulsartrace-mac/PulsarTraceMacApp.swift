@@ -48,6 +48,9 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.recording)
                 .environment(environment.queueVM)
                 .environment(environment.navigation)
+                // The dropdown reads `settings.globalHotkey` to show the
+                // shortcut hint next to Start/Stop Recording.
+                .environment(environment.settings)
                 // R41: re-install the global-hotkey monitor whenever the
                 // combo changes in Settings (`install` removes the prior
                 // monitor first). The popover content isn't mounted until

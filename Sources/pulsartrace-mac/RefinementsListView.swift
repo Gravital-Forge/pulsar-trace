@@ -6,6 +6,7 @@ import PulsarTraceMenuBar
 /// completed refinement jobs with live progress and cancel controls (E2).
 struct RefinementsListView: View {
     @Environment(RefinementJobQueueViewModel.self) private var queue
+    @Environment(MenuBarSettings.self) private var settings
 
     var body: some View {
         List {
@@ -26,7 +27,18 @@ struct RefinementsListView: View {
             if !queue.recent.isEmpty {
                 Section("Recent") {
                     ForEach(queue.recent) { job in
-                        JobRow(job: job, allowCancel: false) {}
+                        // The job descriptor carries everything a re-enqueue
+                        // needs (folderURL + recordingId); the model is
+                        // re-resolved from the current setting, same as the
+                        // recordings list's Refine button.
+                        JobRow(job: job, allowCancel: false, onCancel: {}) {
+                            Task {
+                                await queue.enqueueManual(
+                                    folderURL: job.folderURL,
+                                    recordingId: job.recordingId,
+                                    refineModelName: settings.refineModelName)
+                            }
+                        }
                     }
                 }
             }
@@ -61,12 +73,13 @@ private struct JobRow: View {
     let job: RefinementJob
     let allowCancel: Bool
     let onCancel: () -> Void
+    var onRetry: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayId).font(.body.monospaced())
-                Text(stateText).font(.caption).foregroundStyle(.secondary)
+                stateLabel
             }
             Spacer()
             if let fraction = job.state.progressFraction {
@@ -76,6 +89,24 @@ private struct JobRow: View {
                 Button("Cancel", role: .destructive, action: onCancel)
                     .buttonStyle(.borderless)
             }
+            // Retry only when the queue marked the failure transient —
+            // permanent classes (missing model, bad checksum) get no button.
+            if case .failed(_, retryAvailable: true) = job.state, let onRetry {
+                Button("Retry", action: onRetry)
+                    .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    /// The state caption. A failed row shows humanized copy but keeps the
+    /// raw stable `errorClass` reachable via tooltip for bug reports.
+    @ViewBuilder
+    private var stateLabel: some View {
+        let caption = Text(stateText).font(.caption).foregroundStyle(.secondary)
+        if case .failed(let errorClass, _) = job.state {
+            caption.help(errorClass)
+        } else {
+            caption
         }
     }
 
@@ -101,10 +132,22 @@ private struct JobRow: View {
         case .completed(let seconds, let speakerCount):
             let speakerWord = speakerCount == 1 ? "speaker" : "speakers"
             return "Done · \(Int(seconds.rounded()))s · \(speakerCount) \(speakerWord)"
-        case .failed(let errorClass, let retryAvailable):
-            return retryAvailable ? "Failed (\(errorClass)) · retryable" : "Failed (\(errorClass))"
+        case .failed(let errorClass, _):
+            return "Failed — \(Self.friendly(errorClass))"
         case .cancelled:
             return "Cancelled"
+        }
+    }
+
+    /// Humanize a stable `errorClass` identifier (`RefinementJobError
+    /// .errorClass`) for the row caption. The raw class stays reachable via
+    /// `.help` on the caption; unknown classes fall back to a generic line.
+    private static func friendly(_ errorClass: String) -> String {
+        switch errorClass {
+        case "modelMissing", "modelChecksum": return "the model could not be loaded"
+        case "diarizeCrashed":                return "speaker analysis failed"
+        case "transcribeFailed":              return "transcription failed"
+        default:                              return "an internal error"
         }
     }
 }
