@@ -120,7 +120,11 @@ private final class KeyCaptureNSView: NSView {
             let relevant: NSEvent.ModifierFlags =
                 [.command, .control, .option, .shift]
             let modifiers = event.modifierFlags.intersection(relevant)
-            guard !modifiers.isEmpty else { return false }
+            // Require at least one of ⌘/⌃/⌥ — shift alone is typing, not a
+            // shortcut: a ⇧R hotkey would fire on every capital R typed
+            // anywhere. Matches macOS recorder conventions.
+            let nonShift: NSEvent.ModifierFlags = [.command, .control, .option]
+            guard !modifiers.intersection(nonShift).isEmpty else { return false }
             onCapture?(KeyCombo(
                 keyCode: event.keyCode, modifiers: modifiers.rawValue))
             window?.makeFirstResponder(nil)

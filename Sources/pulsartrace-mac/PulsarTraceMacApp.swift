@@ -50,8 +50,9 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.navigation)
                 // R41: re-install the global-hotkey monitor whenever the
                 // combo changes in Settings (`install` removes the prior
-                // monitor first). Attached to the MenuBarExtra content — an
-                // always-alive view — because `init` only installs once.
+                // monitor first). The popover content isn't mounted until
+                // its first open, so the main window carries a parallel
+                // onChange — between them every change re-installs.
                 .onChange(of: environment.settings.globalHotkey) {
                     hotkey.install(
                         settings: environment.settings,
@@ -74,6 +75,14 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.scanner)
                 .environment(environment.navigation)
                 .environment(environment.queueVM)
+                // Parallel to the MenuBarExtra onChange: the recorder lives
+                // in this window's Settings pane, and the popover content
+                // may never have been mounted when the combo changes here.
+                .onChange(of: environment.settings.globalHotkey) {
+                    hotkey.install(
+                        settings: environment.settings,
+                        recording: environment.recording)
+                }
         }
         .defaultSize(width: 760, height: 480)
 
