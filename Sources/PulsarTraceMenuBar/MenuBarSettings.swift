@@ -46,6 +46,17 @@ public final class MenuBarSettings {
     /// 3 GB `large-v3` unasked; the user opts into `large-v3` in Settings (D29).
     public static let defaultRefineModelName = "base"
 
+    /// Default output folder when the user has never chosen one:
+    /// `~/Documents/PulsarTrace`. Derived at read time and **never persisted**
+    /// — clearing `outputFolderPath` re-defaults on the next read. `nil` only
+    /// in the theoretical case where the Documents directory cannot be
+    /// resolved.
+    public static var defaultOutputFolderURL: URL? {
+        FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("PulsarTrace", isDirectory: true)
+    }
+
     // MARK: - Persisted properties
 
     /// `AVCaptureDevice.uniqueID` of the chosen microphone, or `nil` for the
@@ -66,7 +77,9 @@ public final class MenuBarSettings {
     }
 
     /// Filesystem path of the output folder (D30). `nil` until the user picks
-    /// a folder.
+    /// a folder — but note `outputFolderURL` falls back to
+    /// `defaultOutputFolderURL` when this is `nil`, so a first run records
+    /// into `~/Documents/PulsarTrace` without any setup.
     public var outputFolderPath: String? {
         didSet { save() }
     }
@@ -106,9 +119,18 @@ public final class MenuBarSettings {
 
     // MARK: - Derived
 
-    /// `outputFolderPath` as a file URL, or `nil` when no folder is chosen.
+    /// `outputFolderPath` as a file URL; falls back to
+    /// `defaultOutputFolderURL` (`~/Documents/PulsarTrace`) when the user has
+    /// never chosen a folder, so a brand-new install's first Start Recording
+    /// works without visiting Settings. The fallback is computed — never
+    /// written to `UserDefaults` — so clearing the path re-defaults. `nil`
+    /// only when no folder is chosen *and* the Documents directory cannot be
+    /// resolved.
     public var outputFolderURL: URL? {
-        outputFolderPath.map { URL(fileURLWithPath: $0) }
+        if let outputFolderPath {
+            return URL(fileURLWithPath: outputFolderPath)
+        }
+        return Self.defaultOutputFolderURL
     }
 
     /// Every `previousFolderPaths` entry as a file URL.
