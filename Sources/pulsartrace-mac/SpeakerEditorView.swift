@@ -40,14 +40,16 @@ struct SpeakerEditorView: View {
     private struct PendingDelist {
         let id: String
         let name: String
+        /// How many recordings the delist would rewrite — fetched from
+        /// `appearances(ofSpeaker:)`. Carried here (not as separate state)
+        /// so the dialog always shows a consistent (id, name, count) triple
+        /// even if two right-clicks race across the await.
+        let count: Int
     }
 
     /// Non-nil while the delist confirmation dialog is up (Task 7a) —
     /// delisting rewrites `final.md` files on disk, so it must be confirmed.
     @State private var pendingDelist: PendingDelist?
-    /// How many recordings the pending delist would rewrite — fetched from
-    /// `appearances(ofSpeaker:)` before presenting the dialog.
-    @State private var pendingDelistCount = 0
 
     // Merge sheet state.
     @State private var showMerge = false
@@ -168,9 +170,10 @@ struct SpeakerEditorView: View {
                     pendingDelist = nil
                 }
             } message: {
-                Text(pendingDelistCount == 0
+                let count = pendingDelist?.count ?? 0
+                Text(count == 0
                      ? "Their lines become “Unrecognized”. Undoable for 30 days."
-                     : "\(pendingDelistCount) recording\(pendingDelistCount == 1 ? "" : "s") will be rewritten. Their lines become “Unrecognized”. Undoable for 30 days.")
+                     : "\(count) recording\(count == 1 ? "" : "s") will be rewritten. Their lines become “Unrecognized”. Undoable for 30 days.")
             }
         }
     }
@@ -314,10 +317,11 @@ struct SpeakerEditorView: View {
                     if speaker.name != "You" {
                         Button("Don't Recognize This Speaker") {
                             Task {
-                                pendingDelistCount = await viewModel
+                                let count = await viewModel
                                     .appearances(ofSpeaker: speaker.id).count
                                 pendingDelist = PendingDelist(
-                                    id: speaker.id, name: speaker.name)
+                                    id: speaker.id, name: speaker.name,
+                                    count: count)
                             }
                         }
                         .help("Stop recognizing this speaker. Their lines in "

@@ -98,6 +98,7 @@ struct RecordingsListView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("View transcript")
+                .help("View transcript")
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { viewing = recording }
