@@ -1,6 +1,6 @@
 # Main Window UX Overhaul — Master–Detail Recordings, In-Window Live Transcript, Queue Folding
 
-- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select. Second amendment (user request): renameable recordings (UI-owned sidecar title) and symbol rendering of the "(provisional)" live label. Third amendment (user decision): the provisional marker is fixed at the source — the engine writes a compact `?` suffix into `live.md`; no display-layer transformation, format docs and R16's example updated ("clean over compatibility — the app is too new to tangle"). Fourth amendment (user-set guiding principle): breaking changes are allowed and **preferred** over compatibility layers — simplifications applied throughout (single rename affordance, clock-free completion badge, unify-don't-map id rule).
+- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select. Second amendment (user request): renameable recordings (UI-owned sidecar title) and symbol rendering of the "(provisional)" live label. Third amendment (user decision): the provisional marker is fixed at the source — the engine writes a compact `?` suffix into `live.md`; no display-layer transformation, format docs and R16's example updated ("clean over compatibility — the app is too new to tangle"). Fourth amendment (user-set guiding principle): breaking changes are allowed and **preferred** over compatibility layers — simplifications applied throughout (clock-free completion badge, unify-don't-map id rule). Fifth amendment (user correction): the principle removes *mechanisms*, never *functionality* — rename triggers are double-click + context menu (Return-to-rename dropped as unnatural here); the double-click/selection coexistence is to be implemented correctly, not avoided.
 - **Date:** 2026-06-10
 - **Scope:** `pulsartrace-mac` (views) + `PulsarTraceMenuBar` (new view models), plus **one deliberate engine/format change**: the live provisional-label suffix in `live.md` becomes `?` (§5; `docs/file-format.md` and the R16 example updated with it). `final.md` and `events/*.jsonl` untouched; no capture changes.
 - **Builds on:** `docs/specs/2026-06-10-ui-polish-plan.md` (previous polish round, implemented — transcript parser/styled rendering, friendly titles, menubar icon states, notifications, context menus, hotkey recorder).
@@ -113,11 +113,15 @@ litter). Chosen: the Recordings pane owns an internal resizable split.
   the existing context menu still works. On pane appear, if the selection is
   nil or its row no longer exists, the newest recording auto-selects so the
   detail is never blank.
-- **Renameable recordings.** Context-menu "Rename" or Return on the selected
-  row begins an inline rename TextField — the same two affordances as the
-  Speakers list (internal consistency). The double-click-to-rename gesture
-  is dropped everywhere: it fights `List` selection on macOS (the previously
-  flagged risk) and is a third mechanism for the same action. Storage: a
+- **Renameable recordings.** Double-click on a row, or context-menu
+  "Rename", begins an inline rename TextField — the same two affordances as
+  the Speakers list (internal consistency). Double-click is free for rename
+  here because single-click selection already *is* "open" in this design.
+  Return-to-rename is deliberately not offered (user call: a Finder-ism that
+  feels wrong in this app). **The double-click gesture must coexist with
+  `List` selection correctly** — the known macOS SwiftUI click-swallowing
+  issue is to be solved properly in implementation (per the guiding
+  principle: fix the mechanism, don't drop the functionality). Storage: a
   UI-owned sidecar in the recording folder (`title.txt`, single line,
   whitespace-trimmed, newlines stripped, atomic write; filename constant
   added to `RecordingFolder.FileName`). The engine never reads it,
@@ -326,13 +330,10 @@ unchanged.
   (`Set<String>` selection): ⌘-click two speakers enables **Merge** in the
   toolbar with both operands pre-seeded (sheet pickers stay editable —
   which one to keep is still an explicit choice); exactly one selection
-  enables **Split** and Return-to-rename. The double-click rename gesture is
-  removed along with the recordings one (breaking an existing interaction —
-  fine; one less mechanism and the gesture-vs-selection conflict disappears).
+  enables **Split**. Rename keeps today's double-click gesture (plus the
+  context menu) — consistent with the recordings list; no Return-to-rename.
   Single-selection seeding was rejected in review: merge is a two-operand
   action. Context menu and delete-with-undo-toast behavior unchanged.
-  **Risk flag for planning:** Return-to-rename needs deliberate key routing
-  in an accessory app (same class as the ⌘F flag).
 - **Banners/toasts**: Speakers error + undo overlays move from `.overlay` to
   `.safeAreaInset`; all banners/toasts get appear/disappear transitions
   (`.move + .opacity`, `.animation(_:value:)`). WCAG-checked tint scheme kept.
@@ -425,8 +426,12 @@ move).
   implementation and pin with a test). If they turn out to differ, **unify
   the derivation at the source** — do not map between two id schemes
   (guiding principle, §2).
-- ⌘F routing in the accessory app (§5 risk flag); Return-to-rename key
-  routing in the rename flows (§4.1/§8 risk flag).
+- ⌘F routing in the accessory app (§5 risk flag).
+- Double-click-rename coexisting with `List` selection (§4.1/§8): the
+  first-click-swallowing behavior of `.onTapGesture(count: 2)` on selected
+  lists must be solved properly (e.g. `simultaneousGesture`, or an
+  NSEvent `clickCount` path) — dropping either selection or the gesture is
+  not an acceptable resolution.
 
 ## 13. Named follow-ups (out of scope, recorded so they aren't lost)
 
