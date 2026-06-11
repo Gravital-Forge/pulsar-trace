@@ -18,8 +18,8 @@ public final class AppEnvironment {
     public let liveWatcher: LiveTranscriptWatcher
     public let onboarding: OnboardingTourViewModel
 
-    /// Recordings-pane list model (§4.1) — process-lifetime so the selection,
-    /// filter, and just-refined acknowledgments survive window churn.
+    /// Recordings-pane list model (§4.1) — process-lifetime so the selection
+    /// and filter survive window churn.
     public let paneModel: RecordingsPaneModel
 
     /// Transcript detail model (§4.2).
@@ -178,7 +178,6 @@ public final class AppEnvironment {
             whisperOptions: refineWhisperOptions)
         await queueVM.setQueue(q)
         queueVM.onJobsTerminated = { [weak self] jobs in
-            self?.paneModel.noteJobsTerminated(jobs)
             self?.detailModel.noteJobsTerminated(jobs)
             Task { [weak self] in await self?.scanner.refresh() }
             // Bare-binary dev runs (`.build/debug/pulsartrace-mac`) have no

@@ -20,7 +20,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 
 ### Changed
 
-- The Refinements pane is gone — refinement status lives on the recording rows (queued clock, determinate refining progress, failure badge with Retry) and in the transcript detail's banner (queued/refining with Cancel, "Refinement complete — Show refined transcript", failures with Retry). A freshly refined recording you are not looking at shows a transient green check until selected.
+- The Refinements pane is gone — refinement status lives on the recording rows (a steady green check on refined recordings, an orange clock on unrefined ones, queued clock, determinate refining progress, failure badge with Retry) and in the transcript detail's banner (queued/refining with Cancel, "Refinement complete — Show refined transcript", failures with Retry).
 - A completed refinement never swaps the transcript you are reading: the banner offers "Show refined transcript" instead.
 - **Breaking (file format):** live transcripts mark provisional speakers with a compact `?` suffix (`Them?`, `Them #2?`, `Steve?`) instead of ` (provisional)`. `final.md` is unchanged; `live.md` files recorded before this change keep the old marker until refined.
 - One transcript renderer everywhere: text selection now works across lines in recorded transcripts, static transcripts open at the top while live ones follow the newest line, and Copy puts the rendered text on the pasteboard instead of raw Markdown.
@@ -44,7 +44,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 - The main window restored at launch no longer comes up greyed out (inactive) until you click away and back: opening it now activates the app, which macOS does not do on its own for menubar-only apps.
 - Microphone and screen-recording permissions are requested and checked before a recording starts, instead of racing the OS prompt mid-start.
 - Refinement no longer fails permanently on recordings containing more than ~98 seconds of uninterrupted speech: long speech regions are now split into chunks (cut at the quietest nearby moment) before being sent to whisper, instead of exceeding the transcription channel's frame limit on every retry.
-- The refinement status badge (clock, progress bar, failure icon) no longer disappears on the selected recording row: explicitly-tinted icons washed out against the accent selection fill, so badges on the highlighted row now draw in the selection's own foreground color.
+- The green check on a refined recording's row no longer vanishes the moment you select the row (gone until the next app restart): it was modeled as a transient "just refined" notification dismissed by selection. It is now a steady status badge — green check means refined, orange clock means not yet refined.
 - Near-silent recordings no longer crash diarization: a speaker whose voice sample is too sparse to fingerprint keeps its spans and label, and refinement completes — previously the whole job failed (`diarizeCrashed`) on every retry. The same fix stops live diarization from discarding such windows mid-recording.
 
 ### Security

@@ -41,14 +41,30 @@ struct MainWindowView: View {
                 .navigationTitle(navigation.section.title)
         }
         .frame(minWidth: 800, minHeight: 420)
-        // Accessory-policy apps (no Dock icon, D27) are not activated by
-        // macOS when a window opens — only the menubar dropdown's open()
-        // path called `NSApp.activate()`, so the window SwiftUI restores at
-        // launch came up with the app inactive and every control drawn in
-        // its greyed window-background appearance until the user bounced
-        // focus away and back (QA round 4). Activating on appear covers the
-        // launch-restore path; the dropdown path activating twice is a no-op.
-        .onAppear { NSApp.activate() }
+        .onAppear { activateOnLaunchRestore() }
+    }
+
+    /// Accessory-policy apps (no Dock icon, D27) are not activated by macOS
+    /// when a window opens, so the window SwiftUI restores at launch came up
+    /// with the app inactive — every control drawn in its greyed
+    /// window-background appearance until the user bounced focus away and
+    /// back (QA round 4). A bare `NSApp.activate()` in `onAppear` did NOT
+    /// fix it (QA round 5): at launch-restore `onAppear` runs while the app
+    /// is still finishing its launch, and the accessory launch path leaves
+    /// the app deactivated *after* that early request. Deferring one
+    /// run-loop turn lands the request after launch completes, and the
+    /// restored window is promoted to key explicitly — activating an
+    /// accessory app doesn't by itself pick a key window for it.
+    /// The dropdown's open() path also activates; re-activating is a no-op.
+    private func activateOnLaunchRestore() {
+        DispatchQueue.main.async {
+            NSApp.activate()
+            if NSApp.keyWindow == nil {
+                NSApp.windows
+                    .first { $0.isVisible && $0.canBecomeKey }?
+                    .makeKeyAndOrderFront(nil)
+            }
+        }
     }
 
     /// The sidebar: the section list. Deliberately brandless in-content (§3) —

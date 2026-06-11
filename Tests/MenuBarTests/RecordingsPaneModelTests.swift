@@ -248,57 +248,41 @@ struct RecordingsPaneModelTests {
         }
     }
 
-    @Test("steady refined row shows no badge; unrefined shows notYetRefined; cancelled falls through")
+    @Test("refined row shows the steady check; unrefined shows notYetRefined; cancelled falls through")
     func intrinsicBadges() {
         let refined = Self.entry(id: "rec_r", start: Self.date(daysAgo: 0))
         let raw = Self.entry(id: "rec_u", start: Self.date(daysAgo: 0), refined: false)
         let model = Self.makeModel(entries: [refined, raw])
-        #expect(model.rows[0].badge == .none)
+        #expect(model.rows[0].badge == .refined)
         #expect(model.rows[1].badge == .notYetRefined)
 
         model.recentOverride = [Self.job("job_c", recordingId: "rec_r", state: .cancelled)]
-        #expect(model.rows[0].badge == .none)  // cancelled → intrinsic
+        #expect(model.rows[0].badge == .refined)  // cancelled → intrinsic
     }
 
-    // MARK: Transient just-refined badge (§4.1)
+    // MARK: Steady refined check (§4.1, QA round 5)
 
-    @Test("completed job shows justRefined until the row is selected")
-    func justRefinedClearsOnSelection() {
+    @Test("the refined check is steady — selecting the row does not clear it")
+    func refinedCheckSurvivesSelection() {
         let nav = AppNavigation()
         let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0))
         let model = Self.makeModel(entries: [e], navigation: nav)
-        model.recentOverride = [Self.job(
-            "job_1", recordingId: "rec_a",
-            state: .completed(durationSeconds: 60, speakerCount: 2))]
-        #expect(model.rows[0].badge == .justRefined)
+        #expect(model.rows[0].badge == .refined)
 
         model.select("rec_a")
-        #expect(model.rows[0].badge == .none)
+        #expect(model.rows[0].badge == .refined)
     }
 
-    @Test("a row already selected when its refine completes never shows the badge")
-    func justRefinedSuppressedWhenAlreadySelected() {
-        let nav = AppNavigation()
-        nav.selectedRecordingID = "rec_a"
-        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0))
-        let model = Self.makeModel(entries: [e], navigation: nav)
-        let done = Self.job("job_1", recordingId: "rec_a",
-                            state: .completed(durationSeconds: 60, speakerCount: 2))
-        model.recentOverride = [done]
-        model.noteJobsTerminated([done])
-        #expect(model.rows[0].badge == .none)
-    }
-
-    @Test("justRefined clears when the job ages out of recent")
-    func justRefinedClearsOnEviction() {
-        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0))
+    @Test("a completed job shows the check before the scanner re-reads the folder")
+    func completedJobBridgesScannerLag() {
+        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0), refined: false)
         let model = Self.makeModel(entries: [e])
+        #expect(model.rows[0].badge == .notYetRefined)
+
         model.recentOverride = [Self.job(
             "job_1", recordingId: "rec_a",
             state: .completed(durationSeconds: 60, speakerCount: 2))]
-        #expect(model.rows[0].badge == .justRefined)
-        model.recentOverride = []
-        #expect(model.rows[0].badge == .none)
+        #expect(model.rows[0].badge == .refined)
     }
 
     // MARK: Rename round-trip (§4.1)

@@ -27,9 +27,13 @@ public enum DayKey: Equatable, Hashable, Sendable {
 /// in-progress row (§4.1).
 public struct RecordingRow: Identifiable, Equatable {
 
-    /// Exceptional-only status badge (§4.1) — `.none` for a steady refined
-    /// recording. Queue state wins over the intrinsic refined flag,
-    /// preserving the documented `RefineStatusIcon` precedence
+    /// Row status badge (§4.1) — every row carries one: a steady green
+    /// check for refined recordings, an orange clock for unrefined ones,
+    /// queue state while a job is in flight. Steady states are deliberate
+    /// (QA round 5): a transient "just refined" check that selection
+    /// dismissed read as the refined indicator vanishing for good. Queue
+    /// state wins over the intrinsic refined flag, preserving the
+    /// documented `RefineStatusIcon` precedence
     /// (running > queued > recent > intrinsic).
     public enum Badge: Equatable {
         case recordingNow(startedAt: Date)
@@ -37,8 +41,7 @@ public struct RecordingRow: Identifiable, Equatable {
         case refining(fraction: Double?, stageName: String)
         case failed(friendlyMessage: String, errorClass: String, retryable: Bool)
         case notYetRefined
-        case justRefined
-        case none
+        case refined
     }
 
     public let entry: RecordingEntry
@@ -80,8 +83,8 @@ public struct RecordingDayGroup: Identifiable, Equatable {
 
 /// Composes scanner entries + recording status + queue state + filter text
 /// into the day-sectioned row models of the Recordings pane (§4.1): live-row
-/// synthesis & dedup, badge derivation (incl. the transient just-refined
-/// check), filtering, auto-select rules, rename, move-to-Trash.
+/// synthesis & dedup, badge derivation, filtering, auto-select rules,
+/// rename, move-to-Trash.
 @MainActor
 @Observable
 public final class RecordingsPaneModel {
@@ -98,12 +101,6 @@ public final class RecordingsPaneModel {
     private let navigation: AppNavigation
     private let now: () -> Date
     private let trashItem: (URL) throws -> Void
-
-    /// Completed job ids whose transient green check was acknowledged —
-    /// either by selecting the row, or because the row was already selected
-    /// when its refine completed (§4.1). No timer, no clock: badge clearing
-    /// also happens naturally when the job ages out of `queueVM.recent`.
-    private var acknowledgedJobIDs: Set<String> = []
 
     /// Test seams — production leaves these nil and reads the real scanner /
     /// recording VM.
@@ -232,11 +229,9 @@ public final class RecordingsPaneModel {
 
     // MARK: - Selection (§4.1)
 
-    /// Select a row — selecting *is* opening. Acknowledges the transient
-    /// just-refined badge for that recording.
+    /// Select a row — selecting *is* opening.
     public func select(_ recordingId: String?) {
         navigation.selectedRecordingID = recordingId
-        if let recordingId { acknowledgeCompleted(recordingId: recordingId) }
     }
 
     /// Auto-select rule: when the selection is nil or its row no longer
@@ -263,7 +258,10 @@ public final class RecordingsPaneModel {
         if let recent = recentJobs.first(where: { $0.recordingId == entry.id }) {
             switch recent.state {
             case .completed:
-                if !acknowledgedJobIDs.contains(recent.id) { return .justRefined }
+                // Bridge the scanner's refresh lag: the check shows the
+                // moment the job completes, before final.md is re-scanned
+                // and `entry.isRefined` flips.
+                return .refined
             case .failed(let errorClass, let retryable):
                 return .failed(
                     friendlyMessage: Self.friendlyFailure(errorClass),
@@ -272,7 +270,7 @@ public final class RecordingsPaneModel {
                 break  // cancelled etc. fall through to the intrinsic flag
             }
         }
-        return entry.isRefined ? .none : .notYetRefined
+        return entry.isRefined ? .refined : .notYetRefined
     }
 
     static func stageName(of state: RefinementJobState) -> String {
@@ -291,31 +289,6 @@ public final class RecordingsPaneModel {
         case "transcribeFailed":              return "transcription failed"
         case "missingDependency":             return "a required component is missing"
         default:                              return "an internal error"
-        }
-    }
-
-    /// Called (via AppEnvironment) when refinement jobs reach a terminal
-    /// state. A completion for the recording the user is *already looking
-    /// at* never shows the row badge — the detail's completion banner is the
-    /// signal there (§4.1).
-    public func noteJobsTerminated(_ jobs: [RefinementJob]) {
-        for job in jobs {
-            if case .completed = job.state,
-               navigation.selectedRecordingID == job.recordingId {
-                acknowledgedJobIDs.insert(job.id)
-            }
-        }
-        // Prune so the set can't grow unboundedly: once a job ages out of
-        // `recent` its id is dead weight. The batch's own ids are kept
-        // unconditionally so this never depends on the caller having updated
-        // `recent` before notifying (true today, but a wiring-order detail).
-        acknowledgedJobIDs.formIntersection(
-            Set(recentJobs.map(\.id)).union(jobs.map(\.id)))
-    }
-
-    private func acknowledgeCompleted(recordingId: String) {
-        for job in recentJobs where job.recordingId == recordingId {
-            if case .completed = job.state { acknowledgedJobIDs.insert(job.id) }
         }
     }
 

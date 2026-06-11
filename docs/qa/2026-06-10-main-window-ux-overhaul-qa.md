@@ -58,9 +58,12 @@ from before this branch works — note its `live.md` will still show the old
       transcript" banner appears. Clicking the button loads `final.md`
       (labels lose the `?`).
 - [ ] Refine another recording while reading a DIFFERENT one (context menu →
-      Refine on an unrefined row): when it completes, that row (not yours)
-      shows a transient green check, which disappears the moment you select
-      it. Your reading position never moved.
+      Refine on an unrefined row): when it completes, that row's badge turns
+      into a green check. Your reading position never moved. The check is
+      STEADY: selecting that row, switching panes, or closing and reopening
+      the window must not make it disappear (regression: QA round 5 — the
+      check was a click-to-dismiss transient and read as the refined
+      indicator vanishing for good).
 
 ## 3. Hotkey start must not steal the selection
 
@@ -75,14 +78,15 @@ from before this branch works — note its `live.md` will still show the old
       recording in the detail pane, **every time** (click around briskly;
       no click may be dropped).
 - [ ] Rows are grouped under **Today / Yesterday / \<weekday, date\> /
-      \<full date\>** headers, newest first. Refined rows show time + duration
-      and speaker pills; unrefined rows show an orange clock. On unnamed rows
-      the duration after the time ("7:10 AM · 50:11") renders smaller and
-      greyed, so it doesn't read as part of the title.
-- [ ] Select an unrefined row: its clock badge stays visible on the
-      highlighted row (drawn in the selection's foreground color, not
-      orange) — it must not vanish into the accent fill (regression:
-      QA round 5).
+      \<full date\>** headers, newest first. Refined rows show time +
+      duration, speaker pills, and a green check; unrefined rows show an
+      orange clock. On unnamed rows the duration after the time
+      ("7:10 AM · 50:11") renders smaller and greyed, so it doesn't read
+      as part of the title.
+- [ ] Click a refined row and an unrefined row: the green check / orange
+      clock stays put on the highlighted row, and is still there after
+      switching to Speakers and back (regression: QA round 5 — the check
+      vanished on selection and never returned until app restart).
 - [ ] Type in the filter field ("Filter by title, speaker, or date"): a
       speaker name matches refined rows; "yesterday" matches yesterday's
       rows; gibberish shows the no-matches state. Clearing restores all. A

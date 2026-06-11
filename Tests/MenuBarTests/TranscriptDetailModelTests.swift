@@ -19,7 +19,7 @@ struct TranscriptDetailModelTests {
 
     static func row(
         _ entry: RecordingEntry, isLive: Bool = false,
-        badge: RecordingRow.Badge = .none
+        badge: RecordingRow.Badge = .refined
     ) -> RecordingRow {
         RecordingRow(entry: entry, isLive: isLive, badge: badge)
     }
