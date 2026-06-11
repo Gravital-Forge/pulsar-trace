@@ -118,9 +118,9 @@ public final class AppEnvironment {
         self.navigation = navigation
         self.onboarding = OnboardingTourViewModel()
 
-        // §4.1 / §4.2 view models — built from local constants because Swift
-        // forbids reading `self.scanner`/`self.navigation`/… before every
-        // stored property is initialized.
+        // §4.1 / §4.2 view models. Built from the locals above purely for
+        // symmetry with their assignments — already-assigned stored
+        // properties (like `self.recording` here) are fine to read mid-init.
         self.paneModel = RecordingsPaneModel(
             scanner: scanner, queueVM: queueVM,
             recording: self.recording, navigation: navigation)

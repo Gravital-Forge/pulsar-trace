@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import PulsarTraceEngine
 
 /// Picks the transcript source and banner for the selected recording row —
@@ -34,7 +35,7 @@ public final class TranscriptDetailModel {
 
     /// Queue-state seam for tests; production derives from `queueVM` (same
     /// override pattern as `RecordingsPaneModel`).
-    public enum QueuePosture: Equatable {
+    enum QueuePosture: Equatable {
         case idle
         case queued
         case refining(fraction: Double?, stageName: String)
@@ -54,7 +55,14 @@ public final class TranscriptDetailModel {
     /// Exposed so the view renders live lines through the model's owner.
     public let liveWatcher: LiveTranscriptWatcher
     private var loadTask: Task<Void, Never>?
+    /// Monotonic load token — the ONLY staleness mechanism. Orphaned reads
+    /// (superseded by a newer `show`/`reload`) finish harmlessly and fail the
+    /// generation check instead of writing; nothing here relies on task
+    /// cancellation (the detached read would never observe it).
     private var loadGeneration = 0
+    /// Operational logger — a transcript read failure is surfaced as a Retry
+    /// banner, but the cause should still land in the log.
+    private let logger = Logger(label: LogSubsystem.menubar)
 
     public init(
         queueVM: RefinementJobQueueViewModel,
@@ -76,10 +84,8 @@ public final class TranscriptDetailModel {
             return
         }
         pendingRefinedContent = false
-        loadTask?.cancel()
-        // Invalidate any in-flight read: the detached file read never
-        // observes the cancel, so without this bump a stale `.lines` result
-        // could land on top of the `.empty`/`.live` content set below.
+        // Invalidate any in-flight read so a stale `.lines` result cannot
+        // land on top of the `.empty`/`.live` content set below.
         loadGeneration += 1
         guard let row else {
             content = .empty
@@ -102,16 +108,20 @@ public final class TranscriptDetailModel {
         let finalURL = row.entry.finalURL
         let liveURL = row.entry.liveURL
         content = .loading
-        loadTask = Task { [weak self] in
+        loadTask = Task { [weak self, logger] in
             // Three-way result (lifted from the retired RecordedTranscriptSheet):
             // [] = no file, nil = unreadable, lines = success.
             let result: [String]? = await Task.detached(priority: .userInitiated) {
                 let fm = FileManager.default
                 let url = fm.fileExists(atPath: finalURL.path) ? finalURL : liveURL
                 guard fm.fileExists(atPath: url.path) else { return [] }
-                guard let text = try? String(contentsOf: url, encoding: .utf8)
-                else { return nil }
-                return text.components(separatedBy: "\n")
+                do {
+                    let text = try String(contentsOf: url, encoding: .utf8)
+                    return text.components(separatedBy: "\n")
+                } catch {
+                    logger.notice("transcript read failed: \(PathRedactor.redactHome(url.path)): \(error)")
+                    return nil
+                }
             }.value
             guard let self, self.loadGeneration == generation else { return }
             switch result {
@@ -127,7 +137,7 @@ public final class TranscriptDetailModel {
     public func showRefinedTranscript() { reload() }
 
     /// Awaitable load completion for deterministic tests.
-    public func awaitLoadForTesting() async {
+    func awaitLoadForTesting() async {
         await loadTask?.value
     }
 
