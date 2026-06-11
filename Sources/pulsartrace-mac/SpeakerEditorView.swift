@@ -221,6 +221,13 @@ struct SpeakerEditorView: View {
             // §6 planning note: a navigation-away (Record → Recordings, or a
             // sidebar switch) must not silently discard an in-progress rename.
             .onDisappear { commitPendingRename(viewModel) }
+            // Clicking away from the rename field commits like Save — the
+            // standard inline-rename contract, matching the recordings list.
+            // Escape and Return clear `renameTarget` before the focus change
+            // lands, so this no-ops on those paths.
+            .onChange(of: renameFieldFocused) {
+                if !renameFieldFocused { commitPendingRename(viewModel) }
+            }
             // Task 7a — delisting rewrites every final.md the speaker appears
             // in, so it is confirmed with the impact count fetched when the
             // context-menu item staged `pendingDelist`.
@@ -360,25 +367,12 @@ struct SpeakerEditorView: View {
                                 .selectAll(nil)
                         }
                     }
-                // Cancel + Save replace the Rename/Delete pair while editing —
-                // they make the "you are now editing" state visually obvious
-                // (Save is the blue default button) and give the click a
-                // discoverable target. Save owns Return (`.defaultAction`) and
-                // Cancel owns Escape (`.cancelAction`), so the previous
-                // `.onSubmit` / `.onExitCommand` modifiers are no longer needed
-                // — having both would double-fire on Return.
-                Button("Cancel") { renameTarget = nil }
-                    .keyboardShortcut(.cancelAction)
-                Button("Save") {
-                    Task {
-                        await viewModel.rename(
-                            speakerId: speaker.id, to: renameText)
-                        renameTarget = nil
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(renameText
-                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    // Return saves, Escape cancels, clicking away saves —
+                    // identical to the recordings-list rename. Escape clears
+                    // `renameTarget` before the focus change lands, so the
+                    // blur-commit no-ops on the cancel path.
+                    .onSubmit { commitPendingRename(viewModel) }
+                    .onExitCommand { renameTarget = nil }
             } else {
                 // Double-click renames; everything else is in the context
                 // menu. The gesture and menu are scoped to this branch (not
@@ -442,11 +436,9 @@ struct SpeakerEditorView: View {
         }
     }
 
-    /// §6 planning note: navigating away (Record button → Recordings, or a
-    /// sidebar switch) must not silently discard an in-progress rename —
-    /// commit it like Save. Deliberately NOT wired to focus loss: the inline
-    /// Cancel/Save buttons blur the field when clicked, and a blur-commit
-    /// would turn Cancel into Save.
+    /// Commit an in-progress rename like Save — wired to Return, focus loss,
+    /// re-targeting, and navigation-away (§6 planning note: none of those may
+    /// silently discard the edit). A blank name cancels instead of saving.
     private func commitPendingRename(_ viewModel: SpeakerEditorViewModel) {
         guard let id = renameTarget else { return }
         let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
