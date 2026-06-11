@@ -239,8 +239,16 @@ private struct RecordingsListPane: View {
         }
     }
 
+    /// Title with the unnamed-row duration de-emphasized (smaller +
+    /// secondary) so "7:10 AM · 50:11" doesn't read as one title.
     private func titleLine(_ row: RecordingRow) -> Text {
-        Text(row.titleText)
+        guard let duration = row.titleDurationText else {
+            return Text(row.titleText)
+        }
+        return Text(row.titleText)
+            + Text(" · \(duration)")
+                .font(.callout)
+                .foregroundStyle(.secondary)
     }
 
     private func renameField(_ row: RecordingRow) -> some View {

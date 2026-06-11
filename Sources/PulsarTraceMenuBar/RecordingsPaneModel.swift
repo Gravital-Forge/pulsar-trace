@@ -46,18 +46,29 @@ public struct RecordingRow: Identifiable, Equatable {
     public let badge: Badge
     public var id: String { entry.id }
 
-    /// Row title: the custom title when one is set, else time (+ duration
-    /// when known — unrefined rows carry `durationSeconds == 0`).
-    public var titleText: String { entry.customTitle ?? timeAndDuration }
+    /// Row title: the custom title when one is set, else the start time.
+    public var titleText: String { entry.customTitle ?? timeText }
+
+    /// De-emphasized suffix after an unnamed row's title — the duration,
+    /// rendered smaller and secondary so it doesn't read as part of the
+    /// title. `nil` for named rows (the duration lives in their caption)
+    /// and when unknown (unrefined rows carry `durationSeconds == 0`).
+    public var titleDurationText: String? {
+        guard entry.customTitle == nil, entry.durationSeconds > 0 else { return nil }
+        return RecordingEntry.formatDuration(entry.durationSeconds)
+    }
 
     /// Caption beneath a custom title; `nil` when the title already IS the
-    /// time + duration line.
+    /// time (+ dimmed duration) line.
     public var captionText: String? { entry.customTitle != nil ? timeAndDuration : nil }
 
+    private var timeText: String {
+        entry.recordingStart.formatted(date: .omitted, time: .shortened)
+    }
+
     private var timeAndDuration: String {
-        let time = entry.recordingStart.formatted(date: .omitted, time: .shortened)
-        guard entry.durationSeconds > 0 else { return time }
-        return "\(time) · \(RecordingEntry.formatDuration(entry.durationSeconds))"
+        guard entry.durationSeconds > 0 else { return timeText }
+        return "\(timeText) · \(RecordingEntry.formatDuration(entry.durationSeconds))"
     }
 }
 
