@@ -114,23 +114,26 @@ private struct MenuBarLabel: View {
 
     var body: some View {
         switch status {
-        case .recording(_, let startedAt):
-            // Red waveform + elapsed time — unambiguous "live" state (R40).
-            // MenuBarExtra labels are template-rendered, so the red tint may
-            // be flattened to monochrome; the timer is the primary signal.
-            // The TimelineView ticks at 1 Hz for the whole recording (the
-            // menubar never goes offscreen) — measured cost is negligible,
-            // but it's a continuous timer, not throttled.
-            HStack(spacing: 3) {
-                Image(systemName: "waveform.badge.microphone")
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color.red, Color.primary)
-                TimelineView(.periodic(from: startedAt, by: 1)) { context in
-                    Text(elapsedTimeString(from: startedAt, to: context.date))
-                        .font(.system(.body, design: .monospaced))
-                }
-            }
-            .accessibilityLabel("PulsarTrace, recording")
+        case .recording:
+            // Red waveform — unambiguous "live" state (R40). MenuBarExtra
+            // labels are template-rendered, so the red tint may be flattened
+            // to monochrome. Deliberately NO ticking timer here: a
+            // `TimelineView(.periodic)` in a status-item label degenerated
+            // into a continuous `MenuBarExtraHost.requestUpdate` →
+            // `NSStatusBarButton.setImage` → SF-symbol re-resolution loop on
+            // macOS 26.5 — 93% of the main thread, a frozen dropdown, and a
+            // `cpu_resource` violation while the engine recorded happily
+            // (incident 2026-06-11, diagnosed from the .diag stack). The
+            // dropdown's status row shows the start time, and the window
+            // toolbar carries the ticking elapsed timer — ordinary windows
+            // tick safely.
+            // `symbolEffect(.pulse)` below survived the same week unscathed,
+            // so the ban is on TimelineView/animated text in THIS label, not
+            // on symbol effects.
+            Image(systemName: "waveform.badge.microphone")
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(Color.red, Color.primary)
+                .accessibilityLabel("PulsarTrace, recording")
         case .launching:
             Image(systemName: "waveform.badge.plus")
                 .accessibilityLabel("PulsarTrace, starting recording")

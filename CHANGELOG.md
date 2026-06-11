@@ -30,7 +30,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 - The global hotkey is recorded directly in Settings — click the field and type the shortcut (must include ⌘, ⌃, or ⌥; shown as ⌃⌥⇧⌘ glyphs; a Clear button removes it). Changes take effect immediately.
 - Transcripts render as styled rows (timestamp / speaker / text) in both the transcript sheet and the live window, instead of raw Markdown source.
 - Recording rows are titled by start time ("Today at 2:30 PM"); the folder name moved to a tooltip.
-- The menubar icon distinguishes states at a glance: a red waveform with an elapsed timer while recording, a pulsing sync symbol while refining.
+- The menubar icon distinguishes states at a glance: a red waveform while recording, a pulsing sync symbol while refining. (The recording icon briefly carried a ticking elapsed timer; it was removed because a ticking status-item label saturates the main thread on macOS 26.5 — the elapsed time ticks in the window toolbar instead, and the dropdown shows the start time.)
 - Recording and speaker lists use double-click for the primary action and a right-click context menu instead of always-visible button rows; a single quiet chevron remains as the visible affordance.
 - Speaker merge and "Don't recognize this speaker" ask for confirmation first, stating how many recordings will be rewritten; delete stays one-click with an undo toast.
 - The undo toast auto-dismisses after ~8 seconds; error banners are dismissible and use accessible contrast.
@@ -39,6 +39,8 @@ There are no tagged releases yet; everything to date is under Unreleased.
 
 ### Fixed
 
+- Starting a recording no longer freezes the app on macOS 26.5: the menubar icon's ticking elapsed timer degenerated into a continuous status-item re-render loop (93% of the main thread), leaving the UI stuck on "Starting" — unable to even close the dropdown — while the recording pipeline ran fine underneath. The icon is now a static red waveform; the timer ticks in the window toolbar.
+- The `live_md_started` event no longer doubles the recording id (`rec_rec-…`): the engine took the orchestrator's already-finished `rec_<short>` id and re-derived a new id from it. It now uses an explicit `--recording-id` verbatim, matching the capture and refinement events so a recording's events join up.
 - The main window restored at launch no longer comes up greyed out (inactive) until you click away and back: opening it now activates the app, which macOS does not do on its own for menubar-only apps.
 - Microphone and screen-recording permissions are requested and checked before a recording starts, instead of racing the OS prompt mid-start.
 - Refinement no longer fails permanently on recordings containing more than ~98 seconds of uninterrupted speech: long speech regions are now split into chunks (cut at the quietest nearby moment) before being sent to whisper, instead of exceeding the transcription channel's frame limit on every retry.

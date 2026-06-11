@@ -42,8 +42,12 @@ from before this branch works — note its `live.md` will still show the old
       The view follows new lines while you're at the bottom.
 - [ ] Scroll up mid-recording: following stops and a "N new" pill appears
       bottom-right; clicking it jumps back down and resumes following.
-- [ ] The toolbar shows **Stop · M:SS** ticking. The menubar timer and the
-      button tick in unison.
+- [ ] The toolbar shows **Stop · M:SS** ticking. The menubar icon is a
+      static red waveform while recording — deliberately NO ticking timer
+      up there (a ticking status-item label spun the main thread to 93%
+      CPU and froze the whole UI on macOS 26.5; incident 2026-06-11).
+      While recording, `pulsartrace-mac` should sit in single-digit CPU in
+      Activity Monitor — that's the regression check.
 - [ ] Click **Stop**. The row stays in the list (no blink-out), its badge
       flips to a clock (queued) and then to a small progress bar (refining);
       the detail banner shows "Queued for refinement" → "Refining · stage"
