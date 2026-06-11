@@ -117,20 +117,28 @@ from before this branch works — note its `live.md` will still show the old
 
 ## 7. Speakers pane
 
-- [ ] The list is selection-driven and clicks must register **every time**:
-      a plain click selects one speaker, ⌘-click toggles, ⇧-click extends.
-      ⌘-click exactly TWO speakers: **Merge…** enables, pre-seeded with both
-      (pickers still editable). One selection: **Split…** enables. Zero or
-      three: both disabled.
+- [ ] Clicking a speaker row highlights it **every time**. Selection is
+      visual only — there are no Merge/Split toolbar buttons; every action
+      lives on double-click (rename) or the right-click menu.
+- [ ] Right-click a speaker → **Merge With** lists every other live speaker.
+      Picking one raises a confirmation ("Merge ‘B’ into ‘A’?") with the
+      number of recordings to rewrite; confirming folds the picked speaker
+      into the right-clicked one (the picked one moves to Recently Deleted,
+      their lines relabel).
+- [ ] Right-click a speaker who appears in meetings → **Split…**: the sheet
+      is titled with that speaker's name and lists their recordings — a
+      speaker with meetings must NEVER show an empty list (regression:
+      QA round 3). Split enables only with a new name + at least one ticked
+      recording.
 - [ ] Open a rename (double-click), click away without editing: the field
       closes and nothing happens — no progress spinner, no rewrite (an
       unchanged name is a no-op).
 - [ ] Rows under "Recently Deleted"/"Recently Delisted" cannot be selected
-      and never enable Merge/Split.
+      and offer no context-menu actions — Restore only.
 - [ ] Double-click rename still works (selection must not glitch): Return
       saves, Escape cancels, and clicking anywhere outside the field saves —
-      the field never stays open after a click-away. The merge and split
-      sheets can be resized larger.
+      the field never stays open after a click-away. The split sheet can be
+      resized larger.
 - [ ] Trigger an error (e.g. rename a speaker to a name containing `+`):
       the error banner sits above the list without covering rows, animates
       in/out, and its ✕ dismisses. Delete a speaker: the undo toast sits

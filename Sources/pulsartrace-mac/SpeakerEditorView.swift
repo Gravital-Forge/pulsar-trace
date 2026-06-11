@@ -7,18 +7,21 @@ import SwiftUI
 /// toast, recently-deleted section. Pure bindings over `SpeakerEditorViewModel`.
 ///
 /// Rendered as a detail pane of `MainWindowView`'s sidebar window (#6). The
-/// detail root is a plain `List` and Merge/Split live in the window toolbar,
-/// so this pane's window chrome matches the Recordings pane (a `VStack`-rooted
-/// detail made macOS draw the split-view corners/sidebar differently).
+/// detail root is a plain `List`, so this pane's window chrome matches the
+/// Recordings pane (a `VStack`-rooted detail made macOS draw the split-view
+/// corners/sidebar differently).
 ///
-/// The pane is selection-driven (§8): the live-speaker list carries a
-/// `Set<String>` multi-selection. ⌘-clicking exactly two speakers enables the
-/// toolbar **Merge** (both operands seeded from the selection; the sheet's
-/// pickers stay editable — which one to keep is still an explicit choice);
-/// exactly one selection enables **Split**. Rename keeps the double-click
-/// gesture plus the context menu — no Return-to-rename. Mouse selection is
-/// driven by an explicit tap gesture on the row content (plain/⌘/⇧), not by
-/// the table's native click handling — see the comment at the gesture.
+/// Every edit acts on the row it was invoked from — never on the list
+/// selection. Double-click renames; the context menu carries the rest:
+/// **Merge With ▸ \<speaker\>** folds the chosen speaker into the
+/// right-clicked one (confirmed with the rewrite impact count), and
+/// **Split…** opens the split sheet for the right-clicked speaker. The old
+/// toolbar Merge/Split buttons armed by ⌘-click multi-selection are gone —
+/// QA showed the arming was undiscoverable and the operand-picker sheet
+/// redundant once two speakers were already selected. Selection is therefore
+/// single-row and purely visual/keyboard-navigational. Mouse selection is
+/// driven by an explicit tap gesture on the row content, not by the table's
+/// native click handling — see the comment at the gesture.
 ///
 /// The `SpeakerLibrary` actor is opened asynchronously on appear (its init is
 /// `async throws`), so this view owns the optional ViewModel and shows a
@@ -38,15 +41,11 @@ struct SpeakerEditorView: View {
     @State private var loadError: String?
     @State private var renameTarget: String?
     @State private var renameText = ""
-    /// Multi-selection over the live-speaker rows (§8). ⌘-click two to enable
-    /// Merge; a single selection enables Split. Tombstone rows are
-    /// selection-disabled, and the gate counts the selection through
-    /// `liveSpeakers` ids so a stale id can never arm a button or leak into
-    /// an operand.
-    @State private var selection: Set<String> = []
-    /// The last plainly-clicked (or ⌘-added) row — ⇧-click extends the
-    /// selection from here, NSTableView-style.
-    @State private var selectionAnchorID: String?
+    /// Single visual selection over the live-speaker rows. Purely
+    /// navigational — every edit (rename, merge, split, delete, delist) acts
+    /// on the row it was invoked from, never on this. Tombstone rows are
+    /// selection-disabled.
+    @State private var selection: String?
     /// Drives the rename `TextField`'s first-responder state — set on appear so
     /// the cursor visibly lands in the field, paired with a select-all so the
     /// existing name is highlighted and typing replaces it in one keystroke.
@@ -71,20 +70,37 @@ struct SpeakerEditorView: View {
     /// delisting rewrites `final.md` files on disk, so it must be confirmed.
     @State private var pendingDelist: PendingDelist?
 
-    // Merge sheet state.
-    @State private var showMerge = false
-    @State private var mergePrimaryId: String?
-    @State private var mergeOtherId: String?
-    /// True while the merge confirmation dialog is up (Task 7b) — merging
-    /// rewrites `final.md` files on disk, so it must be confirmed.
-    @State private var showMergeConfirm = false
-    /// How many recordings the pending merge would rewrite — the merged-away
-    /// speaker's appearance count, fetched before presenting the dialog.
-    @State private var pendingMergeCount = 0
+    /// The merge awaiting confirmation (Task 7b) — merging rewrites
+    /// `final.md` files on disk, so it must be confirmed. Staged by the
+    /// context menu's "Merge With ▸ \<speaker\>" with the impact count
+    /// already fetched, so the dialog always shows a consistent
+    /// (operands, count) tuple.
+    private struct PendingMerge {
+        /// The right-clicked speaker — survives the merge.
+        let primaryId: String
+        let primaryName: String
+        /// The speaker chosen from the submenu — folded into `primary`.
+        let otherId: String
+        let otherName: String
+        /// How many recordings the merge would rewrite — the merged-away
+        /// speaker's appearance count.
+        let count: Int
+    }
+
+    /// Non-nil while the merge confirmation dialog is up.
+    @State private var pendingMerge: PendingMerge?
 
     // Split sheet state.
-    @State private var showSplit = false
-    @State private var splitOriginalId: String?
+    /// The speaker being split — non-nil presents the sheet. An item-driven
+    /// sheet (not `isPresented` + a separate id), so the sheet body can never
+    /// render against a stale operand: the old `showSplit`/`splitOriginalId`
+    /// pair could present before the id write was visible, leaving the sheet
+    /// loading appearances for `nil` and showing "no recordings to move" for
+    /// a speaker with meetings (QA round 3). The merge sheet had the same
+    /// pathology — its operand pickers rendered with nil selections and the
+    /// confirm button permanently disabled — which is part of why merge is
+    /// now a context-menu + confirmation flow with no sheet at all.
+    @State private var splitTarget: Speaker?
     @State private var splitNewName = ""
     /// Recording ids selected to move to the new speaker (#3 — replaces the
     /// old comma-separated-ids text field).
@@ -103,57 +119,27 @@ struct SpeakerEditorView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) { RecordToolbarButton() }
-            // Always present (disabled until usable) so the window toolbar —
-            // and thus the chrome — does not change as the library loads.
             ToolbarItemGroup {
                 // Busy indicator while a retroactive final.md rewrite is in
                 // flight — paired with `.disabled(isRewriting)` on the list.
                 // Conditionally present, NOT opacity-hidden: macOS draws
                 // button-like chrome around a toolbar item even at opacity 0,
-                // leaving a ghost "empty button" next to Merge/Split. The
-                // toolbar reflows naturally when this appears.
+                // leaving a ghost "empty button" in the toolbar. The toolbar
+                // reflows naturally when this appears.
                 if viewModel?.isRewriting == true {
                     ProgressView()
                         .controlSize(.small)
                         .help("Rewriting transcripts…")
                         .accessibilityLabel("Rewriting transcripts")
                 }
-                // Selection-driven enablement (§8): Merge needs exactly two
-                // ⌘-clicked operands, Split exactly one. Counted against the
-                // LIVE selection — a merged-away or deleted speaker's id can
-                // linger in the raw set and must not keep the buttons armed
-                // with operands the user never chose. Still gated on a loaded
-                // VM and on no rewrite being in flight.
-                Button("Merge…") {
-                    if let viewModel { startMerge(viewModel) }
-                }
-                .disabled(liveSelectionCount != 2
-                    || viewModel?.isRewriting == true)
-                .help("Merge the two selected speakers")
-                Button("Split…") {
-                    if let viewModel { startSplit(viewModel) }
-                }
-                .disabled(liveSelectionCount != 1
-                    || viewModel?.isRewriting == true)
-                .help("Split a recording's lines out of the selected speaker")
             }
         }
         .task { await loadLibrary() }
-        .sheet(isPresented: $showMerge) {
-            if let viewModel { mergeSheet(viewModel) }
+        // Item-driven (see `splitTarget`): the sheet receives the speaker
+        // value directly, so it cannot present against a stale operand.
+        .sheet(item: $splitTarget) { target in
+            if let viewModel { splitSheet(target, viewModel) }
         }
-        .sheet(isPresented: $showSplit) {
-            if let viewModel { splitSheet(viewModel) }
-        }
-    }
-
-    /// How many of the selected ids are LIVE speakers right now. The raw
-    /// `selection` set is never pruned by SwiftUI when rows vanish (merge,
-    /// delete, delist), so gating must count through `liveSpeakers` — nil VM
-    /// counts as zero.
-    private var liveSelectionCount: Int {
-        guard let viewModel else { return 0 }
-        return viewModel.liveSpeakers.count { selection.contains($0.id) }
     }
 
     @ViewBuilder
@@ -255,6 +241,32 @@ struct SpeakerEditorView: View {
                 Text(count == 0
                      ? "Their lines become “Unrecognized”. Undoable for 30 days."
                      : "\(count) recording\(count == 1 ? "" : "s") will be rewritten. Their lines become “Unrecognized”. Undoable for 30 days.")
+            }
+            // Task 7b — merging rewrites every final.md the merged-away
+            // speaker appears in, so it is confirmed with the impact count
+            // fetched when the context-menu item staged `pendingMerge`.
+            // A second dialog on the same List is fine: delist and merge are
+            // both staged from context-menu items, so only one can be up.
+            .confirmationDialog(
+                "Merge “\(pendingMerge?.otherName ?? "")” into "
+                    + "“\(pendingMerge?.primaryName ?? "")”?",
+                isPresented: Binding(
+                    get: { pendingMerge != nil },
+                    set: { if !$0 { pendingMerge = nil } })
+            ) {
+                Button("Merge", role: .destructive) {
+                    if let merge = pendingMerge {
+                        Task { await viewModel.merge(
+                            primaryId: merge.primaryId,
+                            otherId: merge.otherId) }
+                    }
+                    pendingMerge = nil
+                }
+            } message: {
+                let count = pendingMerge?.count ?? 0
+                Text("“\(pendingMerge?.otherName ?? "")” is folded into "
+                    + "“\(pendingMerge?.primaryName ?? "")”. "
+                    + "\(count) recording\(count == 1 ? "" : "s") will be rewritten.")
             }
         }
     }
@@ -395,34 +407,11 @@ struct SpeakerEditorView: View {
                 // race documented on the recordings rows (RecordingsSplitView
                 // .rowView): row content carrying a gesture consumes the
                 // click, so the table's native selection fires only when
-                // AppKit wins the race, leaving Merge/Split unarmed. Plain,
-                // ⌘ (toggle), and ⇧ (range from the last plain click) are
-                // reproduced here; keyboard selection still flows through
-                // the List binding. On the rare native win a ⌘-toggle can
-                // double-fire into a no-op — re-click; every other path is
-                // idempotent.
+                // AppKit wins the race. Single-select makes this a plain
+                // idempotent assignment; keyboard selection still flows
+                // through the List binding.
                 .simultaneousGesture(TapGesture().onEnded {
-                    let mods = NSEvent.modifierFlags
-                    if mods.contains(.command) {
-                        if selection.contains(speaker.id) {
-                            selection.remove(speaker.id)
-                        } else {
-                            selection.insert(speaker.id)
-                            selectionAnchorID = speaker.id
-                        }
-                    } else if mods.contains(.shift),
-                              let anchor = selectionAnchorID,
-                              let a = viewModel.liveSpeakers.firstIndex(
-                                  where: { $0.id == anchor }),
-                              let b = viewModel.liveSpeakers.firstIndex(
-                                  where: { $0.id == speaker.id }) {
-                        selection = Set(
-                            viewModel.liveSpeakers[min(a, b)...max(a, b)]
-                                .map(\.id))
-                    } else {
-                        selection = [speaker.id]
-                        selectionAnchorID = speaker.id
-                    }
+                    selection = speaker.id
                 })
                 .simultaneousGesture(TapGesture(count: 2).onEnded {
                     // Re-targeting must not silently discard a pending edit
@@ -436,6 +425,38 @@ struct SpeakerEditorView: View {
                         commitPendingRename(viewModel)
                         renameText = speaker.name
                         renameTarget = speaker.id
+                    }
+                    // Merge/Split moved here from the toolbar (QA round 3):
+                    // ⌘-click arming was undiscoverable, and the operand
+                    // pickers were redundant once two speakers were already
+                    // selected. The right-clicked speaker survives; the
+                    // submenu picks who gets folded into them. The action
+                    // only stages the confirmation (merging rewrites
+                    // final.md files) — the dialog on the List performs it.
+                    if viewModel.liveSpeakers.count > 1 {
+                        Menu("Merge With") {
+                            ForEach(viewModel.liveSpeakers.filter {
+                                $0.id != speaker.id
+                            }) { other in
+                                Button(other.name) {
+                                    Task {
+                                        let count = await viewModel
+                                            .appearances(ofSpeaker: other.id)
+                                            .count
+                                        pendingMerge = PendingMerge(
+                                            primaryId: speaker.id,
+                                            primaryName: speaker.name,
+                                            otherId: other.id,
+                                            otherName: other.name,
+                                            count: count)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Button("Split…") {
+                        splitNewName = ""
+                        splitTarget = speaker
                     }
                     // "Don't Recognize This Speaker" — hidden for the mic
                     // speaker (name `"You"`), matching the ViewModel's
@@ -483,140 +504,47 @@ struct SpeakerEditorView: View {
         Task { await viewModel.rename(speakerId: id, to: name) }
     }
 
-    // MARK: - Merge
-
-    /// Seed the merge sheet's pickers and present it.
-    private func startMerge(_ viewModel: SpeakerEditorViewModel) {
-        // Seed both operands from the ⌘-click selection (§8). The sheet's
-        // pickers stay editable — which one to keep is still an explicit
-        // choice; selection order is not meaningful in a Set, so the seed
-        // order follows the list order.
-        let selected = viewModel.liveSpeakers.filter { selection.contains($0.id) }
-        mergePrimaryId = selected.first?.id ?? viewModel.liveSpeakers.first?.id
-        mergeOtherId = selected.dropFirst().first?.id
-            ?? viewModel.liveSpeakers.dropFirst().first?.id
-        showMerge = true
-    }
-
-    @ViewBuilder
-    private func mergeSheet(_ viewModel: SpeakerEditorViewModel) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Merge Speakers").font(.headline)
-            Picker("Keep", selection: $mergePrimaryId) {
-                ForEach(viewModel.liveSpeakers) { speaker in
-                    Text(speaker.name).tag(speaker.id as String?)
-                }
-            }
-            Picker("Merge away", selection: $mergeOtherId) {
-                ForEach(viewModel.liveSpeakers) { speaker in
-                    Text(speaker.name).tag(speaker.id as String?)
-                }
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { showMerge = false }
-                // Task 7b — merging rewrites every final.md the merged-away
-                // speaker appears in, so this only fetches the impact count
-                // and raises the confirmation dialog; the dialog's
-                // destructive Merge performs the merge and closes the sheet.
-                Button("Merge") {
-                    if let other = mergeOtherId {
-                        Task {
-                            pendingMergeCount = await viewModel
-                                .appearances(ofSpeaker: other).count
-                            showMergeConfirm = true
-                        }
-                    }
-                }
-                .disabled(mergePrimaryId == nil || mergeOtherId == nil
-                    || mergePrimaryId == mergeOtherId)
-            }
-        }
-        .padding(16)
-        .frame(minWidth: 320, minHeight: 180)
-        .confirmationDialog(
-            "Merge ‘\(speakerName(mergeOtherId, in: viewModel))’ into "
-                + "‘\(speakerName(mergePrimaryId, in: viewModel))’?",
-            isPresented: $showMergeConfirm
-        ) {
-            Button("Merge", role: .destructive) {
-                if let primary = mergePrimaryId,
-                   let other = mergeOtherId, primary != other {
-                    Task {
-                        await viewModel.merge(
-                            primaryId: primary, otherId: other)
-                    }
-                }
-                showMerge = false
-            }
-        } message: {
-            Text("\(pendingMergeCount) recording\(pendingMergeCount == 1 ? "" : "s") will be rewritten.")
-        }
-    }
-
-    /// Resolve a speaker id to its display name from the live list — used by
-    /// the merge confirmation's title.
-    private func speakerName(
-        _ id: String?, in viewModel: SpeakerEditorViewModel
-    ) -> String {
-        viewModel.liveSpeakers.first { $0.id == id }?.name ?? ""
-    }
-
     // MARK: - Split
 
-    /// Seed the split sheet and present it.
-    private func startSplit(_ viewModel: SpeakerEditorViewModel) {
-        // Split is a one-operand action — seed from the single selection
-        // (§8), falling back to the first live speaker.
-        splitOriginalId = viewModel.liveSpeakers
-            .first { selection.contains($0.id) }?.id
-            ?? viewModel.liveSpeakers.first?.id
-        splitNewName = ""
-        splitSelectedRecordingIds = []
-        showSplit = true
-    }
-
-    /// The split sheet (#3) — pick the source speaker, name the new speaker,
-    /// and tick the recordings to move. The recording multi-select replaces
-    /// the old free-text "comma-separated recording ids" field, which required
-    /// the user to know opaque `rec_<short>` ids.
+    /// The split sheet (#3) — name the new speaker and tick the recordings to
+    /// move out of `target` (the right-clicked speaker; there is no source
+    /// picker — the operand was chosen by where the menu was opened). The
+    /// recording multi-select replaces the old free-text "comma-separated
+    /// recording ids" field, which required the user to know opaque
+    /// `rec_<short>` ids.
     @ViewBuilder
-    private func splitSheet(_ viewModel: SpeakerEditorViewModel) -> some View {
+    private func splitSheet(
+        _ target: Speaker, _ viewModel: SpeakerEditorViewModel
+    ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Split Speaker").font(.headline)
-            Picker("From", selection: $splitOriginalId) {
-                ForEach(viewModel.liveSpeakers) { speaker in
-                    Text(speaker.name).tag(speaker.id as String?)
-                }
-            }
+            Text("Split “\(target.name)”").font(.headline)
             TextField("New speaker name", text: $splitNewName)
 
-            Text("Recordings to move")
+            Text("Recordings to move to the new speaker")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             SplitRecordingPicker(
                 viewModel: viewModel,
-                speakerId: splitOriginalId,
+                speakerId: target.id,
                 selection: $splitSelectedRecordingIds)
                 .frame(minHeight: 160)
 
             HStack {
                 Spacer()
-                Button("Cancel") { showSplit = false }
+                Button("Cancel") { splitTarget = nil }
                 Button("Split") {
-                    if let original = splitOriginalId,
-                       !splitSelectedRecordingIds.isEmpty {
+                    if !splitSelectedRecordingIds.isEmpty {
                         Task {
                             await viewModel.split(
-                                originalId: original,
+                                originalId: target.id,
                                 movingRecordingIds: Array(splitSelectedRecordingIds),
                                 newName: splitNewName)
                         }
                     }
-                    showSplit = false
+                    splitTarget = nil
                 }
-                .disabled(splitOriginalId == nil
-                    || splitNewName.trimmingCharacters(in: .whitespaces).isEmpty
+                .disabled(
+                    splitNewName.trimmingCharacters(in: .whitespaces).isEmpty
                     || splitSelectedRecordingIds.isEmpty)
             }
         }
@@ -648,8 +576,9 @@ struct SpeakerEditorView: View {
 /// split sheet.
 private struct SplitRecordingPicker: View {
     let viewModel: SpeakerEditorViewModel
-    /// The source speaker whose recordings can be moved; `nil` until picked.
-    let speakerId: String?
+    /// The source speaker whose recordings can be moved — always the sheet's
+    /// item, so never stale or missing.
+    let speakerId: String
     @Binding var selection: Set<String>
 
     @State private var appearances: [SpeakerAppearance] = []
@@ -687,15 +616,10 @@ private struct SplitRecordingPicker: View {
     }
 
     /// Reload appearances for the current speaker. Clears the selection so a
-    /// recording from a previously-picked speaker cannot leak into the split.
+    /// recording from a previously-split speaker cannot leak into the split.
     private func reload() async {
         loaded = false
         selection = []
-        guard let speakerId else {
-            appearances = []
-            loaded = true
-            return
-        }
         appearances = await viewModel.appearances(ofSpeaker: speakerId)
         loaded = true
     }
