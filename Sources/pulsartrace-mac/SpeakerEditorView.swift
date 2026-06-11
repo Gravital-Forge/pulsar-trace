@@ -39,9 +39,10 @@ struct SpeakerEditorView: View {
     @State private var renameTarget: String?
     @State private var renameText = ""
     /// Multi-selection over the live-speaker rows (§8). ⌘-click two to enable
-    /// Merge; a single selection enables Split. Only live rows are tagged, but
-    /// the seeding code filters the selection through `liveSpeakers` ids so a
-    /// stray deleted/delisted id could never leak into an operand.
+    /// Merge; a single selection enables Split. Tombstone rows are
+    /// selection-disabled, and the gate counts the selection through
+    /// `liveSpeakers` ids so a stale id can never arm a button or leak into
+    /// an operand.
     @State private var selection: Set<String> = []
     /// Drives the rename `TextField`'s first-responder state — set on appear so
     /// the cursor visibly lands in the field, paired with a select-all so the
@@ -163,9 +164,9 @@ struct SpeakerEditorView: View {
                 // duplicate label.
                 Section {
                     ForEach(viewModel.liveSpeakers) { speaker in
-                        // Only live rows are tagged for selection — the
-                        // Recently Deleted/Delisted rows below stay
-                        // unselectable so a stray id can't seed Merge/Split.
+                        // Live rows carry the selection tag; the Recently
+                        // Deleted/Delisted rows below are selection-disabled
+                        // so a tombstone id can't arm Merge/Split.
                         speakerRow(speaker, viewModel: viewModel)
                             .tag(speaker.id)
                     }
@@ -394,11 +395,15 @@ struct SpeakerEditorView: View {
                 // second fires rename (§12 coexistence — matches the
                 // recordings list).
                 .simultaneousGesture(TapGesture(count: 2).onEnded {
+                    // Re-targeting must not silently discard a pending edit
+                    // on another row — commit it like Save (§6 note).
+                    commitPendingRename(viewModel)
                     renameText = speaker.name
                     renameTarget = speaker.id
                 })
                 .contextMenu {
                     Button("Rename") {
+                        commitPendingRename(viewModel)
                         renameText = speaker.name
                         renameTarget = speaker.id
                     }
