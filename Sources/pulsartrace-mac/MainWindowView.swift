@@ -40,7 +40,7 @@ struct MainWindowView: View {
             detail
                 .navigationTitle(navigation.section.title)
         }
-        .frame(minWidth: 640, minHeight: 420)
+        .frame(minWidth: 800, minHeight: 420)
     }
 
     /// The sidebar: the app's name as a brand heading, then the section list.

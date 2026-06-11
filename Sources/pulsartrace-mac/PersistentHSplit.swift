@@ -22,16 +22,33 @@ struct PersistentHSplit<Leading: View, Trailing: View>: NSViewRepresentable {
         split.isVertical = true
         split.dividerStyle = .thin
         split.delegate = context.coordinator
-        split.addArrangedSubview(NSHostingView(rootView: leading))
-        split.addArrangedSubview(NSHostingView(rootView: trailing))
+        let left = NSHostingView(rootView: leading)
+        let right = NSHostingView(rootView: trailing)
+        // NSSplitView is the sole geometry authority: the default
+        // `.standardBounds` sizing options would install min/intrinsic-size
+        // constraints from the SwiftUI content that fight the delegate's
+        // divider clamps (unsatisfiable-constraint spew near the minimums).
+        left.sizingOptions = []
+        right.sizingOptions = []
+        split.addArrangedSubview(left)
+        split.addArrangedSubview(right)
+        // The master list keeps its width when the window resizes — the
+        // detail flexes. Also keeps the autosaved divider position honest.
+        split.setHoldingPriority(.init(251), forSubviewAt: 0)
         // Set AFTER the subviews exist so the restored position applies.
         split.autosaveName = autosaveName
         return split
     }
 
     func updateNSView(_ nsView: NSSplitView, context: Context) {
-        (nsView.arrangedSubviews[0] as? NSHostingView<Leading>)?.rootView = leading
-        (nsView.arrangedSubviews[1] as? NSHostingView<Trailing>)?.rootView = trailing
+        guard let left = nsView.arrangedSubviews[0] as? NSHostingView<Leading>,
+              let right = nsView.arrangedSubviews[1] as? NSHostingView<Trailing>
+        else {
+            assertionFailure("PersistentHSplit subview types drifted from makeNSView")
+            return
+        }
+        left.rootView = leading
+        right.rootView = trailing
     }
 
     func makeCoordinator() -> Coordinator {

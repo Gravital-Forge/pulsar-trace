@@ -43,6 +43,11 @@ struct RecordingsSplitView: View {
             syncDetail()
         }
         .onChange(of: navigation.selectedRecordingID) { syncDetail() }
+        // Load-bearing: this onChange is the SOLE refresher of
+        // `detailModel.shown` (the one snapshot in the system). The eager
+        // `paneModel.rows` read also registers scanner/recording/queue state
+        // as body dependencies. O(rows) per evaluation — fine at a personal
+        // library's scale.
         .onChange(of: paneModel.rows) {
             paneModel.ensureSelection()
             syncDetail()
@@ -127,6 +132,13 @@ private struct RecordingsListPane: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { errorBanners }
         .onDisappear { commitPendingRename() }
+        .onChange(of: renameFocused) {
+            // Clicking away from the rename field commits like Save — losing
+            // focus must not strand an open field or discard the edit (§6).
+            // Escape and Return clear `renameTargetID` before the focus
+            // change lands, so this no-ops on those paths.
+            if !renameFocused { commitPendingRename() }
+        }
     }
 
     @ViewBuilder
@@ -221,6 +233,7 @@ private struct RecordingsListPane: View {
     }
 
     private func beginRename(_ row: RecordingRow) {
+        commitPendingRename()   // re-targeting must not silently discard a pending edit
         renameText = row.entry.customTitle ?? ""
         renameTargetID = row.id
     }

@@ -126,7 +126,7 @@ private struct MenuBarLabel: View {
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(Color.red, Color.primary)
                 TimelineView(.periodic(from: startedAt, by: 1)) { context in
-                    Text(timerString(from: startedAt, to: context.date))
+                    Text(elapsedTimeString(from: startedAt, to: context.date))
                         .font(.system(.body, design: .monospaced))
                 }
             }
@@ -144,11 +144,5 @@ private struct MenuBarLabel: View {
                     ? "PulsarTrace, refining a transcript"
                     : "PulsarTrace, idle")
         }
-    }
-
-    private func timerString(from start: Date, to now: Date) -> String {
-        let s = max(0, Int(now.timeIntervalSince(start)))
-        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
-                         : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
