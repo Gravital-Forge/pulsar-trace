@@ -48,6 +48,16 @@ struct TranscriptDetailModelTests {
 
     // MARK: Source selection + three-way load (§4.2)
 
+    @Test("a stale in-flight load cannot clobber a cleared selection")
+    func staleLoadDoesNotClobber() async throws {
+        let (model, _) = Self.makeModel()
+        let entry = try Self.refinedEntry(in: MenuBarFixtures.tempDir())
+        model.show(Self.row(entry))   // file load now in flight
+        model.show(nil)               // selection cleared before the read lands
+        await model.awaitLoadForTesting()
+        #expect(model.content == .empty)
+    }
+
     @Test("a refined row loads final.md lines")
     func loadsFinal() async throws {
         let (model, _) = Self.makeModel()

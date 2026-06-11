@@ -77,6 +77,10 @@ public final class TranscriptDetailModel {
         }
         pendingRefinedContent = false
         loadTask?.cancel()
+        // Invalidate any in-flight read: the detached file read never
+        // observes the cancel, so without this bump a stale `.lines` result
+        // could land on top of the `.empty`/`.live` content set below.
+        loadGeneration += 1
         guard let row else {
             content = .empty
             return
