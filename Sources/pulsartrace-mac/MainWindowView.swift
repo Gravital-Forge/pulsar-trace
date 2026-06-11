@@ -17,9 +17,9 @@ import SwiftUI
 /// Without it, macOS's `NavigationSplitView` renders different corner rounding
 /// and a different sidebar visual boundary: the three traffic-light circles
 /// appear outside the sidebar outline rather than inside it. The canonical
-/// explanation lives in `SettingsView.swift:66-68`. All four detail panes
-/// (`RecordingsSplitView`, `RefinementsListView`, `SpeakerEditorView`,
-/// `SettingsView`) follow this rule.
+/// explanation lives in `SettingsView.swift:66-68`. All three detail panes
+/// (`RecordingsSplitView`, `SpeakerEditorView`, `SettingsView`) follow this
+/// rule.
 struct MainWindowView: View {
     /// The process-wide events writer — handed to the speaker editor so its
     /// `speaker_*` / `final_md_rewritten` events are emitted in the shipped app.
@@ -43,18 +43,13 @@ struct MainWindowView: View {
         .frame(minWidth: 800, minHeight: 420)
     }
 
-    /// The sidebar: the app's name as a brand heading, then the section list.
+    /// The sidebar: the section list. Deliberately brandless in-content (§3) —
+    /// the brand lives in the menubar icon and the window's title in the
+    /// Windows menu; the per-pane `.navigationTitle` stays.
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("PulsarTrace")
-                .font(.title2.weight(.semibold))
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 6)
-            List(AppSection.allCases, selection: sidebarSelection) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
-            }
+        List(AppSection.allCases, selection: sidebarSelection) { section in
+            Label(section.title, systemImage: section.systemImage)
+                .tag(section)
         }
     }
 
@@ -64,8 +59,6 @@ struct MainWindowView: View {
         switch navigation.section {
         case .recordings:
             RecordingsSplitView()
-        case .refinements:
-            RefinementsListView()
         case .speakers:
             SpeakerEditorView(events: events)
         case .settings:

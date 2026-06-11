@@ -322,9 +322,10 @@ struct RecordingsPaneModelTests {
 
     @Test("friendlyFailure humanizes known error classes and falls back to a generic line for unknown ones")
     func friendlyFailureMapping() {
-        // Pinned against the table lifted from RefinementsListView's
-        // JobRow.friendly(_:). Known classes map to a phrase; unknown classes
-        // fall back to the generic line.
+        // Pinned against the humanization table (originally lifted from the
+        // since-deleted RefinementsListView's JobRow.friendly(_:)). Known
+        // classes map to a phrase; unknown classes fall back to the generic
+        // line.
         #expect(RecordingsPaneModel.friendlyFailure("modelMissing")
                 == "the model could not be loaded")
         #expect(RecordingsPaneModel.friendlyFailure("modelChecksum")
@@ -333,6 +334,10 @@ struct RecordingsPaneModelTests {
                 == "speaker analysis failed")
         #expect(RecordingsPaneModel.friendlyFailure("transcribeFailed")
                 == "transcription failed")
+        // `missingDependency` is the real producer string
+        // (`RefinementJobError.errorClass` for .pythonNotFound / .launchFailed).
+        #expect(RecordingsPaneModel.friendlyFailure("missingDependency")
+                == "a required component is missing")
         #expect(RecordingsPaneModel.friendlyFailure("totally_unknown_class")
                 == "an internal error")
     }

@@ -93,7 +93,7 @@ struct PulsarTraceMacApp: App {
                         recording: environment.recording)
                 }
         }
-        .defaultSize(width: 760, height: 480)
+        .defaultSize(width: 900, height: 560)
 
         // The detached live-transcript window (#5) — stays visible
         // independently of the menubar panel.

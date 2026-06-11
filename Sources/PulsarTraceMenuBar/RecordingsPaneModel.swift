@@ -278,6 +278,7 @@ public final class RecordingsPaneModel {
         case "modelMissing", "modelChecksum": return "the model could not be loaded"
         case "diarizeCrashed":                return "speaker analysis failed"
         case "transcribeFailed":              return "transcription failed"
+        case "missingDependency":             return "a required component is missing"
         default:                              return "an internal error"
         }
     }

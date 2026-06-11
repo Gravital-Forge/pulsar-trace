@@ -204,8 +204,8 @@ public final class AppEnvironment {
         }
         // Single process-wide poller. The menubar dropdown and the
         // recordings-list RefineBadge both read from queueVM; before this
-        // change polling only ran while RefinementsListView was visible,
-        // so those two surfaces were stale.
+        // change polling only ran while the (since-deleted) Refinements pane
+        // was visible, so those two surfaces were stale.
         queueVM.startPolling()
         // Open the handle last — a pre-bootstrap enqueue that resumes here
         // must see the fully wired queue + polling VM.
