@@ -10,12 +10,23 @@ There are no tagged releases yet; everything to date is under Unreleased.
 
 ### Added
 
+- The Recordings pane is now a master–detail split: the transcript of the selected recording — including the one being recorded right now, streaming live — renders directly in the window. Recordings are grouped by day (Today / Yesterday / weekday / date), filterable by title, speaker, or date, renameable (double-click or right-click → Rename), and can be moved to the Trash (⌫ or context menu). The split divider position persists across launches.
+- A Record/Stop button in the window toolbar on every pane (with a ticking elapsed timer while recording) and a "Start Recording" call-to-action in the empty recordings list. Pressing it jumps to the live transcript; recordings started from the global hotkey or menubar deliberately do not move your selection.
+- Find-in-transcript: ⌘F (or the Find button) opens the system find bar in any transcript view, including the detached live window.
+- Crash and start-failure banners in the main window (Recover Transcript / Dismiss), so the window is self-sufficient — these states previously surfaced only in the menubar dropdown.
 - System notifications when a refinement finishes ("Transcript ready — N speakers, M min") or fails — delivered when running as a bundled `.app`.
 - A determinate progress bar with the current stage in the menubar dropdown while a refinement runs; a failed refinement shows a Retry button and a humanized failure message.
 - A default output folder: with none chosen, recordings go to `~/Documents/PulsarTrace`, so the first recording works without any setup.
 
 ### Changed
 
+- The Refinements pane is gone — refinement status lives on the recording rows (queued clock, determinate refining progress, failure badge with Retry) and in the transcript detail's banner (queued/refining with Cancel, "Refinement complete — Show refined transcript", failures with Retry). A freshly refined recording you are not looking at shows a transient green check until selected.
+- A completed refinement never swaps the transcript you are reading: the banner offers "Show refined transcript" instead.
+- **Breaking (file format):** live transcripts mark provisional speakers with a compact `?` suffix (`Them?`, `Them #2?`, `Steve?`) instead of ` (provisional)`. `final.md` is unchanged; `live.md` files recorded before this change keep the old marker until refined.
+- One transcript renderer everywhere: text selection now works across lines in recorded transcripts, static transcripts open at the top while live ones follow the newest line, and Copy puts the rendered text on the pasteboard instead of raw Markdown.
+- The Speakers list is selection-driven: ⌘-click two speakers to enable Merge (pre-seeded with both), one to enable Split; error and undo banners no longer cover list rows; the merge/split sheets are resizable.
+- The sidebar drops the in-window "PulsarTrace" heading and the window opens larger (900×560, minimum width 800) to fit the split comfortably.
+- The menubar dropdown's hover highlight follows the system accent color instead of hardcoded blue-on-white.
 - The global hotkey is recorded directly in Settings — click the field and type the shortcut (must include ⌘, ⌃, or ⌥; shown as ⌃⌥⇧⌘ glyphs; a Clear button removes it). Changes take effect immediately.
 - Transcripts render as styled rows (timestamp / speaker / text) in both the transcript sheet and the live window, instead of raw Markdown source.
 - Recording rows are titled by start time ("Today at 2:30 PM"); the folder name moved to a tooltip.
