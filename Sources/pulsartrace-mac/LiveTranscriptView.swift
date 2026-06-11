@@ -22,33 +22,35 @@ struct LiveTranscriptView: View {
     @State private var autoScroll = AutoScrollController()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Live Transcript").font(.headline)
-                if watcher.isActive {
+        TranscriptView(
+            lines: watcher.lines,
+            placeholder: watcher.isActive
+                ? "Waiting for transcript…"
+                : "No recording in progress.",
+            autoScroll: autoScroll)
+        .frame(minWidth: 360, minHeight: 320)
+        .navigationTitle("Live Transcript")
+        .toolbar {
+            // Conditionally PRESENT, not a conditionally-empty item: an empty
+            // ToolbarItem draws a ghost button (regression, commit 55e2f24).
+            if watcher.isActive {
+                ToolbarItem {
                     Label("Recording", systemImage: "circle.fill")
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.red)
                         .font(.caption)
+                        .accessibilityLabel("Recording in progress")
                 }
-                Spacer()
+            }
+            ToolbarItem {
                 Button {
                     copyTranscriptToPasteboard(watcher.lines)
                 } label: {
                     Label("Copy", systemImage: "doc.on.doc")
                 }
                 .disabled(watcher.lines.isEmpty)
+                .help("Copy the transcript text")
             }
-            .padding(12)
-            Divider()
-
-            TranscriptView(
-                lines: watcher.lines,
-                placeholder: watcher.isActive
-                    ? "Waiting for transcript…"
-                    : "No recording in progress.",
-                autoScroll: autoScroll)
         }
-        .frame(minWidth: 360, minHeight: 320)
     }
 }
