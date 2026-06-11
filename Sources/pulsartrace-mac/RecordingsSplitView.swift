@@ -17,11 +17,12 @@ struct RecordingsSplitView: View {
 
     var body: some View {
         PersistentHSplit(
-            // "2" suffix: the autosave key was bumped when the default
-            // proportions changed to 1/3–2/3, so the new default applies
-            // even where the old key already had a saved position.
-            autosaveName: "RecordingsSplit2",
-            defaultFraction: 1.0 / 3.0,
+            // "3" suffix: the autosave key is bumped whenever the default
+            // proportions change (1/2 since QA round 3; 1/3 before), so the
+            // new default applies even where an old key already had a saved
+            // position.
+            autosaveName: "RecordingsSplit3",
+            defaultFraction: 0.5,
             leadingMinWidth: 240,
             trailingMinWidth: 320,
             leading: RecordingsListPane(

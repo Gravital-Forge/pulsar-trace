@@ -19,10 +19,10 @@ from before this branch works — note its `live.md` will still show the old
 
 ## 1. Window frame & sidebar
 
-- [ ] Open the main window from the menubar. It opens ~1100×640 with the
-      recordings list taking ~1/3 of the width (transcript detail ~2/3); the
-      sidebar shows only **Recordings / Speakers / Settings** — no
-      "Refinements" item and no "PulsarTrace" heading above the list.
+- [ ] Open the main window from the menubar. It opens ~960×640 (3:2) with
+      the recordings list and the transcript detail splitting the width
+      50–50; the sidebar shows only **Recordings / Speakers / Settings** —
+      no "Refinements" item and no "PulsarTrace" heading above the list.
 - [ ] Resize the window down: it stops at 800 pt wide. Neither the recordings
       list (≥240) nor the transcript detail (≥320) collapses; no Auto Layout
       complaints in Console.
@@ -167,7 +167,7 @@ from before this branch works — note its `live.md` will still show the old
   after midnight, not at the stroke of midnight.
 - Double-clicking row B's title while row A's rename field is open commits A
   first (Save semantics), then starts renaming B.
-- The 1/3–2/3 split and the 1100×640 size are first-run defaults: once you
+- The 50–50 split and the 960×640 size are first-run defaults: once you
   drag the divider or resize the window, your positions win (the divider
   default landed by bumping the autosave key, so it applies once even on
   machines that saved a position under the old key).
