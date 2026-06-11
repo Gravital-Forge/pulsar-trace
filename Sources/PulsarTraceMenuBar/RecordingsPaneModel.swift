@@ -99,6 +99,12 @@ public final class RecordingsPaneModel {
     var entriesOverride: [RecordingEntry]?
     var statusOverride: RecordingStatus?
 
+    /// Test seams for queue state. `runningOverride == .some(nil)` forces
+    /// "no running job"; a nil outer optional defers to the real queue VM.
+    var runningOverride: RefinementJob??
+    var queuedOverride: [RefinementJob]?
+    var recentOverride: [RefinementJob]?
+
     public init(
         scanner: RecordingsScanner,
         queueVM: RefinementJobQueueViewModel,
@@ -119,6 +125,10 @@ public final class RecordingsPaneModel {
 
     private var entries: [RecordingEntry] { entriesOverride ?? scanner.recordings }
     private var status: RecordingStatus { statusOverride ?? recording.status }
+
+    private var runningJob: RefinementJob? { runningOverride ?? queueVM.running }
+    private var queuedJobs: [RefinementJob] { queuedOverride ?? queueVM.queued }
+    private var recentJobs: [RefinementJob] { recentOverride ?? queueVM.recent }
 
     // MARK: - Rows
 
@@ -158,11 +168,15 @@ public final class RecordingsPaneModel {
     /// filtering while recording (§4.1).
     public var groups: [RecordingDayGroup] {
         let query = filterText.trimmingCharacters(in: .whitespaces)
-        let visible = rows.filter { row in
-            row.isLive || query.isEmpty || Self.matches(row.entry, query: query)
-        }
         let reference = now()
+        let visible = rows.filter { row in
+            row.isLive || query.isEmpty
+                || Self.matches(row.entry, query: query, now: reference)
+        }
         var grouped: [(DayKey, [RecordingRow])] = []
+        // Rows are newest-first (the scanner sorts; the live row prepends), so
+        // equal day keys are always adjacent — a single forward pass that
+        // merges into the last group suffices, no full grouping dictionary.
         for row in visible {
             let key = Self.dayKey(for: row.entry.recordingStart, now: reference)
             if grouped.last?.0 == key {
@@ -188,13 +202,16 @@ public final class RecordingsPaneModel {
         return .older(day)
     }
 
-    /// Case-insensitive match over the custom title, the date-default title,
-    /// the folder basename (the raw date string), and speaker labels —
-    /// custom titles matching is what makes the filter genuinely useful.
-    static func matches(_ entry: RecordingEntry, query: String) -> Bool {
+    /// Case-insensitive match over the custom title, the relative date title
+    /// ("Yesterday at …" — resolved against the injected `now` so date-word
+    /// queries are deterministic), the folder basename (the raw date string),
+    /// and speaker labels. Custom titles matching is what makes the filter
+    /// genuinely useful.
+    static func matches(_ entry: RecordingEntry, query: String, now: Date) -> Bool {
         let q = query.lowercased()
-        if entry.displayTitle.lowercased().contains(q) { return true }
-        if entry.defaultTitle.lowercased().contains(q) { return true }
+        if let custom = entry.customTitle, custom.lowercased().contains(q) { return true }
+        if RecordingEntry.displayTitle(for: entry.recordingStart, relativeTo: now)
+            .lowercased().contains(q) { return true }
         if entry.displayName.lowercased().contains(q) { return true }
         if entry.recordingStart
             .formatted(date: .abbreviated, time: .shortened)
@@ -224,15 +241,15 @@ public final class RecordingsPaneModel {
     // MARK: - Badges (Task 4 adds tests; precedence: running > queued > recent > intrinsic)
 
     func badge(for entry: RecordingEntry) -> RecordingRow.Badge {
-        if let running = queueVM.running, running.recordingId == entry.id {
+        if let running = runningJob, running.recordingId == entry.id {
             return .refining(
                 fraction: running.state.progressFraction,
                 stageName: Self.stageName(of: running.state))
         }
-        if queueVM.queued.contains(where: { $0.recordingId == entry.id }) {
+        if queuedJobs.contains(where: { $0.recordingId == entry.id }) {
             return .queued
         }
-        if let recent = queueVM.recent.first(where: { $0.recordingId == entry.id }) {
+        if let recent = recentJobs.first(where: { $0.recordingId == entry.id }) {
             switch recent.state {
             case .completed:
                 if !acknowledgedJobIDs.contains(recent.id) { return .justRefined }
@@ -252,10 +269,17 @@ public final class RecordingsPaneModel {
         return ""
     }
 
-    /// Humanized refine-failure copy. The real mapping is lifted verbatim
-    /// from RefinementsListView's `JobRow.friendly(_:)` in the next task.
+    /// Humanize a stable `errorClass` identifier (`RefinementJobError
+    /// .errorClass`) into list-row copy. Known classes map to a short phrase;
+    /// unknown classes fall back to a generic line. The raw class stays
+    /// reachable via the badge tooltip for bug reports.
     public static func friendlyFailure(_ errorClass: String) -> String {
-        errorClass
+        switch errorClass {
+        case "modelMissing", "modelChecksum": return "the model could not be loaded"
+        case "diarizeCrashed":                return "speaker analysis failed"
+        case "transcribeFailed":              return "transcription failed"
+        default:                              return "an internal error"
+        }
     }
 
     /// Called (via AppEnvironment) when refinement jobs reach a terminal
@@ -269,10 +293,14 @@ public final class RecordingsPaneModel {
                 acknowledgedJobIDs.insert(job.id)
             }
         }
+        // Prune so the set can't grow unboundedly: a completed job is in
+        // `recent` (it arrived there this tick), so once it ages out its id is
+        // dead weight — intersecting with the live recent ids drops it.
+        acknowledgedJobIDs.formIntersection(Set(recentJobs.map(\.id)))
     }
 
     private func acknowledgeCompleted(recordingId: String) {
-        for job in queueVM.recent where job.recordingId == recordingId {
+        for job in recentJobs where job.recordingId == recordingId {
             if case .completed = job.state { acknowledgedJobIDs.insert(job.id) }
         }
     }
@@ -282,6 +310,9 @@ public final class RecordingsPaneModel {
     /// Rename via the `title.txt` sidecar (§4.1); a blank title clears back
     /// to the date default. The folder basename is never renamed.
     public func rename(recordingId: String, to rawTitle: String) async {
+        // No `!row.isLive` guard (unlike moveToTrash): renaming the
+        // in-progress row is allowed — harmless, the engine ignores the
+        // sidecar and never reads `title.txt` (spec §4.1).
         guard let row = rows.first(where: { $0.id == recordingId }) else { return }
         do {
             try RecordingTitleStore.write(rawTitle, folderURL: row.entry.folderURL)

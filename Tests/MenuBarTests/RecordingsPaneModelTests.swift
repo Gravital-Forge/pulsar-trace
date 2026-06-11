@@ -98,6 +98,10 @@ struct RecordingsPaneModelTests {
         #expect(model.groups.flatMap(\.rows).map(\.id) == ["rec_a"])
         model.filterText = "dana"
         #expect(model.groups.flatMap(\.rows).map(\.id) == ["rec_a"])
+        // Date-word match is deterministic under the injected clock: rec_b
+        // (daysAgo: 1) has the relative title "Yesterday at …".
+        model.filterText = "yesterday"
+        #expect(model.groups.flatMap(\.rows).map(\.id) == ["rec_b"])
         model.filterText = "zzz-no-match"
         #expect(model.groups.isEmpty)
     }
@@ -164,15 +168,172 @@ struct RecordingsPaneModelTests {
     }
 
     @Test("recording id derivation is shared between RecordPlan and the scanner (spec §12)")
-    func idDerivationUnified() {
+    func idDerivationUnified() throws {
         // Both sides call RecordingFolder.recordingId(forName:) on the folder
         // basename — pin the equivalence so neither side can drift.
         let name = RecordingViewModel.recordingFolderName(at: Self.now)
         #expect(RecordingFolder.recordingId(forName: name).hasPrefix("rec_"))
         // decodeUnrefined uses the identical call — see RecordingEntry.swift.
         let root = MenuBarFixtures.tempDir()
-        let folder = try! MenuBarFixtures.makeUnrefinedRecordingFolder(root: root, name: name)
+        let folder = try MenuBarFixtures.makeUnrefinedRecordingFolder(root: root, name: name)
         let entry = RecordingEntry.decodeUnrefined(folderURL: folder)
         #expect(entry?.id == RecordingFolder.recordingId(forName: name))
+    }
+
+    // MARK: Refinement job helper
+
+    static func job(
+        _ id: String, recordingId: String, state: RefinementJobState
+    ) -> RefinementJob {
+        RefinementJob(
+            id: id, recordingId: recordingId,
+            folderURL: MenuBarFixtures.tempDir(),
+            modelName: "base", modelSHA256: "deadbeef",
+            trigger: .manual, enqueuedAt: Self.now, state: state)
+    }
+
+    // MARK: Badges (§4.1)
+
+    @Test("badge precedence: running beats queued beats recent beats intrinsic")
+    func badgePrecedence() {
+        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0))
+        let model = Self.makeModel(entries: [e])
+        model.runningOverride = .some(Self.job(
+            "job_1", recordingId: "rec_a",
+            state: .running(stage: .diarizing, stepsCompleted: 1, stepsTotal: 4,
+                            regionIndex: nil, regionsTotal: nil)))
+        guard case .refining = model.rows[0].badge else {
+            Issue.record("expected .refining, got \(model.rows[0].badge)"); return
+        }
+
+        model.runningOverride = .some(nil)
+        model.queuedOverride = [Self.job("job_2", recordingId: "rec_a", state: .queued)]
+        #expect(model.rows[0].badge == .queued)
+
+        model.queuedOverride = []
+        model.recentOverride = [Self.job(
+            "job_3", recordingId: "rec_a",
+            state: .failed(errorClass: "model_load_failed", retryAvailable: true))]
+        guard case .failed = model.rows[0].badge else {
+            Issue.record("expected .failed, got \(model.rows[0].badge)"); return
+        }
+    }
+
+    @Test("steady refined row shows no badge; unrefined shows notYetRefined; cancelled falls through")
+    func intrinsicBadges() {
+        let refined = Self.entry(id: "rec_r", start: Self.date(daysAgo: 0))
+        let raw = Self.entry(id: "rec_u", start: Self.date(daysAgo: 0), refined: false)
+        let model = Self.makeModel(entries: [refined, raw])
+        #expect(model.rows[0].badge == .none)
+        #expect(model.rows[1].badge == .notYetRefined)
+
+        model.recentOverride = [Self.job("job_c", recordingId: "rec_r", state: .cancelled)]
+        #expect(model.rows[0].badge == .none)  // cancelled → intrinsic
+    }
+
+    // MARK: Transient just-refined badge (§4.1)
+
+    @Test("completed job shows justRefined until the row is selected")
+    func justRefinedClearsOnSelection() {
+        let nav = AppNavigation()
+        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0))
+        let model = Self.makeModel(entries: [e], navigation: nav)
+        model.recentOverride = [Self.job(
+            "job_1", recordingId: "rec_a",
+            state: .completed(durationSeconds: 60, speakerCount: 2))]
+        #expect(model.rows[0].badge == .justRefined)
+
+        model.select("rec_a")
+        #expect(model.rows[0].badge == .none)
+    }
+
+    @Test("a row already selected when its refine completes never shows the badge")
+    func justRefinedSuppressedWhenAlreadySelected() {
+        let nav = AppNavigation()
+        nav.selectedRecordingID = "rec_a"
+        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0))
+        let model = Self.makeModel(entries: [e], navigation: nav)
+        let done = Self.job("job_1", recordingId: "rec_a",
+                            state: .completed(durationSeconds: 60, speakerCount: 2))
+        model.recentOverride = [done]
+        model.noteJobsTerminated([done])
+        #expect(model.rows[0].badge == .none)
+    }
+
+    @Test("justRefined clears when the job ages out of recent")
+    func justRefinedClearsOnEviction() {
+        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0))
+        let model = Self.makeModel(entries: [e])
+        model.recentOverride = [Self.job(
+            "job_1", recordingId: "rec_a",
+            state: .completed(durationSeconds: 60, speakerCount: 2))]
+        #expect(model.rows[0].badge == .justRefined)
+        model.recentOverride = []
+        #expect(model.rows[0].badge == .none)
+    }
+
+    // MARK: Rename round-trip (§4.1)
+
+    @Test("rename writes the sidecar; clearing restores the default")
+    func renameRoundTrip() async throws {
+        let folder = MenuBarFixtures.tempDir()
+        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0), folder: folder)
+        let model = Self.makeModel(entries: [e])
+        await model.rename(recordingId: "rec_a", to: "  Board\nreview ")
+        #expect(RecordingTitleStore.read(folderURL: folder) == "Board review")
+
+        await model.rename(recordingId: "rec_a", to: "   ")
+        #expect(RecordingTitleStore.read(folderURL: folder) == nil)
+    }
+
+    // MARK: Move to Trash (§4.1)
+
+    @Test("moveToTrash recycles the folder and the selection falls back to newest")
+    func moveToTrash() async {
+        let nav = AppNavigation()
+        var trashed: [URL] = []
+        let a = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0))
+        let b = Self.entry(id: "rec_b", start: Self.date(daysAgo: 1))
+        let model = RecordingsPaneModel(
+            scanner: RecordingsScanner(settings: MenuBarSettings(
+                defaults: UserDefaults(suiteName: "pt-test-\(UUID().uuidString)")!)),
+            queueVM: RefinementJobQueueViewModel(
+                queue: RefinementJobQueue(
+                    store: RefinementJobStore(directory: MenuBarFixtures.tempDir()),
+                    runJob: { _ in })),
+            recording: RecordingViewModel(settings: MenuBarSettings(
+                defaults: UserDefaults(suiteName: "pt-test-\(UUID().uuidString)")!)),
+            navigation: nav,
+            now: { Self.now },
+            trashItem: { trashed.append($0) })
+        model.entriesOverride = [a, b]
+        nav.selectedRecordingID = "rec_a"
+
+        await model.moveToTrash(recordingId: "rec_a")
+        #expect(trashed == [a.folderURL])
+        // entriesOverride still contains rec_a (no real scan ran) — drop it
+        // the way a refresh would, then the fallback picks the newest left.
+        model.entriesOverride = [b]
+        model.ensureSelection()
+        #expect(nav.selectedRecordingID == "rec_b")
+    }
+
+    // MARK: Failure humanization
+
+    @Test("friendlyFailure humanizes known error classes and passes unknown ones through")
+    func friendlyFailureMapping() {
+        // Pinned against the table lifted from RefinementsListView's
+        // JobRow.friendly(_:). Known classes map to a phrase; unknown classes
+        // fall back to the generic line.
+        #expect(RecordingsPaneModel.friendlyFailure("modelMissing")
+                == "the model could not be loaded")
+        #expect(RecordingsPaneModel.friendlyFailure("modelChecksum")
+                == "the model could not be loaded")
+        #expect(RecordingsPaneModel.friendlyFailure("diarizeCrashed")
+                == "speaker analysis failed")
+        #expect(RecordingsPaneModel.friendlyFailure("transcribeFailed")
+                == "transcription failed")
+        #expect(RecordingsPaneModel.friendlyFailure("totally_unknown_class")
+                == "an internal error")
     }
 }
