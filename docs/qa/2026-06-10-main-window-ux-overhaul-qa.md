@@ -42,12 +42,13 @@ from before this branch works — note its `live.md` will still show the old
       The view follows new lines while you're at the bottom.
 - [ ] Scroll up mid-recording: following stops and a "N new" pill appears
       bottom-right; clicking it jumps back down and resumes following.
-- [ ] The toolbar shows **Stop · M:SS** ticking. The menubar icon is a
-      static red waveform while recording — deliberately NO ticking timer
-      up there (a ticking status-item label spun the main thread to 93%
-      CPU and froze the whole UI on macOS 26.5; incident 2026-06-11).
-      While recording, `pulsartrace-mac` should sit in single-digit CPU in
-      Activity Monitor — that's the regression check.
+- [ ] The toolbar shows **Stop · M:SS** ticking. The menubar icon is the
+      normal waveform with a small red dot at its bottom-right corner while
+      recording — deliberately NO ticking timer up there (a ticking
+      status-item label spun the main thread to 93% CPU and froze the whole
+      UI on macOS 26.5; incident 2026-06-11). While recording,
+      `pulsartrace-mac` should sit in single-digit CPU in Activity Monitor —
+      that's the regression check.
 - [ ] Click **Stop**. The row stays in the list (no blink-out), its badge
       flips to a clock (queued) and then to a small progress bar (refining);
       the detail banner shows "Queued for refinement" → "Refining · stage"
@@ -163,7 +164,9 @@ from before this branch works — note its `live.md` will still show the old
       Choose… aligned like the other rows.
 - [ ] Detached Live Transcript window: title/Recording badge/Find/Copy live
       in the toolbar (no in-content header), and the Recording badge appears
-      only while recording — no ghost toolbar button.
+      only while recording — no ghost toolbar button. The badge's red dot
+      has breathing room, not flush against the badge's leading edge
+      (QA round 5).
 
 ## Known/accepted behaviors (not bugs)
 

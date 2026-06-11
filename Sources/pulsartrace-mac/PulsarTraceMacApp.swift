@@ -107,7 +107,7 @@ struct PulsarTraceMacApp: App {
 
 /// The menubar icon, a pure function of recording status + refine activity —
 /// the three states R40 requires to be distinct at a glance: idle, recording
-/// (red waveform + live elapsed timer), and refining (pulsing sync symbol).
+/// (the waveform with a red dot badge), and refining (pulsing sync symbol).
 private struct MenuBarLabel: View {
     let status: RecordingStatus
     let isRefining: Bool
@@ -115,9 +115,13 @@ private struct MenuBarLabel: View {
     var body: some View {
         switch status {
         case .recording:
-            // Red waveform — unambiguous "live" state (R40). MenuBarExtra
-            // labels are template-rendered, so the red tint may be flattened
-            // to monochrome. Deliberately NO ticking timer here: a
+            // The app's normal waveform glyph with a red dot badged at its
+            // bottom-right corner — unambiguous "live" state (R40) that keeps
+            // the icon recognizable (QA round 5: the tiny microphone in
+            // `waveform.badge.microphone` was too small to read). MenuBarExtra
+            // labels are template-rendered, so the red may be flattened to
+            // monochrome — the dot still reads as a badge either way.
+            // Deliberately NO ticking timer here: a
             // `TimelineView(.periodic)` in a status-item label degenerated
             // into a continuous `MenuBarExtraHost.requestUpdate` →
             // `NSStatusBarButton.setImage` → SF-symbol re-resolution loop on
@@ -130,9 +134,15 @@ private struct MenuBarLabel: View {
             // `symbolEffect(.pulse)` below survived the same week unscathed,
             // so the ban is on TimelineView/animated text in THIS label, not
             // on symbol effects.
-            Image(systemName: "waveform.badge.microphone")
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(Color.red, Color.primary)
+            Image(systemName: "waveform")
+                .overlay(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 6, height: 6)
+                        // Nudge into the corner so the dot reads as a badge
+                        // on the icon, not a part of the waveform.
+                        .offset(x: 2, y: 2)
+                }
                 .accessibilityLabel("PulsarTrace, recording")
         case .launching:
             Image(systemName: "waveform.badge.plus")

@@ -43,6 +43,10 @@ struct LiveTranscriptView: View {
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.red)
                         .font(.caption)
+                        // Breathing room inside the toolbar-item chrome —
+                        // without it the dot touches the item's leading edge
+                        // (QA round 5).
+                        .padding(.horizontal, 6)
                         .accessibilityLabel("Recording in progress")
                 }
             }
