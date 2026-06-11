@@ -23,10 +23,16 @@ from before this branch works — note its `live.md` will still show the old
       recordings list taking ~40% of the width (transcript detail ~60%);
       the sidebar shows only **Recordings / Speakers / Settings** — no
       "Refinements" item and no "PulsarTrace" heading above the list.
+- [ ] With another app frontmost (e.g. a browser) and the PulsarTrace
+      window open but behind it: menubar → **Recordings**. The window comes
+      to the FRONT and is active (full-color controls) — it must not stay
+      buried behind the other app (QA round 6 regression).
 - [ ] Quit with the window open, relaunch the app: the restored window is
       active immediately — toolbar buttons and list selection draw in full
-      color, no greyed "background window" look until you click away and
-      back (QA round 4 regression).
+      color (QA round 4 regression). Acceptable fallback: if macOS declines
+      the launch activation, the window may come up inactive — but a single
+      click anywhere on it MUST activate it (in round 6 it stayed greyed
+      even when clicked).
 - [ ] Resize the window down: it stops at 800 pt wide. Neither the recordings
       list (≥240) nor the transcript detail (≥320) collapses; no Auto Layout
       complaints in Console.
