@@ -157,7 +157,7 @@ struct SpeakerEditorView: View {
                     ForEach(viewModel.liveSpeakers) { speaker in
                         // Live rows carry the selection tag; the Recently
                         // Deleted/Delisted rows below are selection-disabled
-                        // so a tombstone id can't arm Merge/Split.
+                        // so a tombstone can't take the visual selection.
                         speakerRow(speaker, viewModel: viewModel)
                             .tag(speaker.id)
                     }
@@ -175,8 +175,8 @@ struct SpeakerEditorView: View {
                             }
                             // ForEach over Identifiable rows gets IMPLICIT
                             // selection tags (Speaker.ID == String matches the
-                            // selection set) — opt the tombstones out
-                            // explicitly so they can't arm Merge/Split.
+                            // selection type) — opt the tombstones out
+                            // explicitly so they can't take the selection.
                             .selectionDisabled(true)
                         }
                     }
@@ -456,6 +456,7 @@ struct SpeakerEditorView: View {
                     }
                     Button("Split…") {
                         splitNewName = ""
+                        splitSelectedRecordingIds = []
                         splitTarget = speaker
                     }
                     // "Don't Recognize This Speaker" — hidden for the mic
@@ -570,9 +571,11 @@ struct SpeakerEditorView: View {
 
 /// The recording multi-select inside the split sheet (#3).
 ///
-/// Loads the source speaker's appearances whenever the selected speaker
-/// changes and renders them as toggleable rows. Lives in its own view so the
-/// `.task(id:)`-driven reload is scoped tightly and does not re-run the whole
+/// Loads the source speaker's appearances on appear and renders them as
+/// toggleable rows. `speakerId` is fixed for the sheet's lifetime (the sheet
+/// is item-driven), so `.task(id:)` effectively runs once per presentation —
+/// the id form keeps the reload correct if the operand ever becomes mutable
+/// again. Lives in its own view so the reload does not re-run the whole
 /// split sheet.
 private struct SplitRecordingPicker: View {
     let viewModel: SpeakerEditorViewModel
