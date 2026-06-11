@@ -12,13 +12,16 @@ import SwiftUI
 /// re-apply `.environment(...)` on the pane views here.
 struct PersistentHSplit<Leading: View, Trailing: View>: NSViewRepresentable {
     let autosaveName: String
+    /// Leading pane's share of the width on first run — once AppKit has
+    /// autosaved a divider position, the restored value wins.
+    let defaultFraction: CGFloat
     let leadingMinWidth: CGFloat
     let trailingMinWidth: CGFloat
     let leading: Leading
     let trailing: Trailing
 
     func makeNSView(context: Context) -> NSSplitView {
-        let split = NSSplitView()
+        let split = DefaultFractionSplitView()
         split.isVertical = true
         split.dividerStyle = .thin
         split.delegate = context.coordinator
@@ -35,6 +38,15 @@ struct PersistentHSplit<Leading: View, Trailing: View>: NSViewRepresentable {
         // The master list keeps its width when the window resizes — the
         // detail flexes. Also keeps the autosaved divider position honest.
         split.setHoldingPriority(.init(251), forSubviewAt: 0)
+        // The divider position can only be applied once the view has real
+        // bounds, so the default is staged and lands on the first layout —
+        // and only when AppKit has no autosaved position for this name.
+        let savedKey = "NSSplitView Subview Frames \(autosaveName)"
+        if UserDefaults.standard.object(forKey: savedKey) == nil {
+            split.pendingDefaultFraction = defaultFraction
+            split.leadingMin = leadingMinWidth
+            split.trailingMin = trailingMinWidth
+        }
         // Set AFTER the subviews exist so the restored position applies.
         split.autosaveName = autosaveName
         return split
@@ -53,6 +65,27 @@ struct PersistentHSplit<Leading: View, Trailing: View>: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(leadingMin: leadingMinWidth, trailingMin: trailingMinWidth)
+    }
+
+    /// Applies the staged first-run divider fraction on the first layout
+    /// pass with real bounds (programmatic `setPosition` bypasses the
+    /// delegate clamps, hence the manual min-width clamp).
+    final class DefaultFractionSplitView: NSSplitView {
+        var pendingDefaultFraction: CGFloat?
+        var leadingMin: CGFloat = 0
+        var trailingMin: CGFloat = 0
+
+        override func layout() {
+            super.layout()
+            guard let fraction = pendingDefaultFraction, bounds.width > 0 else {
+                return
+            }
+            pendingDefaultFraction = nil
+            let position = min(
+                max(bounds.width * fraction, leadingMin),
+                bounds.width - dividerThickness - trailingMin)
+            setPosition(position, ofDividerAt: 0)
+        }
     }
 
     final class Coordinator: NSObject, NSSplitViewDelegate {
