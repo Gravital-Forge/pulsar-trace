@@ -117,9 +117,14 @@ from before this branch works — note its `live.md` will still show the old
 
 ## 7. Speakers pane
 
-- [ ] The list is selection-driven. ⌘-click exactly TWO speakers: **Merge…**
-      enables, pre-seeded with both (pickers still editable). One selection:
-      **Split…** enables. Zero or three: both disabled.
+- [ ] The list is selection-driven and clicks must register **every time**:
+      a plain click selects one speaker, ⌘-click toggles, ⇧-click extends.
+      ⌘-click exactly TWO speakers: **Merge…** enables, pre-seeded with both
+      (pickers still editable). One selection: **Split…** enables. Zero or
+      three: both disabled.
+- [ ] Open a rename (double-click), click away without editing: the field
+      closes and nothing happens — no progress spinner, no rewrite (an
+      unchanged name is a no-op).
 - [ ] Rows under "Recently Deleted"/"Recently Delisted" cannot be selected
       and never enable Merge/Split.
 - [ ] Double-click rename still works (selection must not glitch): Return

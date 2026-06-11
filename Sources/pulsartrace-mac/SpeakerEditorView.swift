@@ -16,9 +16,9 @@ import SwiftUI
 /// toolbar **Merge** (both operands seeded from the selection; the sheet's
 /// pickers stay editable — which one to keep is still an explicit choice);
 /// exactly one selection enables **Split**. Rename keeps the double-click
-/// gesture plus the context menu — no Return-to-rename — and the gesture
-/// coexists with `List` selection via a `simultaneousGesture` so the first
-/// click still selects.
+/// gesture plus the context menu — no Return-to-rename. Mouse selection is
+/// driven by an explicit tap gesture on the row content (plain/⌘/⇧), not by
+/// the table's native click handling — see the comment at the gesture.
 ///
 /// The `SpeakerLibrary` actor is opened asynchronously on appear (its init is
 /// `async throws`), so this view owns the optional ViewModel and shows a
@@ -44,6 +44,9 @@ struct SpeakerEditorView: View {
     /// `liveSpeakers` ids so a stale id can never arm a button or leak into
     /// an operand.
     @State private var selection: Set<String> = []
+    /// The last plainly-clicked (or ⌘-added) row — ⇧-click extends the
+    /// selection from here, NSTableView-style.
+    @State private var selectionAnchorID: String?
     /// Drives the rename `TextField`'s first-responder state — set on appear so
     /// the cursor visibly lands in the field, paired with a select-all so the
     /// existing name is highlighted and typing replaces it in one keystroke.
@@ -388,10 +391,39 @@ struct SpeakerEditorView: View {
                     Spacer()
                 }
                 .contentShape(Rectangle())
-                // `simultaneousGesture` rather than `.onTapGesture(count: 2)`
-                // so the List keeps the first click for selection and the
-                // second fires rename (§12 coexistence — matches the
-                // recordings list).
+                // Explicit selection — the same NSHostingView-eats-mouseDown
+                // race documented on the recordings rows (RecordingsSplitView
+                // .rowView): row content carrying a gesture consumes the
+                // click, so the table's native selection fires only when
+                // AppKit wins the race, leaving Merge/Split unarmed. Plain,
+                // ⌘ (toggle), and ⇧ (range from the last plain click) are
+                // reproduced here; keyboard selection still flows through
+                // the List binding. On the rare native win a ⌘-toggle can
+                // double-fire into a no-op — re-click; every other path is
+                // idempotent.
+                .simultaneousGesture(TapGesture().onEnded {
+                    let mods = NSEvent.modifierFlags
+                    if mods.contains(.command) {
+                        if selection.contains(speaker.id) {
+                            selection.remove(speaker.id)
+                        } else {
+                            selection.insert(speaker.id)
+                            selectionAnchorID = speaker.id
+                        }
+                    } else if mods.contains(.shift),
+                              let anchor = selectionAnchorID,
+                              let a = viewModel.liveSpeakers.firstIndex(
+                                  where: { $0.id == anchor }),
+                              let b = viewModel.liveSpeakers.firstIndex(
+                                  where: { $0.id == speaker.id }) {
+                        selection = Set(
+                            viewModel.liveSpeakers[min(a, b)...max(a, b)]
+                                .map(\.id))
+                    } else {
+                        selection = [speaker.id]
+                        selectionAnchorID = speaker.id
+                    }
+                })
                 .simultaneousGesture(TapGesture(count: 2).onEnded {
                     // Re-targeting must not silently discard a pending edit
                     // on another row — commit it like Save (§6 note).
