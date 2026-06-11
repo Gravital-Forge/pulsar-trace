@@ -19,9 +19,10 @@ from before this branch works — note its `live.md` will still show the old
 
 ## 1. Window frame & sidebar
 
-- [ ] Open the main window from the menubar. It opens ~900×560; the sidebar
-      shows only **Recordings / Speakers / Settings** — no "Refinements" item
-      and no "PulsarTrace" heading above the list.
+- [ ] Open the main window from the menubar. It opens ~1100×640 with the
+      recordings list taking ~1/3 of the width (transcript detail ~2/3); the
+      sidebar shows only **Recordings / Speakers / Settings** — no
+      "Refinements" item and no "PulsarTrace" heading above the list.
 - [ ] Resize the window down: it stops at 800 pt wide. Neither the recordings
       list (≥240) nor the transcript detail (≥320) collapses; no Auto Layout
       complaints in Console.
@@ -61,21 +62,29 @@ from before this branch works — note its `live.md` will still show the old
 
 ## 4. List: groups, filter, rename, trash
 
+- [ ] Single-clicking any row — title, blank space, pills, badge — opens that
+      recording in the detail pane, **every time** (click around briskly;
+      no click may be dropped).
 - [ ] Rows are grouped under **Today / Yesterday / \<weekday, date\> /
       \<full date\>** headers, newest first. Refined rows show time + duration
-      and speaker pills; unrefined rows show an orange clock.
+      and speaker pills; unrefined rows show an orange clock. On unnamed rows
+      the duration after the time ("7:10 AM · 50:11") renders smaller and
+      greyed, so it doesn't read as part of the title.
 - [ ] Type in the filter field ("Filter by title, speaker, or date"): a
       speaker name matches refined rows; "yesterday" matches yesterday's
       rows; gibberish shows the no-matches state. Clearing restores all. A
       live recording row stays visible regardless of the filter.
-- [ ] **Double-click** a row: selection does not glitch, and an inline
-      text field appears (pre-selected). Type "Test title", press Return:
+- [ ] **Double-click a row's title** (or its time/caption line): selection
+      does not glitch, and an inline text field appears (pre-selected).
+      Double-clicking blank row space, speaker pills, or the badge only
+      selects — no editor. Type "Test title", press Return:
       the row title becomes "Test title" with the time · duration line as a
       caption beneath; the detail header shows the custom title with the date
       caption. The filter now matches "test".
-- [ ] Rename survives navigation: double-click a row, type something, then
+- [ ] Rename survives navigation: double-click a title, type something, then
       click **Record** or switch to Speakers — coming back, the title was
-      committed (not lost). Escape during rename cancels.
+      committed (not lost). Clicking anywhere outside the field also commits.
+      Escape during rename cancels.
 - [ ] Clear the title (rename → select-all → delete → Return): the date-based
       default returns (`title.txt` removed from the folder).
 - [ ] Right-click → **Move to Trash** (or select + ⌫): the folder lands in
@@ -113,8 +122,10 @@ from before this branch works — note its `live.md` will still show the old
       **Split…** enables. Zero or three: both disabled.
 - [ ] Rows under "Recently Deleted"/"Recently Delisted" cannot be selected
       and never enable Merge/Split.
-- [ ] Double-click rename still works (selection must not glitch); the merge
-      and split sheets can be resized larger.
+- [ ] Double-click rename still works (selection must not glitch): Return
+      saves, Escape cancels, and clicking anywhere outside the field saves —
+      the field never stays open after a click-away. The merge and split
+      sheets can be resized larger.
 - [ ] Trigger an error (e.g. rename a speaker to a name containing `+`):
       the error banner sits above the list without covering rows, animates
       in/out, and its ✕ dismisses. Delete a speaker: the undo toast sits
@@ -141,5 +152,9 @@ from before this branch works — note its `live.md` will still show the old
   recording; the context item is disabled).
 - Day-group headers ("Today"/"Yesterday") refresh on the next state change
   after midnight, not at the stroke of midnight.
-- Double-clicking row B while row A's rename field is open commits A first
-  (Save semantics), then starts renaming B.
+- Double-clicking row B's title while row A's rename field is open commits A
+  first (Save semantics), then starts renaming B.
+- The 1/3–2/3 split and the 1100×640 size are first-run defaults: once you
+  drag the divider or resize the window, your positions win (the divider
+  default landed by bumping the autosave key, so it applies once even on
+  machines that saved a position under the old key).
