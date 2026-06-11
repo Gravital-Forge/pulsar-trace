@@ -17,7 +17,7 @@ import SwiftUI
 /// Without it, macOS's `NavigationSplitView` renders different corner rounding
 /// and a different sidebar visual boundary: the three traffic-light circles
 /// appear outside the sidebar outline rather than inside it. The canonical
-/// explanation lives in `SettingsView.swift:66-68`. All three detail panes
+/// explanation lives in the toolbar comment in `SettingsView.swift`. All three detail panes
 /// (`RecordingsSplitView`, `SpeakerEditorView`, `SettingsView`) follow this
 /// rule.
 struct MainWindowView: View {
