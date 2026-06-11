@@ -75,6 +75,7 @@ struct TranscriptView: View {
 /// unanswerable from geometry alone. NSScrollView gives us a synchronous
 /// read of the *current* scroll position, sampled at exactly the right
 /// moment.
+@MainActor
 private struct TranscriptTextView: NSViewRepresentable {
     let lines: [String]
     let controller: AutoScrollController?
@@ -101,7 +102,11 @@ private struct TranscriptTextView: NSViewRepresentable {
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
 
-        let textView = NSTextView()
+        // TextKit 1 explicitly: every measurement here (`isAtBottom`,
+        // `scrollToBottom`, `ensureLayout`) assumes synchronous full layout.
+        // A bare NSTextView() would start on TextKit 2 and silently downgrade
+        // on the first `layoutManager` access — pin the engine instead.
+        let textView = NSTextView(usingTextLayoutManager: false)
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -137,7 +142,9 @@ private struct TranscriptTextView: NSViewRepresentable {
         // controller's `isAtBottom` tracks the user's position, and open at
         // the bottom (user's intent is "show me the latest"). Static mode
         // opens at the top — NSScrollView's natural origin — so there is
-        // nothing to do.
+        // nothing to do. The mode is fixed at make time on purpose:
+        // `TranscriptView.body`'s branches guarantee a fresh NSView whenever
+        // `autoScroll` flips nil↔non-nil.
         if let controller {
             scrollView.contentView.postsBoundsChangedNotifications = true
             context.coordinator.observe(scrollView: scrollView, threshold: Self.bottomThreshold)

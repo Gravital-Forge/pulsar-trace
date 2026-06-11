@@ -4,7 +4,7 @@ import Observation
 /// Live-transcript auto-scroll state — the pill-driving half of R45.
 ///
 /// The actual "should I scroll on a new line?" decision lives in the
-/// NSScrollView-backed view (`LiveScrollableTranscript`), which can sample
+/// NSScrollView-backed renderer (`TranscriptTextView`), which can sample
 /// the user's scroll position *before* the new line lays out — something
 /// pure-SwiftUI `GeometryReader` + `PreferenceKey` can't do, because those
 /// fire post-layout. This type is just the shared `@Observable` state that

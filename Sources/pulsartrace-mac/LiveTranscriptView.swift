@@ -21,18 +21,22 @@ struct LiveTranscriptView: View {
     /// trigger re-renders without needing `@Bindable`.
     @State private var autoScroll = AutoScrollController()
 
+    /// Bridges the toolbar Find button / ⌘F to the renderer's find bar.
+    @State private var find = TranscriptFindActivator()
+
     var body: some View {
         TranscriptView(
             lines: watcher.lines,
             placeholder: watcher.isActive
                 ? "Waiting for transcript…"
                 : "No recording in progress.",
-            autoScroll: autoScroll)
+            autoScroll: autoScroll,
+            findActivator: find)
         .frame(minWidth: 360, minHeight: 320)
         .navigationTitle("Live Transcript")
         .toolbar {
             // Conditionally PRESENT, not a conditionally-empty item: an empty
-            // ToolbarItem draws a ghost button (regression, commit 55e2f24).
+            // ToolbarItem draws a ghost button (regression fixed in 55ec1b8).
             if watcher.isActive {
                 ToolbarItem {
                     Label("Recording", systemImage: "circle.fill")
@@ -41,6 +45,16 @@ struct LiveTranscriptView: View {
                         .font(.caption)
                         .accessibilityLabel("Recording in progress")
                 }
+            }
+            ToolbarItem {
+                Button {
+                    find.showFind()
+                } label: {
+                    Label("Find", systemImage: "magnifyingglass")
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(watcher.lines.isEmpty)
+                .help("Find in transcript (⌘F)")
             }
             ToolbarItem {
                 Button {
