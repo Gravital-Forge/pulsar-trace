@@ -11,6 +11,15 @@ import SwiftUI
 /// so this pane's window chrome matches the Recordings pane (a `VStack`-rooted
 /// detail made macOS draw the split-view corners/sidebar differently).
 ///
+/// The pane is selection-driven (§8): the live-speaker list carries a
+/// `Set<String>` multi-selection. ⌘-clicking exactly two speakers enables the
+/// toolbar **Merge** (both operands seeded from the selection; the sheet's
+/// pickers stay editable — which one to keep is still an explicit choice);
+/// exactly one selection enables **Split**. Rename keeps the double-click
+/// gesture plus the context menu — no Return-to-rename — and the gesture
+/// coexists with `List` selection via a `simultaneousGesture` so the first
+/// click still selects.
+///
 /// The `SpeakerLibrary` actor is opened asynchronously on appear (its init is
 /// `async throws`), so this view owns the optional ViewModel and shows a
 /// loading state until it resolves — or an error state if the open fails.
@@ -29,6 +38,11 @@ struct SpeakerEditorView: View {
     @State private var loadError: String?
     @State private var renameTarget: String?
     @State private var renameText = ""
+    /// Multi-selection over the live-speaker rows (§8). ⌘-click two to enable
+    /// Merge; a single selection enables Split. Only live rows are tagged, but
+    /// the seeding code filters the selection through `liveSpeakers` ids so a
+    /// stray deleted/delisted id could never leak into an operand.
+    @State private var selection: Set<String> = []
     /// Drives the rename `TextField`'s first-responder state — set on appear so
     /// the cursor visibly lands in the field, paired with a select-all so the
     /// existing name is highlighted and typing replaces it in one keystroke.
@@ -98,16 +112,21 @@ struct SpeakerEditorView: View {
                         .help("Rewriting transcripts…")
                         .accessibilityLabel("Rewriting transcripts")
                 }
+                // Selection-driven enablement (§8): Merge needs exactly two
+                // ⌘-clicked operands, Split exactly one. Still gated on a
+                // loaded VM and on no rewrite being in flight.
                 Button("Merge…") {
                     if let viewModel { startMerge(viewModel) }
                 }
-                .disabled((viewModel?.liveSpeakers.count ?? 0) < 2
+                .disabled(viewModel == nil || selection.count != 2
                     || viewModel?.isRewriting == true)
+                .help("Merge the two selected speakers")
                 Button("Split…") {
                     if let viewModel { startSplit(viewModel) }
                 }
-                .disabled(viewModel?.liveSpeakers.isEmpty ?? true
+                .disabled(viewModel == nil || selection.count != 1
                     || viewModel?.isRewriting == true)
+                .help("Split a recording's lines out of the selected speaker")
             }
         }
         .task { await loadLibrary() }
@@ -126,13 +145,17 @@ struct SpeakerEditorView: View {
             && viewModel.delistedSpeakers.isEmpty {
             emptyState
         } else {
-            List {
+            List(selection: $selection) {
                 // Untitled — the pane's navigation title already says
                 // "Speakers"; a `Section("Speakers")` header here was a
                 // duplicate label.
                 Section {
                     ForEach(viewModel.liveSpeakers) { speaker in
+                        // Only live rows are tagged for selection — the
+                        // Recently Deleted/Delisted rows below stay
+                        // unselectable so a stray id can't seed Merge/Split.
                         speakerRow(speaker, viewModel: viewModel)
+                            .tag(speaker.id)
                     }
                 }
                 if !viewModel.deletedSpeakers.isEmpty {
@@ -170,10 +193,15 @@ struct SpeakerEditorView: View {
             // A rewrite fans out over every affected final.md on disk — the
             // list is disabled while one is in flight so edits cannot stack
             // (the toolbar shows the paired busy indicator). Applied before
-            // the overlays so the error ✕ and Undo stay clickable.
+            // the insets so the error ✕ and Undo stay clickable.
             .disabled(viewModel.isRewriting)
-            .overlay(alignment: .top) { errorBanner(viewModel) }
-            .overlay(alignment: .bottom) { undoBanner(viewModel) }
+            // §8: banners move off-content (overlay → safeAreaInset) so they
+            // never cover list rows; they carry move+opacity transitions.
+            .safeAreaInset(edge: .top, spacing: 0) { errorBanner(viewModel) }
+            .safeAreaInset(edge: .bottom, spacing: 0) { undoBanner(viewModel) }
+            // §6 planning note: a navigation-away (Record → Recordings, or a
+            // sidebar switch) must not silently discard an in-progress rename.
+            .onDisappear { commitPendingRename(viewModel) }
             // Task 7a — delisting rewrites every final.md the speaker appears
             // in, so it is confirmed with the impact count fetched when the
             // context-menu item staged `pendingDelist`.
@@ -201,53 +229,62 @@ struct SpeakerEditorView: View {
     /// A dismissible error banner for a failed edit (`viewModel.lastError`).
     /// Primary text on a red tint (not white-on-red, which failed WCAG
     /// contrast) so it reads in both light and dark appearances.
-    @ViewBuilder
     private func errorBanner(_ viewModel: SpeakerEditorViewModel) -> some View {
-        if let error = viewModel.lastError {
-            HStack(alignment: .firstTextBaseline) {
-                Text(error)
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    viewModel.clearError()
-                } label: {
-                    Image(systemName: "xmark")
+        Group {
+            if let error = viewModel.lastError {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(error)
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        viewModel.clearError()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Dismiss error")
                 }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Dismiss error")
+                .foregroundStyle(.primary)
+                .padding(8)
+                .background(
+                    Color.red.opacity(0.15),
+                    in: RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.red.opacity(0.4)))
+                .padding(12)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
-            .foregroundStyle(.primary)
-            .padding(8)
-            .background(
-                Color.red.opacity(0.15),
-                in: RoundedRectangle(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.red.opacity(0.4)))
-            .padding(12)
         }
+        // `lastError` is a `String?` (Equatable), so animate on it directly.
+        .animation(.default, value: viewModel.lastError)
     }
 
     /// The undo affordance shown after a destructive edit (R44).
-    @ViewBuilder
     private func undoBanner(_ viewModel: SpeakerEditorViewModel) -> some View {
-        if let toast = viewModel.undoToast {
-            HStack {
-                Text(toast.message)
-                Spacer()
-                Button("Undo") {
-                    Task {
-                        await toast.action()
-                        // Clears the toast AND cancels its auto-dismiss
-                        // clock (`undoToast` is private(set) on the VM).
-                        viewModel.dismissToast()
+        Group {
+            if let toast = viewModel.undoToast {
+                HStack {
+                    Text(toast.message)
+                    Spacer()
+                    Button("Undo") {
+                        Task {
+                            await toast.action()
+                            // Clears the toast AND cancels its auto-dismiss
+                            // clock (`undoToast` is private(set) on the VM).
+                            viewModel.dismissToast()
+                        }
                     }
                 }
+                .padding(10)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .padding(10)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
-            .padding(12)
         }
+        // `UndoToast` carries a non-Equatable `action` closure, so animate on
+        // its presence (Bool) rather than on the value itself.
+        .animation(.default, value: viewModel.undoToast != nil)
     }
 
     /// R44 edge case — no speakers yet.
@@ -334,10 +371,14 @@ struct SpeakerEditorView: View {
                     Spacer()
                 }
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
+                // `simultaneousGesture` rather than `.onTapGesture(count: 2)`
+                // so the List keeps the first click for selection and the
+                // second fires rename (§12 coexistence — matches the
+                // recordings list).
+                .simultaneousGesture(TapGesture(count: 2).onEnded {
                     renameText = speaker.name
                     renameTarget = speaker.id
-                }
+                })
                 .contextMenu {
                     Button("Rename") {
                         renameText = speaker.name
@@ -378,12 +419,31 @@ struct SpeakerEditorView: View {
         }
     }
 
+    /// §6 planning note: navigating away (Record button → Recordings, or a
+    /// sidebar switch) must not silently discard an in-progress rename —
+    /// commit it like Save. Deliberately NOT wired to focus loss: the inline
+    /// Cancel/Save buttons blur the field when clicked, and a blur-commit
+    /// would turn Cancel into Save.
+    private func commitPendingRename(_ viewModel: SpeakerEditorViewModel) {
+        guard let id = renameTarget else { return }
+        let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        renameTarget = nil
+        guard !name.isEmpty else { return }
+        Task { await viewModel.rename(speakerId: id, to: name) }
+    }
+
     // MARK: - Merge
 
     /// Seed the merge sheet's pickers and present it.
     private func startMerge(_ viewModel: SpeakerEditorViewModel) {
-        mergePrimaryId = viewModel.liveSpeakers.first?.id
-        mergeOtherId = viewModel.liveSpeakers.dropFirst().first?.id
+        // Seed both operands from the ⌘-click selection (§8). The sheet's
+        // pickers stay editable — which one to keep is still an explicit
+        // choice; selection order is not meaningful in a Set, so the seed
+        // order follows the list order.
+        let selected = viewModel.liveSpeakers.filter { selection.contains($0.id) }
+        mergePrimaryId = selected.first?.id ?? viewModel.liveSpeakers.first?.id
+        mergeOtherId = selected.dropFirst().first?.id
+            ?? viewModel.liveSpeakers.dropFirst().first?.id
         showMerge = true
     }
 
@@ -422,7 +482,7 @@ struct SpeakerEditorView: View {
             }
         }
         .padding(16)
-        .frame(width: 320)
+        .frame(minWidth: 320, minHeight: 180)
         .confirmationDialog(
             "Merge ‘\(speakerName(mergeOtherId, in: viewModel))’ into "
                 + "‘\(speakerName(mergePrimaryId, in: viewModel))’?",
@@ -455,7 +515,11 @@ struct SpeakerEditorView: View {
 
     /// Seed the split sheet and present it.
     private func startSplit(_ viewModel: SpeakerEditorViewModel) {
-        splitOriginalId = viewModel.liveSpeakers.first?.id
+        // Split is a one-operand action — seed from the single selection
+        // (§8), falling back to the first live speaker.
+        splitOriginalId = viewModel.liveSpeakers
+            .first { selection.contains($0.id) }?.id
+            ?? viewModel.liveSpeakers.first?.id
         splitNewName = ""
         splitSelectedRecordingIds = []
         showSplit = true
@@ -483,7 +547,7 @@ struct SpeakerEditorView: View {
                 viewModel: viewModel,
                 speakerId: splitOriginalId,
                 selection: $splitSelectedRecordingIds)
-                .frame(height: 160)
+                .frame(minHeight: 160)
 
             HStack {
                 Spacer()
@@ -506,7 +570,7 @@ struct SpeakerEditorView: View {
             }
         }
         .padding(16)
-        .frame(width: 380)
+        .frame(minWidth: 380, minHeight: 320)
     }
 
     /// Build the ViewModel via its `load` factory — the VM owns opening the
