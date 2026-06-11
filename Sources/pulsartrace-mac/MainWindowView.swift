@@ -41,6 +41,14 @@ struct MainWindowView: View {
                 .navigationTitle(navigation.section.title)
         }
         .frame(minWidth: 800, minHeight: 420)
+        // Accessory-policy apps (no Dock icon, D27) are not activated by
+        // macOS when a window opens — only the menubar dropdown's open()
+        // path called `NSApp.activate()`, so the window SwiftUI restores at
+        // launch came up with the app inactive and every control drawn in
+        // its greyed window-background appearance until the user bounced
+        // focus away and back (QA round 4). Activating on appear covers the
+        // launch-restore path; the dropdown path activating twice is a no-op.
+        .onAppear { NSApp.activate() }
     }
 
     /// The sidebar: the section list. Deliberately brandless in-content (§3) —

@@ -25,7 +25,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 - **Breaking (file format):** live transcripts mark provisional speakers with a compact `?` suffix (`Them?`, `Them #2?`, `Steve?`) instead of ` (provisional)`. `final.md` is unchanged; `live.md` files recorded before this change keep the old marker until refined.
 - One transcript renderer everywhere: text selection now works across lines in recorded transcripts, static transcripts open at the top while live ones follow the newest line, and Copy puts the rendered text on the pasteboard instead of raw Markdown.
 - Speaker merge and split moved into the right-click menu: **Merge With ▸ \<speaker\>** folds the chosen speaker into the right-clicked one, and **Split…** opens the split sheet for the right-clicked speaker with their recordings listed — replacing the toolbar buttons that had to be armed by ⌘-click multi-selection and a merge sheet whose operand pickers re-asked what the selection already said. Error and undo banners no longer cover list rows; the split sheet is resizable. Inline renames commit on click-away (Return saves, Escape cancels), in both the Speakers and Recordings lists.
-- The sidebar drops the in-window "PulsarTrace" heading and the window opens at 960×640 (3:2, minimum width 800), with the recordings list and transcript detail split 50–50 by default. On unnamed recording rows the duration is rendered smaller and dimmed so it doesn't read as part of the title.
+- The sidebar drops the in-window "PulsarTrace" heading and the window opens at 1104×736 (minimum width 800), with the recordings list taking 40% of the split (transcript detail 60%) by default. On unnamed recording rows the duration is rendered smaller and dimmed so it doesn't read as part of the title.
 - The menubar dropdown's hover highlight follows the system accent color instead of hardcoded blue-on-white.
 - The global hotkey is recorded directly in Settings — click the field and type the shortcut (must include ⌘, ⌃, or ⌥; shown as ⌃⌥⇧⌘ glyphs; a Clear button removes it). Changes take effect immediately.
 - Transcripts render as styled rows (timestamp / speaker / text) in both the transcript sheet and the live window, instead of raw Markdown source.
@@ -39,6 +39,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 
 ### Fixed
 
+- The main window restored at launch no longer comes up greyed out (inactive) until you click away and back: opening it now activates the app, which macOS does not do on its own for menubar-only apps.
 - Microphone and screen-recording permissions are requested and checked before a recording starts, instead of racing the OS prompt mid-start.
 - Refinement no longer fails permanently on recordings containing more than ~98 seconds of uninterrupted speech: long speech regions are now split into chunks (cut at the quietest nearby moment) before being sent to whisper, instead of exceeding the transcription channel's frame limit on every retry.
 - Near-silent recordings no longer crash diarization: a speaker whose voice sample is too sparse to fingerprint keeps its spans and label, and refinement completes — previously the whole job failed (`diarizeCrashed`) on every retry. The same fix stops live diarization from discarding such windows mid-recording.

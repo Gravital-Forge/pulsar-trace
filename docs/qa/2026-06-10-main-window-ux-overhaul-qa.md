@@ -19,10 +19,14 @@ from before this branch works — note its `live.md` will still show the old
 
 ## 1. Window frame & sidebar
 
-- [ ] Open the main window from the menubar. It opens ~960×640 (3:2) with
-      the recordings list and the transcript detail splitting the width
-      50–50; the sidebar shows only **Recordings / Speakers / Settings** —
-      no "Refinements" item and no "PulsarTrace" heading above the list.
+- [ ] Open the main window from the menubar. It opens ~1104×736 with the
+      recordings list taking ~40% of the width (transcript detail ~60%);
+      the sidebar shows only **Recordings / Speakers / Settings** — no
+      "Refinements" item and no "PulsarTrace" heading above the list.
+- [ ] Quit with the window open, relaunch the app: the restored window is
+      active immediately — toolbar buttons and list selection draw in full
+      color, no greyed "background window" look until you click away and
+      back (QA round 4 regression).
 - [ ] Resize the window down: it stops at 800 pt wide. Neither the recordings
       list (≥240) nor the transcript detail (≥320) collapses; no Auto Layout
       complaints in Console.
@@ -167,7 +171,7 @@ from before this branch works — note its `live.md` will still show the old
   after midnight, not at the stroke of midnight.
 - Double-clicking row B's title while row A's rename field is open commits A
   first (Save semantics), then starts renaming B.
-- The 50–50 split and the 960×640 size are first-run defaults: once you
+- The 40–60 split and the 1104×736 size are first-run defaults: once you
   drag the divider or resize the window, your positions win (the divider
   default landed by bumping the autosave key, so it applies once even on
   machines that saved a position under the old key).
