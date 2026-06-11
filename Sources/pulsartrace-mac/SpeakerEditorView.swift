@@ -113,18 +113,21 @@ struct SpeakerEditorView: View {
                         .accessibilityLabel("Rewriting transcripts")
                 }
                 // Selection-driven enablement (§8): Merge needs exactly two
-                // ⌘-clicked operands, Split exactly one. Still gated on a
-                // loaded VM and on no rewrite being in flight.
+                // ⌘-clicked operands, Split exactly one. Counted against the
+                // LIVE selection — a merged-away or deleted speaker's id can
+                // linger in the raw set and must not keep the buttons armed
+                // with operands the user never chose. Still gated on a loaded
+                // VM and on no rewrite being in flight.
                 Button("Merge…") {
                     if let viewModel { startMerge(viewModel) }
                 }
-                .disabled(viewModel == nil || selection.count != 2
+                .disabled(liveSelectionCount != 2
                     || viewModel?.isRewriting == true)
                 .help("Merge the two selected speakers")
                 Button("Split…") {
                     if let viewModel { startSplit(viewModel) }
                 }
-                .disabled(viewModel == nil || selection.count != 1
+                .disabled(liveSelectionCount != 1
                     || viewModel?.isRewriting == true)
                 .help("Split a recording's lines out of the selected speaker")
             }
@@ -136,6 +139,15 @@ struct SpeakerEditorView: View {
         .sheet(isPresented: $showSplit) {
             if let viewModel { splitSheet(viewModel) }
         }
+    }
+
+    /// How many of the selected ids are LIVE speakers right now. The raw
+    /// `selection` set is never pruned by SwiftUI when rows vanish (merge,
+    /// delete, delist), so gating must count through `liveSpeakers` — nil VM
+    /// counts as zero.
+    private var liveSelectionCount: Int {
+        guard let viewModel else { return 0 }
+        return viewModel.liveSpeakers.count { selection.contains($0.id) }
     }
 
     @ViewBuilder
@@ -169,6 +181,11 @@ struct SpeakerEditorView: View {
                                         speakerId: speaker.id) }
                                 }
                             }
+                            // ForEach over Identifiable rows gets IMPLICIT
+                            // selection tags (Speaker.ID == String matches the
+                            // selection set) — opt the tombstones out
+                            // explicitly so they can't arm Merge/Split.
+                            .selectionDisabled(true)
                         }
                     }
                 }
@@ -186,6 +203,7 @@ struct SpeakerEditorView: View {
                                     + "lines marked 'Unrecognized' are "
                                     + "restored to this name.")
                             }
+                            .selectionDisabled(true)
                         }
                     }
                 }
