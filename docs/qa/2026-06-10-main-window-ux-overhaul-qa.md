@@ -79,6 +79,10 @@ from before this branch works — note its `live.md` will still show the old
       and speaker pills; unrefined rows show an orange clock. On unnamed rows
       the duration after the time ("7:10 AM · 50:11") renders smaller and
       greyed, so it doesn't read as part of the title.
+- [ ] Select an unrefined row: its clock badge stays visible on the
+      highlighted row (drawn in the selection's foreground color, not
+      orange) — it must not vanish into the accent fill (regression:
+      QA round 5).
 - [ ] Type in the filter field ("Filter by title, speaker, or date"): a
       speaker name matches refined rows; "yesterday" matches yesterday's
       rows; gibberish shows the no-matches state. Clearing restores all. A

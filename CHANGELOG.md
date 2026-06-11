@@ -44,6 +44,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 - The main window restored at launch no longer comes up greyed out (inactive) until you click away and back: opening it now activates the app, which macOS does not do on its own for menubar-only apps.
 - Microphone and screen-recording permissions are requested and checked before a recording starts, instead of racing the OS prompt mid-start.
 - Refinement no longer fails permanently on recordings containing more than ~98 seconds of uninterrupted speech: long speech regions are now split into chunks (cut at the quietest nearby moment) before being sent to whisper, instead of exceeding the transcription channel's frame limit on every retry.
+- The refinement status badge (clock, progress bar, failure icon) no longer disappears on the selected recording row: explicitly-tinted icons washed out against the accent selection fill, so badges on the highlighted row now draw in the selection's own foreground color.
 - Near-silent recordings no longer crash diarization: a speaker whose voice sample is too sparse to fingerprint keeps its spans and label, and refinement completes — previously the whole job failed (`diarizeCrashed`) on every retry. The same fix stops live diarization from discarding such windows mid-recording.
 
 ### Security

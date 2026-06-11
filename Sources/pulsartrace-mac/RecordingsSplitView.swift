@@ -387,6 +387,20 @@ private struct RecordingsListPane: View {
 private struct RecordingBadgeView: View {
     let badge: RecordingRow.Badge
 
+    /// `.increased` while this row is selected and emphasized (accent
+    /// selection fill). Emphasized row content is re-rendered against that
+    /// fill, where explicitly-tinted symbols wash out to invisible (QA
+    /// round 5: the badge "disappeared" on the highlighted row), so every
+    /// tint collapses to the semantic selection foreground there — the
+    /// system resolves `.primary` to the correct on-selection color.
+    @Environment(\.backgroundProminence) private var backgroundProminence
+
+    private var onSelectionFill: Bool { backgroundProminence == .increased }
+
+    private func tint(_ color: Color) -> Color {
+        onSelectionFill ? .primary : color
+    }
+
     var body: some View {
         switch badge {
         case .recordingNow(let startedAt):
@@ -394,11 +408,11 @@ private struct RecordingBadgeView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "circle.fill")
                         .font(.caption2)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(tint(.red))
                         .symbolEffect(.pulse)
                     Text(elapsedTimeString(from: startedAt, to: context.date))
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.red)
+                        .foregroundStyle(tint(.red))
                 }
             }
             .help("Recording now")
@@ -415,12 +429,14 @@ private struct RecordingBadgeView: View {
                     ProgressView().controlSize(.mini)
                 }
             }
+            // Accent-on-accent is invisible on the selected row.
+            .tint(onSelectionFill ? Color.primary : nil)
             .help(stageName.isEmpty ? "Refining…" : "Refining · \(stageName)")
             .accessibilityLabel("Refining")
         case .failed(let friendlyMessage, let errorClass, _):
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.caption)
-                .foregroundStyle(.red)
+                .foregroundStyle(tint(.red))
                 .help("\(friendlyMessage) (\(errorClass))")
                 .accessibilityLabel("Refinement failed — \(friendlyMessage)")
         case .notYetRefined:
@@ -435,7 +451,7 @@ private struct RecordingBadgeView: View {
     private func icon(_ name: String, tint: Color, help: String) -> some View {
         Image(systemName: name)
             .font(.caption)
-            .foregroundStyle(tint)
+            .foregroundStyle(self.tint(tint))
             .help(help)
             .accessibilityLabel(help)
     }
