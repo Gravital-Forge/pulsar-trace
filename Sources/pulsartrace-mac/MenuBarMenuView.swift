@@ -208,8 +208,9 @@ struct MenuBarMenuView: View {
 }
 
 /// A button style that renders a menubar-dropdown row (#2): full-width,
-/// left-aligned, with an accent-coloured highlight on hover — so the panel
-/// reads as a native-looking menu list instead of a stack of bordered buttons.
+/// left-aligned, with the system menu-selection highlight on hover — so the
+/// panel reads as a native-looking menu list instead of a stack of bordered
+/// buttons.
 struct MenuRowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         MenuRow(configuration: configuration)
@@ -230,15 +231,23 @@ struct MenuRowButtonStyle: ButtonStyle {
                 .contentShape(Rectangle())
                 .foregroundStyle(foreground(highlighted: highlighted))
                 .background(
+                    // System menu-selection colors, so the highlight stays
+                    // correct under any user-selected accent color.
                     RoundedRectangle(cornerRadius: 5)
-                        .fill(highlighted ? Color.accentColor : .clear))
+                        .fill(highlighted
+                            ? Color(nsColor: .selectedContentBackgroundColor)
+                            : .clear))
                 .opacity(configuration.isPressed ? 0.7 : 1)
                 .onHover { hovering = $0 }
         }
 
         private func foreground(highlighted: Bool) -> Color {
             if !isEnabled { return .secondary }
-            return highlighted ? .white : .primary
+            // Pairs with .selectedContentBackgroundColor above — the system
+            // menu-selection text color, correct under any accent color.
+            return highlighted
+                ? Color(nsColor: .selectedMenuItemTextColor)
+                : .primary
         }
     }
 }

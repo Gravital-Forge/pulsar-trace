@@ -80,13 +80,14 @@ struct SettingsView: View {
             }
 
             Section("Output") {
-                HStack {
-                    Text(settings.outputFolderURL?.path ?? "No folder chosen")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Button("Choose…") { chooseOutputFolder() }
+                LabeledContent("Location") {
+                    HStack {
+                        Text(settings.outputFolderURL?.path ?? "No folder chosen")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button("Choose…") { chooseOutputFolder() }
+                    }
                 }
             }
 
