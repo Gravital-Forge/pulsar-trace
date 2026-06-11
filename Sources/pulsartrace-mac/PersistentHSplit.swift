@@ -41,6 +41,10 @@ struct PersistentHSplit<Leading: View, Trailing: View>: NSViewRepresentable {
         // The divider position can only be applied once the view has real
         // bounds, so the default is staged and lands on the first layout —
         // and only when AppKit has no autosaved position for this name.
+        // The key format is AppKit's undocumented-but-decades-stable autosave
+        // key. If it ever changes, this check sees nil every launch and the
+        // staged default stomps the restored divider position each session —
+        // if the divider stops persisting after a macOS bump, look here.
         let savedKey = "NSSplitView Subview Frames \(autosaveName)"
         if UserDefaults.standard.object(forKey: savedKey) == nil {
             split.pendingDefaultFraction = defaultFraction

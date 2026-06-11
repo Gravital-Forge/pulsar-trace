@@ -126,7 +126,10 @@ private struct RecordingsListPane: View {
 
     @State private var renameTargetID: String?
     @State private var renameText = ""
-    @FocusState private var renameFocused: Bool
+    /// Per-row focus (not a Bool): the blur-commit must know WHICH row's
+    /// field lost focus, so a re-target (open B while A is editing) can't
+    /// be mistaken for a click-away from B.
+    @FocusState private var focusedRenameID: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -139,12 +142,14 @@ private struct RecordingsListPane: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { errorBanners }
         .onDisappear { commitPendingRename() }
-        .onChange(of: renameFocused) {
-            // Clicking away from the rename field commits like Save — losing
-            // focus must not strand an open field or discard the edit (§6).
-            // Escape and Return clear `renameTargetID` before the focus
-            // change lands, so this no-ops on those paths.
-            if !renameFocused { commitPendingRename() }
+        // Clicking away from the rename field commits like Save — losing
+        // focus must not strand an open field or discard the edit (§6).
+        // Commit only when the row LOSING focus is still the rename target:
+        // Escape/Return clear `renameTargetID` first (no-op here), and a
+        // re-target flips it to the new row before the old field resigns —
+        // committing then would close the new editor before it ever opened.
+        .onChange(of: focusedRenameID) { oldValue, _ in
+            if oldValue == renameTargetID { commitPendingRename() }
         }
     }
 
@@ -212,6 +217,10 @@ private struct RecordingsListPane: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    // One solid hit target — without this the gesture only
+                    // hit-tests the text glyphs, so the gap between title
+                    // and caption would fall through to select-only.
+                    .contentShape(Rectangle())
                     // Double-click-to-rename is scoped to the title/caption
                     // text only — double-clicking blank row space, pills, or
                     // the badge selects without opening the editor.
@@ -254,9 +263,9 @@ private struct RecordingsListPane: View {
     private func renameField(_ row: RecordingRow) -> some View {
         TextField("Title", text: $renameText)
             .textFieldStyle(.roundedBorder)
-            .focused($renameFocused)
+            .focused($focusedRenameID, equals: row.id)
             .onAppear {
-                renameFocused = true
+                focusedRenameID = row.id
                 // Select-all needs the AppKit field editor, installed only
                 // after the focus change processes (same pattern as the
                 // speakers list).

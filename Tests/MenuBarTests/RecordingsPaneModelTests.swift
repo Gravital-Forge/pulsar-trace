@@ -106,6 +106,35 @@ struct RecordingsPaneModelTests {
         #expect(model.groups.isEmpty)
     }
 
+    // MARK: Row title composition (§4.1)
+
+    @Test("title parts: named rows caption the time+duration; unnamed rows dim the duration")
+    func titleComposition() {
+        let start = Self.date(daysAgo: 0, hour: 7)
+        let time = start.formatted(date: .omitted, time: .shortened)
+
+        let named = Self.makeModel(entries: [
+            Self.entry(id: "rec_n", start: start, customTitle: "Platform sync")
+        ]).rows[0]
+        #expect(named.titleText == "Platform sync")
+        #expect(named.titleDurationText == nil)
+        #expect(named.captionText == "\(time) · 1:00")
+
+        let unnamed = Self.makeModel(entries: [
+            Self.entry(id: "rec_u", start: start)
+        ]).rows[0]
+        #expect(unnamed.titleText == time)
+        #expect(unnamed.titleDurationText == "1:00")
+        #expect(unnamed.captionText == nil)
+
+        // Unrefined rows carry durationSeconds == 0 — no duration to show.
+        let unrefined = Self.makeModel(entries: [
+            Self.entry(id: "rec_r", start: start, refined: false)
+        ]).rows[0]
+        #expect(unrefined.titleText == time)
+        #expect(unrefined.titleDurationText == nil)
+    }
+
     @Test("the live row is exempt from filtering")
     func liveRowFilterExempt() {
         let model = Self.makeModel(

@@ -47,7 +47,9 @@ struct SpeakerEditorView: View {
     /// Drives the rename `TextField`'s first-responder state — set on appear so
     /// the cursor visibly lands in the field, paired with a select-all so the
     /// existing name is highlighted and typing replaces it in one keystroke.
-    @FocusState private var renameFieldFocused: Bool
+    /// Per-row (not a Bool) so the blur-commit knows WHICH row's field lost
+    /// focus — a re-target must not read as a click-away from the new row.
+    @FocusState private var focusedRenameID: String?
 
     /// The speaker awaiting the delist ("Don't recognize") confirmation —
     /// just the two fields the dialog needs. A full `Speaker` also carries a
@@ -223,10 +225,12 @@ struct SpeakerEditorView: View {
             .onDisappear { commitPendingRename(viewModel) }
             // Clicking away from the rename field commits like Save — the
             // standard inline-rename contract, matching the recordings list.
-            // Escape and Return clear `renameTarget` before the focus change
-            // lands, so this no-ops on those paths.
-            .onChange(of: renameFieldFocused) {
-                if !renameFieldFocused { commitPendingRename(viewModel) }
+            // Commit only when the row LOSING focus is still the rename
+            // target: Escape/Return clear `renameTarget` first (no-op here),
+            // and a re-target flips it to the new row before the old field
+            // resigns — committing then would close the new editor instantly.
+            .onChange(of: focusedRenameID) { oldValue, _ in
+                if oldValue == renameTarget { commitPendingRename(viewModel) }
             }
             // Task 7a — delisting rewrites every final.md the speaker appears
             // in, so it is confirmed with the impact count fetched when the
@@ -353,9 +357,9 @@ struct SpeakerEditorView: View {
             if renameTarget == speaker.id {
                 TextField("Name", text: $renameText)
                     .textFieldStyle(.roundedBorder)
-                    .focused($renameFieldFocused)
+                    .focused($focusedRenameID, equals: speaker.id)
                     .onAppear {
-                        renameFieldFocused = true
+                        focusedRenameID = speaker.id
                         // SwiftUI's TextField has no built-in "select all on
                         // focus": the field editor (`NSText`) is the only
                         // object that can do it, and AppKit doesn't install
