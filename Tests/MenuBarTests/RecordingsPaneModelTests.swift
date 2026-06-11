@@ -320,7 +320,7 @@ struct RecordingsPaneModelTests {
 
     // MARK: Failure humanization
 
-    @Test("friendlyFailure humanizes known error classes and passes unknown ones through")
+    @Test("friendlyFailure humanizes known error classes and falls back to a generic line for unknown ones")
     func friendlyFailureMapping() {
         // Pinned against the table lifted from RefinementsListView's
         // JobRow.friendly(_:). Known classes map to a phrase; unknown classes

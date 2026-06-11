@@ -293,10 +293,12 @@ public final class RecordingsPaneModel {
                 acknowledgedJobIDs.insert(job.id)
             }
         }
-        // Prune so the set can't grow unboundedly: a completed job is in
-        // `recent` (it arrived there this tick), so once it ages out its id is
-        // dead weight — intersecting with the live recent ids drops it.
-        acknowledgedJobIDs.formIntersection(Set(recentJobs.map(\.id)))
+        // Prune so the set can't grow unboundedly: once a job ages out of
+        // `recent` its id is dead weight. The batch's own ids are kept
+        // unconditionally so this never depends on the caller having updated
+        // `recent` before notifying (true today, but a wiring-order detail).
+        acknowledgedJobIDs.formIntersection(
+            Set(recentJobs.map(\.id)).union(jobs.map(\.id)))
     }
 
     private func acknowledgeCompleted(recordingId: String) {
