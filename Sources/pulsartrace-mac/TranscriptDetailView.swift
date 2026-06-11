@@ -215,18 +215,20 @@ struct LiveElapsedBadge: View {
     let startedAt: Date
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: startedAt, by: 1)) { context in
             Label(
                 elapsedTimeString(from: startedAt, to: context.date),
                 systemImage: "circle.fill")
             .foregroundStyle(.red)
-            .accessibilityLabel("Recording, elapsed \(elapsedTimeString(from: startedAt, to: context.date))")
+            // Stable label for VoiceOver — the ticking time is the value.
+            .accessibilityLabel("Recording in progress")
+            .accessibilityValue(elapsedTimeString(from: startedAt, to: context.date))
         }
     }
 }
 
-/// Shared M:SS / H:MM:SS elapsed formatter (also used by the Record toolbar
-/// button in the next task).
+/// Shared M:SS / H:MM:SS elapsed formatter (menubar label, record button,
+/// live badges).
 func elapsedTimeString(from start: Date, to now: Date) -> String {
     let s = max(0, Int(now.timeIntervalSince(start)))
     if s >= 3600 {

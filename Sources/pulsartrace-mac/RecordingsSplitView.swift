@@ -353,7 +353,7 @@ private struct RecordingBadgeView: View {
     var body: some View {
         switch badge {
         case .recordingNow(let startedAt):
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            TimelineView(.periodic(from: startedAt, by: 1)) { context in
                 HStack(spacing: 4) {
                     Image(systemName: "circle.fill")
                         .font(.caption2)

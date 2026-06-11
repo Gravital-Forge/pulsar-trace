@@ -1,11 +1,17 @@
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// The shared Record/Stop toolbar control (§6), present on all three panes.
+/// The shared Record/Stop toolbar control (§6), present on every pane (also
+/// reused as the Recordings empty-state CTA).
 ///
 /// Navigation and auto-select are scoped to the BUTTON ACTION, not the
 /// status transition: a hotkey- or menubar-started recording must not steal
 /// the window's selection or section (§6 — review finding).
+///
+/// Environment coupling: the Recordings empty-state CTA re-injects this
+/// view's dependencies explicitly (it sits below an NSHostingView boundary
+/// — see `RecordingsListPane`). A new `@Environment` dependency here must
+/// also be re-injected there or that path crashes at runtime.
 struct RecordToolbarButton: View {
     @Environment(RecordingViewModel.self) private var recording
     @Environment(AppNavigation.self) private var navigation
@@ -25,8 +31,12 @@ struct RecordToolbarButton: View {
                 }
             }
             .disabled(true)
+            .help("Starting recording…")
+            .accessibilityLabel("Starting recording")
         case .recording(_, let startedAt):
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            // Phase from `startedAt` so the tick lands on true second
+            // rollovers (and in unison with the menubar timer).
+            TimelineView(.periodic(from: startedAt, by: 1)) { context in
                 Button {
                     Task { await recording.stopRecording() }
                 } label: {
@@ -36,6 +46,9 @@ struct RecordToolbarButton: View {
                 }
                 .tint(.red)
                 .help("Stop recording")
+                // Stable label for VoiceOver — the ticking time is the value.
+                .accessibilityLabel("Stop recording")
+                .accessibilityValue(elapsedTimeString(from: startedAt, to: context.date))
             }
         case .crashed:
             disabledRecord(reason: "Recording stopped unexpectedly — recover or dismiss in the Recordings pane.")
@@ -56,7 +69,9 @@ struct RecordToolbarButton: View {
     /// — a direct response to the click. `startRecording()` returns only
     /// after the status settled (`.recording` or `.error`), so the id is
     /// readable right here; the synthesized row exists the moment status
-    /// flips.
+    /// flips. On failure the section switch still happens — the `.error`
+    /// banner lives on the Recordings pane, so navigating there is what
+    /// shows the user why the start failed.
     private func startFromButton() {
         Task {
             await recording.startRecording()
