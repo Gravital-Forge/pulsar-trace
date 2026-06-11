@@ -82,6 +82,7 @@ struct SpeakerEditorView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) { RecordToolbarButton() }
             // Always present (disabled until usable) so the window toolbar —
             // and thus the chrome — does not change as the library loads.
             ToolbarItemGroup {

@@ -109,6 +109,7 @@ struct SettingsView: View {
         // sidebar extent) matches the Recordings and Speakers panes — those
         // carry a toolbar; a pane without one renders different chrome.
         .toolbar {
+            ToolbarItem(placement: .navigation) { RecordToolbarButton() }
             ToolbarItem {
                 Button {
                     if let url = settings.outputFolderURL {

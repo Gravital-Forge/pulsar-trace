@@ -22,10 +22,12 @@ struct RecordingsSplitView: View {
             trailingMinWidth: 320,
             leading: RecordingsListPane(
                 paneModel: paneModel, queueVM: queueVM,
-                settings: settings, navigation: navigation),
+                settings: settings, navigation: navigation,
+                recording: recording),
             trailing: TranscriptDetailView(
                 detailModel: detailModel, queueVM: queueVM, settings: settings))
         .toolbar {
+            ToolbarItem(placement: .navigation) { RecordToolbarButton() }
             ToolbarItem {
                 Button {
                     Task { await scanner.refresh() }
@@ -116,6 +118,7 @@ private struct RecordingsListPane: View {
     let queueVM: RefinementJobQueueViewModel
     let settings: MenuBarSettings
     let navigation: AppNavigation
+    let recording: RecordingViewModel
 
     @State private var renameTargetID: String?
     @State private var renameText = ""
@@ -144,11 +147,17 @@ private struct RecordingsListPane: View {
     @ViewBuilder
     private var content: some View {
         if paneModel.rows.isEmpty {
-            // Record CTA added with RecordToolbarButton (next task).
             ContentUnavailableView {
                 Label("No Recordings", systemImage: "waveform")
             } description: {
                 Text("Record a meeting and its transcript will appear here.")
+            } actions: {
+                // This pane is BELOW the NSHostingView boundary, so the
+                // window's @Environment objects do not flow here — re-inject
+                // the two the button needs (the PersistentHSplit pattern).
+                RecordToolbarButton()
+                    .environment(recording)
+                    .environment(navigation)
             }
         } else if paneModel.groups.isEmpty {
             ContentUnavailableView.search(text: paneModel.filterText)
