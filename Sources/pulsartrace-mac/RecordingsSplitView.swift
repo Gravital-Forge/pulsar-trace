@@ -199,13 +199,21 @@ private struct RecordingsListPane: View {
         } else {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(row.titleText)
-                        .help(row.entry.displayName)
-                    if let caption = row.captionText {
-                        Text(caption)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        titleLine(row)
+                            .help(row.entry.displayName)
+                        if let caption = row.captionText {
+                            Text(caption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    // Double-click-to-rename is scoped to the title/caption
+                    // text only — double-clicking blank row space, pills, or
+                    // the badge selects without opening the editor.
+                    .simultaneousGesture(TapGesture(count: 2).onEnded {
+                        beginRename(row)
+                    })
                     if row.entry.isRefined && !row.entry.speakers.isEmpty {
                         SpeakerPillsView(speakers: row.entry.speakers)
                     }
@@ -214,14 +222,21 @@ private struct RecordingsListPane: View {
                 RecordingBadgeView(badge: row.badge)
             }
             .contentShape(Rectangle())
-            // Double-click renames. `simultaneousGesture` (not
-            // `onTapGesture`) so the List still receives the first click for
-            // selection — the §12 coexistence requirement: neither the
-            // gesture nor selection may be dropped.
-            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                beginRename(row)
+            // Explicit single-click selection. The row content is an
+            // NSHostingView inside the List's NSTableView; once SwiftUI
+            // content carries a gesture at the click point, the hosting view
+            // consumes the mouseDown and the table's native row selection
+            // fires only intermittently. Selecting from our own tap makes
+            // every click open the row regardless of who wins that race
+            // (keyboard/native selection still flows through the binding).
+            .simultaneousGesture(TapGesture().onEnded {
+                paneModel.select(row.id)
             })
         }
+    }
+
+    private func titleLine(_ row: RecordingRow) -> Text {
+        Text(row.titleText)
     }
 
     private func renameField(_ row: RecordingRow) -> some View {
