@@ -78,6 +78,12 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.scanner)
                 .environment(environment.navigation)
                 .environment(environment.queueVM)
+                // Recordings master-detail split (§4): the pane list model,
+                // the transcript detail model, and the live watcher the
+                // detail binds to for the in-progress recording.
+                .environment(environment.paneModel)
+                .environment(environment.detailModel)
+                .environment(environment.liveWatcher)
                 // Parallel to the MenuBarExtra onChange: the recorder lives
                 // in this window's Settings pane, and the popover content
                 // may never have been mounted when the combo changes here.

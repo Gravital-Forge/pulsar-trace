@@ -18,7 +18,7 @@ import SwiftUI
 /// and a different sidebar visual boundary: the three traffic-light circles
 /// appear outside the sidebar outline rather than inside it. The canonical
 /// explanation lives in `SettingsView.swift:66-68`. All four detail panes
-/// (`RecordingsListView`, `RefinementsListView`, `SpeakerEditorView`,
+/// (`RecordingsSplitView`, `RefinementsListView`, `SpeakerEditorView`,
 /// `SettingsView`) follow this rule.
 struct MainWindowView: View {
     /// The process-wide events writer — handed to the speaker editor so its
@@ -63,7 +63,7 @@ struct MainWindowView: View {
         // environment injected on this window's scene root (`PulsarTraceMacApp`).
         switch navigation.section {
         case .recordings:
-            RecordingsListView()
+            RecordingsSplitView()
         case .refinements:
             RefinementsListView()
         case .speakers:
