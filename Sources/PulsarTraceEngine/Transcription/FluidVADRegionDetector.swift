@@ -60,7 +60,9 @@ public actor FluidVADRegionDetector {
             // retry contract (fallback decision) can attempt a fresh load.
             do { return try await managerTask.value }
             catch {
-                self.managerTask = nil
+                // Only the failed task's own awaiters may clear the slot — a
+                // retry may already have stored a fresh task.
+                if self.managerTask == managerTask { self.managerTask = nil }
                 throw error
             }
         }
@@ -74,7 +76,7 @@ public actor FluidVADRegionDetector {
         managerTask = task
         do { return try await task.value }
         catch {
-            self.managerTask = nil
+            if self.managerTask == task { self.managerTask = nil }
             throw error
         }
     }
