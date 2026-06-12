@@ -20,7 +20,7 @@ struct RecordPlanTests {
     func systemAndMic() {
         let plan = RecordPlan.make(
             outputFolder: folder, paths: paths,
-            micDeviceID: nil, systemAudioEnabled: true, modelName: "base")
+            micDeviceID: nil, systemAudioEnabled: true)
 
         // The recording id threads through both argv.
         #expect(value(after: "--recording-id", in: plan.captureArguments)
@@ -43,14 +43,18 @@ struct RecordPlanTests {
         #expect(value(after: "--mic-socket", in: plan.engineArguments)
             == plan.micSocket.path)
         #expect(value(after: "--out", in: plan.engineArguments) == folder.path)
-        #expect(value(after: "--model", in: plan.engineArguments) == "base")
+        // The live pass has exactly one backend (D39): the engine takes no
+        // model flag; capture still reports the fixed name in
+        // `recording_started.model_live`.
+        #expect(!plan.engineArguments.contains("--model"))
+        #expect(value(after: "--model", in: plan.captureArguments) == "parakeet-v3")
     }
 
     @Test("mic-only mode passes --no-system-audio and no engine system socket")
     func micOnly() {
         let plan = RecordPlan.make(
             outputFolder: folder, paths: paths,
-            micDeviceID: nil, systemAudioEnabled: false, modelName: "base")
+            micDeviceID: nil, systemAudioEnabled: false)
 
         #expect(plan.captureArguments.contains("--no-system-audio"))
         // The engine reads a single stream from the mic socket — no system one.
@@ -63,11 +67,10 @@ struct RecordPlanTests {
     func explicitMicDevice() {
         let plan = RecordPlan.make(
             outputFolder: folder, paths: paths,
-            micDeviceID: "BuiltInMic-7F3A", systemAudioEnabled: true,
-            modelName: "large-v3")
+            micDeviceID: "BuiltInMic-7F3A", systemAudioEnabled: true)
         #expect(value(after: "--mic-device", in: plan.captureArguments)
             == "BuiltInMic-7F3A")
-        #expect(value(after: "--model", in: plan.captureArguments) == "large-v3")
+        #expect(value(after: "--model", in: plan.captureArguments) == "parakeet-v3")
     }
 
     @Test("allowedLanguages non-empty emits --allowed-languages a,b on the engine argv")
@@ -75,7 +78,7 @@ struct RecordPlanTests {
         let plan = RecordPlan.make(
             outputFolder: folder, paths: paths,
             micDeviceID: nil, systemAudioEnabled: true,
-            modelName: "base", allowedLanguages: ["en", "pl"])
+            allowedLanguages: ["en", "pl"])
         #expect(value(after: "--allowed-languages", in: plan.engineArguments)
             == "en,pl")
         // Not a capture-side concern — the allow-list only affects whisper.
@@ -86,7 +89,7 @@ struct RecordPlanTests {
     func allowedLanguagesEmptyOmitsFlag() {
         let plan = RecordPlan.make(
             outputFolder: folder, paths: paths,
-            micDeviceID: nil, systemAudioEnabled: true, modelName: "base")
+            micDeviceID: nil, systemAudioEnabled: true)
         #expect(!plan.engineArguments.contains("--allowed-languages"))
     }
 
@@ -94,10 +97,19 @@ struct RecordPlanTests {
     func socketPathsUnderSocketDir() {
         let plan = RecordPlan.make(
             outputFolder: folder, paths: paths,
-            micDeviceID: nil, systemAudioEnabled: true, modelName: "base")
+            micDeviceID: nil, systemAudioEnabled: true)
         #expect(plan.systemSocket == paths.systemSocketURL(recordingId: plan.recordingId))
         #expect(plan.micSocket == paths.micSocketURL(recordingId: plan.recordingId))
         #expect(plan.systemSocket.path.hasSuffix("-system.sock"))
         #expect(plan.micSocket.path.hasSuffix("-mic.sock"))
+    }
+
+    @Test("capture carries the fixed live model name for the recording_started event")
+    func captureCarriesTheFixedLiveModelName() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: nil, systemAudioEnabled: true)
+        #expect(value(after: "--model", in: plan.captureArguments) == "parakeet-v3")
+        #expect(!plan.engineArguments.contains("--model"))
     }
 }

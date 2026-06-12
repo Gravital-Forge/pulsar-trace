@@ -131,9 +131,8 @@ struct EngineMain {
                 file: URL(fileURLWithPath: path), realtime: true)
             // `--mic-fixture <path>` pairs a second realtime fixture as the
             // mic stream so a one-WAV repro can exercise the dual-stream
-            // contention on the shared SerializingHostProxy that the real
-            // live pass produces — pass the same WAV to drive 2× decode
-            // load on one whisper subprocess.
+            // contention on the single shared ParakeetEngine actor — pass
+            // the same WAV to drive 2× decode load on one resident model.
             if let micPath = value(after: "--mic-fixture", in: args) {
                 micSource = FixturePlaybackSource(
                     file: URL(fileURLWithPath: micPath), realtime: true)
@@ -156,7 +155,7 @@ struct EngineMain {
             throw UsageError(message: """
                 usage: pulsartrace-engine --live \
                 [--stdin | --source fixture <wav> [--mic-fixture <wav>] | --system-socket <path> [--mic-socket <path>]] \
-                [--out <dir>] [--recording-id <id>] [--model base|large-v3] [--no-live-diarization]
+                [--out <dir>] [--recording-id <id>] [--no-live-diarization]
                 """)
         }
 
@@ -178,82 +177,27 @@ struct EngineMain {
         let recordingId = value(after: "--recording-id", in: args)
             ?? RecordingFolder.recordingId(forName: stemName)
 
-        // --- whisper model (resident) ---------------------------------------
-        let modelName = value(after: "--model", in: args) ?? "base"
-        guard let model = ModelCatalog.model(named: modelName) else {
-            throw UsageError(message: "unknown model '\(modelName)'")
-        }
-        let modelURL = try await ModelStore(events: lifecycle.events)
-            .ensureAvailable(model)
-        // Live engine: whisper runs in a subprocess so a wedged decode can be
-        // recovered (SIGKILL + respawn) without killing this engine — capture,
-        // WAV writers, live.md, events all stay live. The parent-side
-        // watchdog lives inside `RemoteWindowTranscriber`; the old in-process
-        // `DecodeWatchdog` is gone (the abort_callback path it relied on is
-        // structurally insufficient — see the 2026-05-26 wedge case).
+        // --- live transcriber (resident, ANE) --------------------------------
+        // Parakeet v3 via FluidAudio (D39): in-process CoreML — no subprocess,
+        // no Metal, no flock, and no live model knob. Both streams share one
+        // resident engine; the actor serializes decodes (the in-process
+        // analogue of the old SerializingHostProxy). First launch downloads
+        // ~0.5 GB from huggingface.co. A wedged window decode is bounded by
+        // ParakeetWindowTranscriber's 30 s deadline — the window is skipped
+        // and the post-pass recovers the audio.
         //
-        // Both the system and mic streams share **one** subprocess via a
-        // `SerializingHostProxy` (Phase 4-fix). The `pulsartrace-whisper`
-        // binary takes a process-wide `flock` (spec §4 Layer 2), so two
-        // independent subprocesses would have one exit with code 75. The
-        // proxy serializes every `decode`/`startAndInitialize` call behind
-        // a single `NSLock` — that lock-around-decode is the IPC equivalent
-        // of the in-process `metalLock` `WhisperTranscriber` used and the
-        // same single-decode-at-a-time invariant the binary's flock enforces.
-        // Both `RemoteWindowTranscriber` instances are constructed with
-        // `hostFactory: { _, _ in proxy }` so they share the inner host;
-        // a wedge in either stream sigkills the shared inner and the
-        // first follow-up decode on either transcriber respawns it.
-        // See docs/specs/2026-05-26-whisper-subprocess-design.md §6/§7/§9.
-        // `lockPath: <standard path>` — both live (here) and refinement
-        // (`RefinementJobQueue.makeStandard`) point at the *same*
-        // `~/Library/Application Support/PulsarTrace/whisper.lock`
-        // because the design's single-instance invariant (spec §4 G4 /
-        // Layer 2) is one whisper subprocess globally, not one per
-        // workload. The mac-app's pause-for-recording dance enforces
-        // mutual exclusion at the queue layer; the shared flock is the
-        // OS-level backstop. Passing `nil` here used to imply "no lock,"
-        // but the subprocess defaults the path internally
-        // (`pulsartrace-whisper/main.swift`'s `ParsedArgs.lockPath`
-        // fallback) — so this is now explicit instead of misleading.
-        let whisperHostConfig = WhisperSubprocessHost.Configuration(
-            binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
-            socketDirectory: AppPaths.standard.socketDirectory,
-            lockPath: AppPaths.standard.applicationSupport
-                .appendingPathComponent("whisper.lock", isDirectory: false),
-            forceCPU: !WhisperOptions.defaultGPUEnabled,
-            spawnTimeout: .seconds(10),
-            // 180 s — generous warm-restart budget so a transient GPU /
-            // CoreML stall after a wedge SIGKILL doesn't trip
-            // `init refused`. See WhisperSubprocessHost.Configuration.
-            initTimeout: .seconds(180))
-        let sharedHostProxy = SerializingHostProxy(
-            configuration: whisperHostConfig,
+        // Cache root: ModelStore.defaultCacheDirectory() until task 16 of
+        // docs/specs/2026-06-12-ane-transcription-pipeline/ replaces it with
+        // AppPaths.modelsCacheDirectory and deletes ModelStore.
+        let parakeet = try await ParakeetEngine.load(
+            cacheRoot: ModelStore.defaultCacheDirectory(),
+            events: lifecycle.events,
             logger: Logger(label: LogSubsystem.engine))
-        let whisperConfig = RemoteWindowTranscriber.Configuration(
-            binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
-            modelURL: modelURL,
-            socketDirectory: AppPaths.standard.socketDirectory,
-            forceCPU: !WhisperOptions.defaultGPUEnabled,
-            // 10 s matches the prior in-process `DecodeWatchdog.deadline`.
-            decodeDeadline: .seconds(10),
-            respawnDeadline: .seconds(180))
-        let sharedHostFactory: RemoteWindowTranscriber.HostFactory = { _, _ in
-            sharedHostProxy
-        }
-        let transcriber: any WindowTranscribing = RemoteWindowTranscriber(
-            configuration: whisperConfig,
-            logger: Logger(label: LogSubsystem.engine),
-            hostFactory: sharedHostFactory)
-        let micTranscriber: (any WindowTranscribing)?
-        if micSource != nil {
-            micTranscriber = RemoteWindowTranscriber(
-                configuration: whisperConfig,
-                logger: Logger(label: LogSubsystem.engine),
-                hostFactory: sharedHostFactory)
-        } else {
-            micTranscriber = nil
-        }
+        let transcriber: any WindowTranscribing =
+            ParakeetWindowTranscriber(engine: parakeet)
+        let micTranscriber: (any WindowTranscribing)? = micSource != nil
+            ? ParakeetWindowTranscriber(engine: parakeet)
+            : nil
 
         // --- live diarization config (dev venv + .env, like RefineCommand) --
         let liveDiarizerConfig: LiveDiarizer.Configuration?

@@ -3,17 +3,12 @@ import PulsarTraceCapture
 import PulsarTraceEngine
 
 /// `pulsartrace record [--output PATH] [--duration MIN] [--mic INDEX]
-/// [--no-system-audio] [--model MODEL] [--list-mics]` — headless recording
-/// (R47).
+/// [--no-system-audio] [--list-mics]` — headless recording (R47).
 ///
 /// `record` spawns `pulsartrace-capture` (the TCC-gated daemon, R4) and
 /// `pulsartrace-engine --live`, runs the live pass for `--duration` minutes
 /// (or until Ctrl-C), then refines the recording into `final.md`. It produces
 /// the same recording folder a menubar recording would, with no UI involved.
-///
-/// `--model` applies to *both* the live pass and the post-pass refine — a
-/// headless `record` should not surprise the user with a 3 GB `large-v3`
-/// download it never asked for; the default is `base` (project-docs/DECISIONS.md D24).
 enum RecordCommand {
 
     /// Parsed `record` options.
@@ -22,7 +17,6 @@ enum RecordCommand {
         let durationMinutes: Int?
         let micIndex: Int?
         let systemAudioEnabled: Bool
-        let modelName: String
         let listMics: Bool
     }
 
@@ -51,11 +45,6 @@ enum RecordCommand {
         }
         if !DoctorCommand.isAppleSilicon() {
             err("record: warning — Intel Mac; transcription will be slow.")
-        }
-        guard ModelCatalog.model(named: options.modelName) != nil else {
-            err("record: unknown model '\(options.modelName)' "
-                + "(expected: base, large-v3)")
-            return 2
         }
         if let minutes = options.durationMinutes, minutes <= 0 {
             err("record: --duration must be a positive number of minutes")
@@ -97,8 +86,7 @@ enum RecordCommand {
             outputFolder: outputFolder,
             paths: .standard,
             micDeviceID: micDeviceID,
-            systemAudioEnabled: options.systemAudioEnabled,
-            modelName: options.modelName)
+            systemAudioEnabled: options.systemAudioEnabled)
 
         // --- run the capture + live-engine session -------------------------
         // `engineEnvironment` threads `PULSARTRACE_WHISPER_BINARY` to the
@@ -151,7 +139,10 @@ enum RecordCommand {
         // --- refine into final.md ------------------------------------------
         err("record: refining…")
         let refineCode = await RefineCommand.run(
-            [outputFolder.path, "--model", options.modelName], events: events)
+            // Interim: refine still runs on whisper.cpp until task 14 adds
+            // `--refine-model`; "base" keeps D24's no-surprise-download
+            // default. Task 14 replaces this with options.refineModelName.
+            [outputFolder.path, "--model", "base"], events: events)
         if refineCode != 0 {
             err("record: refinement failed — `live.md` is preserved; "
                 + "re-run `pulsartrace refine \(outputFolder.path)`")
@@ -244,7 +235,6 @@ enum RecordCommand {
         var durationMinutes: Int?
         var micIndex: Int?
         var systemAudioEnabled = true
-        var modelName = "base"
         var listMics = false
 
         var i = 0
@@ -271,8 +261,6 @@ enum RecordCommand {
                     throw ArgError.notANumber(flag: "--mic", value: raw)
                 }
                 micIndex = index
-            case "--model":
-                modelName = try value("--model")
             case "--no-system-audio":
                 systemAudioEnabled = false
                 i += 1
@@ -288,7 +276,6 @@ enum RecordCommand {
             durationMinutes: durationMinutes,
             micIndex: micIndex,
             systemAudioEnabled: systemAudioEnabled,
-            modelName: modelName,
             listMics: listMics)
     }
 
@@ -305,8 +292,7 @@ enum RecordCommand {
 
     static let usage =
         "usage: pulsartrace record [--output PATH] [--duration MIN] "
-        + "[--mic INDEX] [--no-system-audio] [--model base|large-v3] "
-        + "[--list-mics]"
+        + "[--mic INDEX] [--no-system-audio] [--list-mics]"
 
     private static func out(_ s: String) {
         FileHandle.standardOutput.write(Data((s + "\n").utf8))

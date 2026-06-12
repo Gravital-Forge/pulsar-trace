@@ -10,16 +10,6 @@ import Testing
 @Suite("Parakeet live backend", .serialized)
 struct ParakeetTranscriberTests {
 
-    /// One engine per process — memoized Task, same race-free pattern as
-    /// WhisperTestGate.model (a second caller awaits the in-flight load
-    /// instead of starting a second download).
-    private static let engineTask = Task<ParakeetEngine, Error> {
-        try await ParakeetEngine.load(
-            cacheRoot: ModelStore.defaultCacheDirectory(),
-            events: nil,
-            logger: Logger(label: "test.parakeet"))
-    }
-
     /// Run the blocking sync transcribe call on a GCD thread — the
     /// production calling context (`LiveRunner.offload`) — never on the
     /// cooperative pool, which the transcriber's semaphore bridge forbids.
@@ -46,7 +36,7 @@ struct ParakeetTranscriberTests {
     }
 
     @Test func loadsAndDecodesAFixtureWindow() async throws {
-        let engine = try await Self.engineTask.value
+        let engine = try await ParakeetTestEngine.shared()
         // 10 s window from the committed single-speaker fixture.
         let window = try Self.fixtureSamples(seconds: 10)
         let decoded = try await engine.transcribeWindow(window, languageHint: nil)
@@ -62,7 +52,7 @@ struct ParakeetTranscriberTests {
 
     @Test func decodeIsDeterministicAcrossCalls() async throws {
         // LocalAgreement-2 requires two decodes of the same audio to agree.
-        let engine = try await Self.engineTask.value
+        let engine = try await ParakeetTestEngine.shared()
         let window = try Self.fixtureSamples(seconds: 8)
         let first = try await engine.transcribeWindow(window, languageHint: nil)
         let second = try await engine.transcribeWindow(window, languageHint: nil)
@@ -73,14 +63,14 @@ struct ParakeetTranscriberTests {
         // The script hint must steer, not break: an English hint on the
         // English fixture decodes non-empty text. (An unknown code would
         // map to nil internally — auto — and also decode fine.)
-        let engine = try await Self.engineTask.value
+        let engine = try await ParakeetTestEngine.shared()
         let window = try Self.fixtureSamples(seconds: 8)
         let decoded = try await engine.transcribeWindow(window, languageHint: "en")
         #expect(!decoded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     @Test func conformsToWindowTranscribingWithAbsoluteTimestamps() async throws {
-        let engine = try await Self.engineTask.value
+        let engine = try await ParakeetTestEngine.shared()
         let window = try Self.fixtureSamples(seconds: 10)
         let result = try await Self.onGCDThread {
             let transcriber: any WindowTranscribing = ParakeetWindowTranscriber(engine: engine)
@@ -99,7 +89,7 @@ struct ParakeetTranscriberTests {
     @Test func subMinimumWindowReturnsEmptyInsteadOfThrowing() async throws {
         // Parakeet rejects audio under 300 ms; the end-of-stream flush can
         // produce such a tail. Contract: empty result, not an error.
-        let engine = try await Self.engineTask.value
+        let engine = try await ParakeetTestEngine.shared()
         let result = try await Self.onGCDThread {
             let transcriber = ParakeetWindowTranscriber(engine: engine)
             return try transcriber.transcribeWindow(
@@ -113,7 +103,7 @@ struct ParakeetTranscriberTests {
         // options.allowedLanguages == ["en"] → languageHint "en" → still a
         // non-empty English decode (the hint steers token scripts, it does
         // not gate output).
-        let engine = try await Self.engineTask.value
+        let engine = try await ParakeetTestEngine.shared()
         let window = try Self.fixtureSamples(seconds: 8)
         let result = try await Self.onGCDThread {
             let transcriber = ParakeetWindowTranscriber(engine: engine)

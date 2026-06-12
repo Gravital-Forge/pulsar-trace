@@ -1,28 +1,25 @@
 import Testing
 import Foundation
-import SnapshotTesting
 @testable import PulsarTraceEngine
 
 /// Pipeline coverage of the live pass (R10, R12, R14, R16, R35a, R36, R37).
 ///
 /// Drives a real fixture WAV through `FixturePlaybackSource` →
-/// `StreamingTranscriber` (sliding-window whisper + LocalAgreement-2) →
+/// `StreamingTranscriber` (sliding-window Parakeet + LocalAgreement-2) →
 /// append-only `live.md`, with no live diarization (the windowed-pyannote
 /// subprocess is exercised by the manual smoke test — these tests stay fast
-/// and device/network-free).
+/// and device/network-free after the one-time model download).
 ///
-/// Determinism: whisper CPU backend (D15), temperature 0, the committed
-/// fixture WAV. The `live.md` body is snapshot-tested with the volatile
-/// wall-clock header normalized.
+/// Determinism: Parakeet's greedy TDT decode is deterministic, so structure
+/// and keyword assertions are stable. Transcript text is asserted via
+/// fixture keywords (D39 supersedes the old whisper snapshot strategy —
+/// keywords survive small wording drift between decoder versions; the
+/// retired snapshot lives in git history).
 ///
-/// `.serialized`: whisper.cpp is single-context per process (D8) — only one
-/// transcriber alive at a time, like the real engine.
+/// `.serialized`: one resident ANE model serves the whole process
+/// (`ParakeetTestEngine`); serializing keeps decode interleaving sane.
 @Suite("Streaming pipeline", .serialized)
 struct StreamingPipelineTests {
-
-    private func baseModelURL() async throws -> URL {
-        try await WhisperTestGate.model(ModelCatalog.base)
-    }
 
     /// A throwaway recording folder for one test.
     private func tempFolder() -> URL {
@@ -40,38 +37,28 @@ struct StreamingPipelineTests {
         return Calendar.current.date(from: c)!
     }
 
-    /// `live.md` body with the volatile wall-clock header line replaced.
-    private func normalizedBody(of text: String) -> String {
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-        if lines.count > 1 { lines[1] = "## Transcript — <recording-start>" }
-        return lines.joined(separator: "\n")
-    }
-
     @Test("fast-mode live run grows an append-only live.md with provisional labels")
     func liveRunProducesProvisionalLiveMD() async throws {
-        let modelURL = try await baseModelURL()
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
-        let output = try await WhisperTestGate.run {
-            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
-            let pipeline = StreamingPipeline()
-            // Fast mode keeps the suite quick; the realtime/lag test below
-            // covers R10 pacing.
-            let source = FixturePlaybackSource(
-                file: FixtureLocator.audio("two-speakers-alternating.wav"),
-                realtime: false)
-            return try await pipeline.run(
-                configuration: .init(
-                    recordingFolder: folder,
-                    recordingStart: fixedStart,
-                    recordingId: "rec_two-speakers-alternating",
-                    liveDiarizerConfig: nil),
-                systemTranscriber: transcriber,
-                systemSource: source,
-                library: nil)
-        }
+        let transcriber = ParakeetWindowTranscriber(engine: engine)
+        let pipeline = StreamingPipeline()
+        // Fast mode keeps the suite quick; the realtime/lag test below
+        // covers R10 pacing.
+        let source = FixturePlaybackSource(
+            file: FixtureLocator.audio("two-speakers-alternating.wav"),
+            realtime: false)
+        let output = try await pipeline.run(
+            configuration: .init(
+                recordingFolder: folder,
+                recordingStart: fixedStart,
+                recordingId: "rec_two-speakers-alternating",
+                liveDiarizerConfig: nil),
+            systemTranscriber: transcriber,
+            systemSource: source,
+            library: nil)
 
         // R35a/R37: file created with marker + header.
         let text = try String(contentsOf: output.liveURL, encoding: .utf8)
@@ -84,53 +71,80 @@ struct StreamingPipelineTests {
         #expect(!text.contains("Speaker_"))   // no offline-style labels
         #expect(output.utteranceLines > 0)
 
-        // Output.language carries whisper's *detected* language for the
-        // system stream (not a hardcoded value): the fixture is English
-        // speech, so whisper detects `en` and the pipeline surfaces it.
-        #expect(output.language == "en")
+        // Parakeet has no language-ID head — the live pass reports the
+        // "no information" contract value (the refine pass detects/pins).
+        #expect(output.language == "unknown")
     }
 
-    @Test("live.md body matches the recorded snapshot")
-    func liveMDSnapshot() async throws {
-        let modelURL = try await baseModelURL()
+    @Test("live.md carries the fixture's distinctive words with monotonic timestamps")
+    func liveMDContentAndStructure() async throws {
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
-        let output = try await WhisperTestGate.run {
-            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
-            let pipeline = StreamingPipeline()
-            let source = FixturePlaybackSource(
-                file: FixtureLocator.audio("two-speakers-alternating.wav"),
-                realtime: false)
-            return try await pipeline.run(
-                configuration: .init(
-                    recordingFolder: folder,
-                    recordingStart: fixedStart,
-                    recordingId: "rec_two-speakers-alternating",
-                    liveDiarizerConfig: nil),
-                systemTranscriber: transcriber,
-                systemSource: source,
-                library: nil)
-        }
+        let transcriber = ParakeetWindowTranscriber(engine: engine)
+        let pipeline = StreamingPipeline()
+        let source = FixturePlaybackSource(
+            file: FixtureLocator.audio("two-speakers-alternating.wav"),
+            realtime: false)
+        let output = try await pipeline.run(
+            configuration: .init(
+                recordingFolder: folder,
+                recordingStart: fixedStart,
+                recordingId: "rec_two-speakers-alternating",
+                liveDiarizerConfig: nil),
+            systemTranscriber: transcriber,
+            systemSource: source,
+            library: nil)
+
         let text = try String(contentsOf: output.liveURL, encoding: .utf8)
-        assertSnapshot(of: normalizedBody(of: text), as: .lines)
+        let lower = text.lowercased()
+        // Distinctive fixture words from the committed live transcript. These
+        // were cross-checked against the retired whisper snapshot (git
+        // history: __Snapshots__/StreamingPipelineTests/liveMDSnapshot.1.txt)
+        // for distinctiveness, then narrowed to words Parakeet's
+        // LocalAgreement-2 reliably *commits* before end-of-stream — the
+        // fixture's final clause ("transformation layer") lands in the
+        // uncommitted tail under both decoders, so it is not asserted.
+        // Case-insensitive `contains`: robust to small wording drift between
+        // decoders, loud on a real break.
+        for keyword in ["coffee", "barista", "bookstore", "ingestion", "formats"] {
+            #expect(lower.contains(keyword), "live.md should mention '\(keyword)'")
+        }
+
+        // Structure: marker first, header second, several non-empty
+        // utterance lines whose timestamps never go backwards.
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        #expect(lines[0] == "<!-- pulsartrace:live -->")
+        #expect(lines[1].hasPrefix("## Transcript — "))
+        let utterances = lines.filter { $0.hasPrefix("**[") }
+        #expect(utterances.count >= 3)
+        for line in utterances {
+            // "**[HH:MM:SS] label:** text" — text part must be non-empty.
+            if let textStart = line.range(of: ":** ") {
+                #expect(!line[textStart.upperBound...]
+                    .trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        let stamps = utterances.compactMap { line -> String? in
+            guard let close = line.firstIndex(of: "]") else { return nil }
+            return String(line[line.index(line.startIndex, offsetBy: 3)..<close])
+        }
+        #expect(stamps == stamps.sorted(), "utterance timestamps must be monotonic")
     }
 
     /// Real-time-paced run: assert `live.md` grows monotonically and lag stays
     /// **bounded** under backpressure.
     ///
-    /// Note on R10: the PRD's "≤ 5 s median" target is specified *on M-series*
-    /// — i.e. the Metal/GPU whisper backend. This test suite must use the CPU
-    /// backend (project-docs/DECISIONS.md D15: the Metal backend asserts at process exit
-    /// after many contexts), and CPU whisper does not keep up with real time
-    /// on the longer fixtures, so its lag legitimately exceeds 5 s. The R10 ≤ 5 s
-    /// figure is verified by the manual GPU smoke test (`docs/...`), which
-    /// measures ~1 s median. What this test *does* guarantee deterministically
-    /// is the backpressure invariant: lag stays bounded (it does not grow
-    /// without limit), and `live.md` still grows strictly monotonically.
+    /// Note on R10: Parakeet on the ANE decodes far faster than real time,
+    /// so lag should stay small here; the assertion below is deliberately
+    /// the same *bounded*-lag invariant as before (not a tight latency
+    /// target — that's the manual smoke test's job), so a slow first-run
+    /// model load cannot flake this test.
     @Test("real-time-paced run: live.md grows monotonically, lag stays bounded")
     func realtimePacedRunBoundedLag() async throws {
-        let modelURL = try await baseModelURL()
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -147,23 +161,21 @@ struct StreamingPipelineTests {
             }
         }
 
-        let output = try await WhisperTestGate.run {
-            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
-            let pipeline = StreamingPipeline()
-            // realtime: true — frames at wall-clock pace, exercising R10.
-            let source = FixturePlaybackSource(
-                file: FixtureLocator.audio("two-speakers-alternating.wav"),
-                realtime: true)
-            return try await pipeline.run(
-                configuration: .init(
-                    recordingFolder: folder,
-                    recordingStart: fixedStart,
-                    recordingId: "rec_two-speakers-alternating",
-                    liveDiarizerConfig: nil),
-                systemTranscriber: transcriber,
-                systemSource: source,
-                library: nil)
-        }
+        let transcriber = ParakeetWindowTranscriber(engine: engine)
+        let pipeline = StreamingPipeline()
+        // realtime: true — frames at wall-clock pace, exercising R10.
+        let source = FixturePlaybackSource(
+            file: FixtureLocator.audio("two-speakers-alternating.wav"),
+            realtime: true)
+        let output = try await pipeline.run(
+            configuration: .init(
+                recordingFolder: folder,
+                recordingStart: fixedStart,
+                recordingId: "rec_two-speakers-alternating",
+                liveDiarizerConfig: nil),
+            systemTranscriber: transcriber,
+            systemSource: source,
+            library: nil)
         poller.cancel()
 
         #expect(output.utteranceLines > 0)

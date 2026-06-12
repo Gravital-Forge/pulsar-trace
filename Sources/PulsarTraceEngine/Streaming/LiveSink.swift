@@ -17,7 +17,10 @@ actor LiveSink {
     /// excluded — R10 is about live consumption, and the flush decodes the
     /// whole tail at once which is not representative of in-call latency).
     private var lagSamples: [Double] = []
-    private var systemLanguage = "en"
+    // "no information" contract default until `noteSystemLanguage` runs at
+    // teardown. The live pass (Parakeet, D39) has no language-ID head, so
+    // "unknown" is the steady-state value; the refine pass detects/pins.
+    private var systemLanguage = "unknown"
 
     struct Stats: Sendable {
         let utteranceLines: Int

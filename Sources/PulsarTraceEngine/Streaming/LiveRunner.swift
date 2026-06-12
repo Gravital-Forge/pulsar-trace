@@ -387,8 +387,12 @@ final class LiveRunner: Sendable {
             }
             // Publish the detected language and mark the worker finished so the
             // bounded poll in teardown can pick it up without awaiting the Task.
+            // No window detected a language → the live pass reports the
+            // "no information" contract value. Parakeet has no language-ID
+            // head, so this is the steady-state value for the live pass (D39);
+            // the refine pass detects/pins the real language.
             await workerResult.finish(
-                language: streamerBox.system.detectedLanguage ?? "en")
+                language: streamerBox.system.detectedLanguage ?? "unknown")
         }
 
         phase.set("loop-start")
@@ -561,7 +565,7 @@ final class LiveRunner: Sendable {
                 < workerDrainTimeout {
             try? await Task.sleep(for: .milliseconds(20))
         }
-        let detectedLanguage = await workerResult.language ?? "en"
+        let detectedLanguage = await workerResult.language ?? "unknown"
         worker.cancel()  // abandon a still-wedged worker; recording is safe
 
         // Fix B: hand off any in-flight diarization task before returning —

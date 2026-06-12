@@ -256,7 +256,6 @@ public final class RecordingViewModel {
             paths: paths,
             micDeviceID: settings.selectedMicDeviceID,
             systemAudioEnabled: settings.systemAudioEnabled,
-            modelName: settings.liveModelName,
             allowedLanguages: settings.allowedLanguages)
 
         let orchestrator = orchestratorFactory(plan, binaryURLResolver)
