@@ -248,7 +248,11 @@ public actor RefinementJobQueue {
     /// `pausedForRecording`, which is exactly why the requeue arm matches
     /// `CancellationError` unconditionally rather than gating on that flag. The
     /// 5 s is a ceiling on recording-start latency in those non-decode windows,
-    /// not a between-regions-only cost.
+    /// not a between-regions-only cost. One nuance on the diarize window: on a
+    /// system-only recording the diarize pass can run through to completion
+    /// without ever reaching a `box.get()` (a correct outcome — nothing to
+    /// requeue), whereas with a mic stream the worker exits at the mic-pass
+    /// `get()` and requeues per the recovery contract.
     public func pauseForRecording() async {
         pausedForRecording = true
         await pauseGate.close()
@@ -522,7 +526,8 @@ extension RefinementJobQueue {
                 recordingId: job.recordingId,
                 folderURL: job.folderURL,
                 modelName: model.name,
-                modelSHA256: job.modelSHA256,
+                // D39 — SDK-managed bundle, no pin; clears the retired ggml digest.
+                modelSHA256: "",
                 trigger: job.trigger,
                 enqueuedAt: job.enqueuedAt,
                 state: job.state)
