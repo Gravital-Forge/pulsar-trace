@@ -89,19 +89,11 @@ enum RecordCommand {
             systemAudioEnabled: options.systemAudioEnabled)
 
         // --- run the capture + live-engine session -------------------------
-        // `engineEnvironment` threads `PULSARTRACE_WHISPER_BINARY` to the
-        // engine subprocess so it can locate `pulsartrace-whisper` without
-        // relying on the resolver's `argv[0]` sibling lookup — the CLI knows
-        // the correct sibling already.
         let orchestrator = RecordOrchestrator(configuration: .init(
             captureBinary: binDir.appendingPathComponent("pulsartrace-capture"),
             captureArguments: plan.captureArguments,
             engineBinary: binDir.appendingPathComponent("pulsartrace-engine"),
-            engineArguments: plan.engineArguments,
-            engineEnvironment: [
-                "PULSARTRACE_WHISPER_BINARY":
-                    binDir.appendingPathComponent("pulsartrace-whisper").path,
-            ]))
+            engineArguments: plan.engineArguments))
 
         do {
             err("record: starting capture…")

@@ -155,15 +155,6 @@ public final class AppEnvironment {
         // `LoggingTests.bootstrapIsIdempotent`.
         _ = await LogSystem.bootstrap(paths: paths)
 
-        // Resolve the whisper binary once, from the mac-app's known
-        // `.build/debug/...` layout (via `#filePath`). The same resolver is
-        // threaded into the engine subprocess as `PULSARTRACE_WHISPER_BINARY`
-        // by `defaultOrchestratorFactory`, so refinement and live decode
-        // share a single source of truth for the binary path — and the
-        // resolver's `argv[0]`-sibling fallback never gets a chance to
-        // silently mis-locate it in the mac-app process.
-        let whisperBinaryURL =
-            RecordingViewModel.defaultBinaryURLResolver("pulsartrace-whisper")
         // Mirror the live path's language allow-list into refinement
         // (R-streaming-lang). Without this, refinement decoded each region
         // with unrestricted auto-detect, so a quiet/ambiguous stretch in a
@@ -173,7 +164,6 @@ public final class AppEnvironment {
             allowedLanguages: settings.allowedLanguages)
         let q = await RefinementJobQueue.makeStandard(
             events: events,
-            whisperBinaryURL: whisperBinaryURL,
             paths: paths,
             whisperOptions: refineWhisperOptions)
         await queueVM.setQueue(q)

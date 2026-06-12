@@ -25,13 +25,9 @@ public actor RecordOrchestrator {
         /// on duplicate keys). `nil` leaves the engine with the unmodified
         /// inherited environment.
         ///
-        /// Used in production to set `PULSARTRACE_WHISPER_BINARY` so the
-        /// engine subprocess can locate `pulsartrace-whisper` explicitly
-        /// rather than guessing from `argv[0]`'s sibling — the mac-app
-        /// process knows the correct `.build/debug/...` path (via
-        /// `RecordingViewModel.defaultBinaryURLResolver`), the engine
-        /// subprocess does not, and the `argv[0]` sibling lookup is
-        /// unreliable in dev (Xcode DerivedData paths etc.).
+        /// No production caller sets this today (the engine subprocess
+        /// resolves everything it needs itself); kept as the generic
+        /// subprocess-environment seam, exercised by RecordOrchestratorTests.
         public let engineEnvironment: [String: String]?
 
         public init(

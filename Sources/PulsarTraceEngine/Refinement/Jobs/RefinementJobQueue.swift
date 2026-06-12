@@ -33,9 +33,10 @@ public actor RefinementJobQueue {
     private var inflightCancellable: RefinementCancellable?
     /// A hook the in-flight worker registers (via `setInflightTranscriberRelease`)
     /// pointing at its `SharedTranscriberBox.release`. `pauseForRecording`
-    /// fires it after cancelling the diarizer so the refinement-whisper
-    /// subprocess terminates *before* the engine starts (Phase 6). Cleared
-    /// synchronously alongside `inflightCancellable` after each job runs.
+    /// fires it after cancelling the diarizer so the resident WhisperKit
+    /// models are freed (ARC on the dropped actor) *before* the live pass
+    /// loads its own model. Cleared synchronously alongside
+    /// `inflightCancellable` after each job runs.
     private var inflightTranscriberRelease: (@Sendable () -> Void)?
 
     /// Cap on the in-memory `recent` list. Older terminal jobs still exist
@@ -70,10 +71,8 @@ public actor RefinementJobQueue {
 
     /// Register a hook for releasing the in-flight job's shared transcriber.
     /// `pauseForRecording` invokes it after cancelling the diarizer so the
-    /// refinement-whisper subprocess (`RemoteRegionTranscriber`) terminates
-    /// promptly, releasing the binary-level `whisper.lock` before the
-    /// engine's whisper subprocess tries to acquire it (Phase 6 /
-    /// `docs/specs/2026-05-26-whisper-subprocess-design.md` §4 Layer 2).
+    /// resident `WhisperKitRegionTranscriber`'s CoreML models are freed
+    /// (ARC on the dropped actor) before the live pass loads its own model.
     /// Production `runJob` binds it to `SharedTranscriberBox.release`;
     /// tests pass a spy. Pass `nil` to clear.
     func setInflightTranscriberRelease(_ release: (@Sendable () -> Void)?) {
@@ -197,24 +196,17 @@ public actor RefinementJobQueue {
     /// stale "Diarizing 2/7" text. Also signals the diarizer to terminate its
     /// subprocess if one is currently running (D-Q7 / Task D3).
     ///
-    /// **Phase 6 behaviour change.** Previously this method only closed the
-    /// pause gate (the in-flight region decode ran to completion before the
-    /// refiner stalled at the next checkpoint). With the refinement path now
-    /// going through a `pulsartrace-whisper` subprocess, "complete the current
-    /// region" can be many seconds, during which the subprocess holds the
-    /// binary-level `whisper.lock` (spec §4 Layer 2). A recording-start
-    /// arriving in that window would race the lock and the engine's whisper
-    /// subprocess would exit 75. To prevent that, this method now:
+    /// **Why this does more than close the gate.** "Complete the current
+    /// region" can be many seconds, during which the resident WhisperKit
+    /// models hold ANE/memory the live pass is about to want. So this
+    /// method also:
     ///
     /// 1. Fires the in-flight transcriber-release hook (if registered),
     ///    which drops the `SharedTranscriberBox`'s cached
-    ///    `RemoteRegionTranscriber`. ARC + `deinit` terminate the subprocess
-    ///    and the lock is released within sub-second.
+    ///    `WhisperKitRegionTranscriber` — ARC frees the CoreML models.
     /// 2. Awaits the worker task's exit (the in-flight `transcribeRegion`
-    ///    throws once the subprocess dies; `ResumableRefiner.run` propagates
-    ///    the throw; the worker exits). A 5-second timeout caps the wait —
-    ///    if exceeded, a warning is logged and the method returns; the
-    ///    caller's lock probe (Layer B) provides the final guard.
+    ///    throws once the actor is gone; `ResumableRefiner.run` propagates
+    ///    the throw; the worker exits). A 5-second timeout caps the wait.
     ///
     /// The killed region is *not* lost: `ResumableRefiner` resumes from the
     /// previous completed checkpoint on the next `resumeAfterRecording`,
@@ -231,11 +223,9 @@ public actor RefinementJobQueue {
         }
         if let c = inflightCancellable { await c.cancel() }
 
-        // Phase 6: fire the transcriber-release hook so the refinement
-        // `pulsartrace-whisper` subprocess terminates promptly. The hook
-        // calls `SharedTranscriberBox.release`; the box's `deinit`-driven
-        // tear-down (`RemoteRegionTranscriber.shutdown`) SIGTERMs the host
-        // with a 2s grace and the kernel releases the `whisper.lock`.
+        // Fire the transcriber-release hook so the resident WhisperKit
+        // models are freed promptly (ARC on the dropped actor) before the
+        // live pass loads its own model.
         //
         // Only if a release hook was registered do we then await the
         // worker's exit: the await is a "I expect the in-flight decode to
@@ -394,19 +384,8 @@ extension RefinementJobQueue {
     /// `modelName` and `modelSHA256` to `enqueueManualRefine` /
     /// `enqueueAutoRefine` / `enqueueCrashRecovery`. The queue reads these
     /// fields from each `RefinementJob` at run time.
-    ///
-    /// `whisperBinaryURL` must be resolved by the caller — this method does
-    /// **not** consult `WhisperBinaryResolver.defaultBinaryURL()` itself.
-    /// The mac-app process's `argv[0]` is the mac-app's own launch path
-    /// (Xcode DerivedData etc.), so the resolver's sibling lookup would
-    /// silently fall through to its `/usr/local/bin/` last-resort branch
-    /// and refinement would fail at decode time with
-    /// `WhisperTranscribeError.modelLoadFailed`. The caller (e.g.
-    /// `AppEnvironment.bootstrap()`) passes the same path it threads to
-    /// the engine subprocess via `PULSARTRACE_WHISPER_BINARY`.
     public static func makeStandard(
         events: EventWriter,
-        whisperBinaryURL: URL,
         paths: AppPaths = .standard,
         whisperOptions: WhisperOptions = .init()
     ) async -> RefinementJobQueue {
@@ -434,66 +413,59 @@ extension RefinementJobQueue {
 
         let runJob: RunJob = { [weak queue] job in
             guard let queue else { return }
-            let modelStore = ModelStore(events: events)
-            let modelURL = try await modelStore.ensureAvailable(
-                ModelCatalog.model(named: job.modelName) ?? ModelCatalog.base)
-
-            // VAD failure is non-fatal: fall back to whole-buffer transcription
-            // (matches OfflineRefiner.refine behaviour for consistency).
-            let vadURL = try? await modelStore.ensureAvailable(ModelCatalog.sileroVAD)
+            // ANE refine (D39): in-process WhisperKit + FluidAudio VAD. The
+            // job's model name resolves against the WhisperKit catalog; an
+            // unknown name (e.g. a job enqueued by an older build) falls
+            // back to the default rather than failing the job.
+            let model = WhisperKitModelCatalog.model(named: job.modelName)
+                ?? WhisperKitModelCatalog.defaultModel
 
             let diarizer = try OfflineRefiner.makeDiarizer()
 
-            // Register the diarizer so pauseForRecording() can cancel it mid-run
-            // (D-Q7). Clearing the slot is the queue's responsibility (done
-            // synchronously in runNext() after _runJob returns), which guarantees
-            // the cancellable is nil before the next job can register its own —
-            // eliminating the lost-cancel race that a fire-and-forget Task cleanup
-            // would have introduced.
+            // Register the diarizer so pauseForRecording() can cancel it
+            // mid-run (D-Q7). Clearing the slot is the queue's
+            // responsibility (done synchronously in runNext() after _runJob
+            // returns).
             await queue.setInflightCancellable(diarizer)
 
-            // One transcriber per *job*, not per region. The historical
-            // cost driver was `whisper_init_from_file_with_params` rebuilding
-            // the Metal pipeline state on every call (DECISIONS.md D36,
-            // reopened); the remote variant keeps the same shape — one
-            // subprocess spawned on first region, reused across every region
-            // of the job. The queue's single-worker invariant + the host's
-            // single-connection lifecycle together serialise every touch.
-            //
-            // Phase 5 (docs/specs/2026-05-26-whisper-subprocess-design.md
-            // §6/§7): the in-process `WhisperTranscriber` is replaced by
-            // `RemoteRegionTranscriber` so a wedged refinement decode is
-            // recoverable via SIGKILL + respawn without losing already-
-            // checkpointed regions.
-            let sharedTranscriber = SharedTranscriberBox<any RegionTranscribing> {
-                let remoteConfig = RemoteRegionTranscriber.Configuration(
-                    binaryURL: whisperBinaryURL,
-                    modelURL: modelURL,
-                    socketDirectory: AppPaths.standard.socketDirectory)
-                return RemoteRegionTranscriber(
-                    configuration: remoteConfig,
-                    logger: Logger(label: LogSubsystem.engine))
+            // One transcriber per *job*, not per region — the model loads
+            // once on the first region decode and stays resident across the
+            // job. The release hook lets pauseForRecording() drop the box's
+            // actor: ARC frees the CoreML models — the in-process analogue
+            // of SIGTERMing the old `pulsartrace-whisper` subprocess before
+            // a recording starts.
+            let box = SharedTranscriberBox<WhisperKitRegionTranscriber> {
+                WhisperKitRegionTranscriber(
+                    configuration: .init(
+                        model: model,
+                        downloadBase: ModelStore.defaultCacheDirectory()
+                            .appendingPathComponent("whisperkit", isDirectory: true)),
+                    events: events)
+            }
+            let vad = FluidVADRegionDetector()
+            await queue.setInflightTranscriberRelease { [box] in
+                box.release()
             }
 
-            // Phase 6: register a release hook so pauseForRecording() can
-            // terminate the refinement-whisper subprocess (and free the
-            // binary-level `whisper.lock`) before the engine subprocess
-            // starts. Dropping the box's cached instance is enough —
-            // `RemoteRegionTranscriber.deinit` calls `shutdown()`, which
-            // SIGTERMs the host. The hook is cleared in `runNext`'s cleanup
-            // path so it does not leak across jobs.
-            await queue.setInflightTranscriberRelease { [sharedTranscriber] in
-                sharedTranscriber.release()
-            }
             let refiner = ResumableRefiner(
                 transcribe: { samples, region, options in
-                    let t = try sharedTranscriber.get()
-                    return try t.transcribeRegion(samples, region: region, options: options)
+                    let t = try box.get()
+                    return try await t.transcribeRegion(
+                        samples, region: region, options: options)
                 },
                 detectRegions: { samples in
-                    guard let vadURL else { return [] }
-                    return try WhisperTranscriber.detectSpeechRegions(
-                        in: samples, vadModelURL: vadURL)
+                    do {
+                        return try await vad.detectRegions(samples)
+                    } catch {
+                        // VAD failure must not lose a refine: one region
+                        // spanning the whole stream — WhisperKit's internal
+                        // seek loop handles the length. (The old path's
+                        // equivalent fallback was the whole-buffer decode.)
+                        return [SpeechRegion(
+                            start: .zero,
+                            end: .milliseconds(
+                                samples.count * 1000 / AudioFormat.sampleRate))]
+                    }
                 },
                 diarize: { wav in
                     try await diarizer.diarizeSystemStream(wavPath: wav)

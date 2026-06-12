@@ -16,7 +16,7 @@ public actor ResumableRefiner {
         @Sendable ([Float], SpeechRegion, WhisperOptions) async throws
         -> TranscriptionResult
     public typealias DetectRegions =
-        @Sendable ([Float]) throws -> [SpeechRegion]
+        @Sendable ([Float]) async throws -> [SpeechRegion]
     public typealias Diarize =
         @Sendable (URL) async throws -> DiarizationResult
     public typealias StageReporter = @Sendable (RefinementJobState) async -> Void
@@ -177,7 +177,7 @@ public actor ResumableRefiner {
     ) async throws {
         let samples = try await loadSamples(at: folder.systemStream.url)
         if progress.systemRegions.isEmpty {
-            let regions = try detectRegions(samples)
+            let regions = try await detectRegions(samples)
             progress.systemRegions = regions.map(Self.toWindow)
             try persist(progress, folder: folder)
         }
@@ -196,7 +196,7 @@ public actor ResumableRefiner {
         guard let mic = folder.micStream else { return }
         let samples = try await loadSamples(at: mic.url)
         if progress.micRegions.isEmpty {
-            let regions = try detectRegions(samples)
+            let regions = try await detectRegions(samples)
             progress.micRegions = regions.map(Self.toWindow)
             try persist(progress, folder: folder)
         }
