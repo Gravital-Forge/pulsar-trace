@@ -1,8 +1,8 @@
 <!-- pulsartrace:live -->
 ## Transcript — <recording-start>
 
-**[00:00:00] Them (provisional):** So I was at the coffee shop this morning, the one on the corner near the bookstore,
-**[00:00:04] Them (provisional):** And the barista asked me how I wanted my coffee, and honestly I had no idea.
-**[00:00:08] Them (provisional):** I usually just say medium, but today I decided to be
-**[00:00:12] Them (provisional):** Quick update on the project, we finished the data ingestion piece, it works. We tested it against three different file formats
-**[00:00:20] Them (provisional):** and it handled all of them. The next step is the transformation layer.
+**[00:00:00] Them?:** So I was at the coffee shop this morning, the one on the corner near the bookstore,
+**[00:00:04] Them?:** And the barista asked me how I wanted my coffee, and honestly I had no idea.
+**[00:00:08] Them?:** I usually just say medium, but today I decided to be
+**[00:00:12] Them?:** Quick update on the project, we finished the data ingestion piece, it works. We tested it against three different file formats
+**[00:00:20] Them?:** and it handled all of them. The next step is the transformation layer.

@@ -116,7 +116,7 @@ struct EngineMain {
     ///
     /// Live diarization is best-effort: if the pyannote subprocess cannot
     /// start it is skipped and system speakers stay the generic
-    /// `Them (provisional)`. `--no-live-diarization` skips it outright.
+    /// `Them?`. `--no-live-diarization` skips it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
         // --- resolve the source(s) ------------------------------------------
         let source: any AudioFrameSource
@@ -169,7 +169,14 @@ struct EngineMain {
                 .appendingPathComponent(stemName, isDirectory: true)
         }
         let recordingStart = Date()
-        let recordingId = RecordingFolder.recordingId(forName: stemName)
+        // An explicit `--recording-id` is already a finished `rec_<short>` id
+        // (RecordPlan builds it; pulsartrace-capture uses it verbatim) — it
+        // must NOT be re-derived: slugging turns `rec_x` into `rec_rec-x`,
+        // which broke the events-log join between `live_md_started` and the
+        // capture/refinement events of the same recording. Derive only when
+        // no id was given (fixture/stdin/CLI runs named by their stem).
+        let recordingId = value(after: "--recording-id", in: args)
+            ?? RecordingFolder.recordingId(forName: stemName)
 
         // --- whisper model (resident) ---------------------------------------
         let modelName = value(after: "--model", in: args) ?? "base"

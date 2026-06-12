@@ -37,6 +37,9 @@ public struct RecordingFolder: Sendable {
         public static let final = "final.md"
         public static let finalBackup = "final.md.bak"
         public static let metadata = "metadata.json"
+        /// UI-owned custom-title sidecar — written by the mac app's rename
+        /// flow, never read by the engine (spec §4.1).
+        public static let title = "title.txt"
     }
 
     public enum InputError: Error, CustomStringConvertible, Equatable {

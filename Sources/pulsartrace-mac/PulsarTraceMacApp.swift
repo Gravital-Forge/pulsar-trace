@@ -68,9 +68,30 @@ struct PulsarTraceMacApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        // The unified app window — Recordings / Speakers / Settings sidebar
-        // (#6). Replaces the inline panel pages and the standalone `Settings`
-        // scene; "Settings…" in the menu opens this window's Settings pane.
+        // Both windows opt OUT of macOS state restoration (the
+        // `WindowRestorationOptOut` background inside each content view), so
+        // the app launches quietly with just its menubar item. Restoration
+        // orders a saved window frontmost while launching, but an accessory
+        // app is not activated at launch, and cooperative activation
+        // (macOS 14+) declines a self-issued `NSApp.activate()` that no
+        // user interaction backs — Apple DTS documents this "incomplete
+        // activation" state with no app-side workaround (FB21087054
+        // family). The restored window therefore drew in the greyed
+        // inactive appearance (QA rounds 4–7). With restoration off, every
+        // window-open goes through a user action (dropdown click), which
+        // carries the intent that makes activation succeed.
+        // (`restorationBehavior(.disabled)` is this exact switch as a scene
+        // modifier, but it needs macOS 15 and `SceneBuilder` cannot branch
+        // on `#available` — the PRD floor is macOS 14, so the opt-out is
+        // applied at the AppKit level instead.)
+        mainWindow
+        liveTranscriptWindow
+    }
+
+    // The unified app window — Recordings / Speakers / Settings sidebar
+    // (#6). Replaces the inline panel pages and the standalone `Settings`
+    // scene; "Settings…" in the menu opens this window's Settings pane.
+    private var mainWindow: some Scene {
         Window("PulsarTrace", id: WindowID.main) {
             MainWindowView(events: environment.events)
                 .environment(environment.settings)
@@ -78,6 +99,12 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.scanner)
                 .environment(environment.navigation)
                 .environment(environment.queueVM)
+                // Recordings master-detail split (§4): the pane list model,
+                // the transcript detail model, and the live watcher the
+                // detail binds to for the in-progress recording.
+                .environment(environment.paneModel)
+                .environment(environment.detailModel)
+                .environment(environment.liveWatcher)
                 // Parallel to the MenuBarExtra onChange: the recorder lives
                 // in this window's Settings pane, and the popover content
                 // may never have been mounted when the combo changes here.
@@ -87,10 +114,12 @@ struct PulsarTraceMacApp: App {
                         recording: environment.recording)
                 }
         }
-        .defaultSize(width: 760, height: 480)
+        .defaultSize(width: 1104, height: 736)
+    }
 
-        // The detached live-transcript window (#5) — stays visible
-        // independently of the menubar panel.
+    // The detached live-transcript window (#5) — stays visible
+    // independently of the menubar panel.
+    private var liveTranscriptWindow: some Scene {
         Window("Live Transcript", id: WindowID.liveTranscript) {
             LiveTranscriptView()
                 .environment(environment.liveWatcher)
@@ -101,30 +130,43 @@ struct PulsarTraceMacApp: App {
 
 /// The menubar icon, a pure function of recording status + refine activity —
 /// the three states R40 requires to be distinct at a glance: idle, recording
-/// (red waveform + live elapsed timer), and refining (pulsing sync symbol).
+/// (the waveform with a red dot badge), and refining (pulsing sync symbol).
 private struct MenuBarLabel: View {
     let status: RecordingStatus
     let isRefining: Bool
 
     var body: some View {
         switch status {
-        case .recording(_, let startedAt):
-            // Red waveform + elapsed time — unambiguous "live" state (R40).
-            // MenuBarExtra labels are template-rendered, so the red tint may
-            // be flattened to monochrome; the timer is the primary signal.
-            // The TimelineView ticks at 1 Hz for the whole recording (the
-            // menubar never goes offscreen) — measured cost is negligible,
-            // but it's a continuous timer, not throttled.
-            HStack(spacing: 3) {
-                Image(systemName: "waveform.badge.microphone")
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color.red, Color.primary)
-                TimelineView(.periodic(from: startedAt, by: 1)) { context in
-                    Text(timerString(from: startedAt, to: context.date))
-                        .font(.system(.body, design: .monospaced))
+        case .recording:
+            // The app's normal waveform glyph with a red dot badged at its
+            // bottom-right corner — unambiguous "live" state (R40) that keeps
+            // the icon recognizable (QA round 5: the tiny microphone in
+            // `waveform.badge.microphone` was too small to read). MenuBarExtra
+            // labels are template-rendered, so the red may be flattened to
+            // monochrome — the dot still reads as a badge either way.
+            // Deliberately NO ticking timer here: a
+            // `TimelineView(.periodic)` in a status-item label degenerated
+            // into a continuous `MenuBarExtraHost.requestUpdate` →
+            // `NSStatusBarButton.setImage` → SF-symbol re-resolution loop on
+            // macOS 26.5 — 93% of the main thread, a frozen dropdown, and a
+            // `cpu_resource` violation while the engine recorded happily
+            // (incident 2026-06-11, diagnosed from the .diag stack). The
+            // dropdown's status row shows the start time, and the window
+            // toolbar carries the ticking elapsed timer — ordinary windows
+            // tick safely.
+            // `symbolEffect(.pulse)` below survived the same week unscathed,
+            // so the ban is on TimelineView/animated text in THIS label, not
+            // on symbol effects.
+            Image(systemName: "waveform")
+                .overlay(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 6, height: 6)
+                        // Nudge into the corner so the dot reads as a badge
+                        // on the icon, not a part of the waveform.
+                        .offset(x: 2, y: 2)
                 }
-            }
-            .accessibilityLabel("PulsarTrace, recording")
+                .accessibilityLabel("PulsarTrace, recording")
         case .launching:
             Image(systemName: "waveform.badge.plus")
                 .accessibilityLabel("PulsarTrace, starting recording")
@@ -138,11 +180,5 @@ private struct MenuBarLabel: View {
                     ? "PulsarTrace, refining a transcript"
                     : "PulsarTrace, idle")
         }
-    }
-
-    private func timerString(from start: Date, to now: Date) -> String {
-        let s = max(0, Int(now.timeIntervalSince(start)))
-        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
-                         : String(format: "%d:%02d", s / 60, s % 60)
     }
 }

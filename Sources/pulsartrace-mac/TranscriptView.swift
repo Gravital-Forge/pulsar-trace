@@ -2,22 +2,29 @@ import AppKit
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// A read-only scrolling transcript display (#4).
+/// The app's single read-only transcript renderer (§5).
 ///
-/// Shared by the detached live-transcript window (lines tailed from `live.md`)
-/// and the recorded-transcript viewer (lines read once from `final.md`). The
-/// two callers differ in their data source and in whether they pass an
-/// `AutoScrollController` — when one is provided, the view runs the smart
-/// auto-scroll behavior (R45); when it is `nil`, the static path is used.
+/// One NSTextView-backed implementation serves both modes — the detached
+/// live-transcript window (lines tailed from `live.md`) and the recorded
+/// transcript viewer (lines read once from `final.md`/`live.md`). There is no
+/// longer a separate SwiftUI `LazyVStack` path: a single NSTextView gives
+/// cross-line text selection (broken in the old per-row path) and
+/// find-in-transcript (⌘F via the system find bar).
+///
+/// Mode is selected by `autoScroll`: when an `AutoScrollController` is passed,
+/// the view runs the live smart-auto-scroll behavior (R45) and opens at the
+/// bottom; when it is `nil`, the transcript is static and opens at the top
+/// with no follow-mode and no jump pill.
 struct TranscriptView: View {
     /// The transcript lines, in file order.
     let lines: [String]
     /// Shown when `lines` is empty.
     var placeholder: String = "No transcript yet."
-    /// Opt-in smart auto-scroll. The live-transcript window passes one of
-    /// these; the recorded-transcript viewer passes `nil` and gets a plain
-    /// scroll view.
+    /// Opt-in smart auto-scroll (live mode). `nil` = static transcript:
+    /// opens at the top, no follow-mode, no jump pill.
     var autoScroll: AutoScrollController? = nil
+    /// Find-in-transcript hook (⌘F / toolbar Find) — optional.
+    var findActivator: TranscriptFindActivator? = nil
 
     var body: some View {
         if lines.isEmpty {
@@ -25,86 +32,41 @@ struct TranscriptView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let autoScroll {
-            SmartScrollingTranscript(lines: lines, controller: autoScroll)
+            ZStack(alignment: .bottomTrailing) {
+                TranscriptTextView(
+                    lines: lines, controller: autoScroll,
+                    findActivator: findActivator)
+                Group {
+                    if !autoScroll.isAtBottom, autoScroll.pendingNewLines > 0 {
+                        JumpToLatestPill(count: autoScroll.pendingNewLines) {
+                            autoScroll.jumpToLatest()
+                        }
+                        .padding(12)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: autoScroll.isAtBottom)
+                .animation(.easeOut(duration: 0.15), value: autoScroll.pendingNewLines)
+            }
         } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { _, raw in
-                        transcriptRow(raw)
-                    }
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    /// One styled row per parsed transcript line — raw Markdown source
-    /// (`**[00:01:23] Steve:** …`) is never shown; the marker and blank
-    /// lines are structural and dropped from display.
-    @ViewBuilder
-    private func transcriptRow(_ raw: String) -> some View {
-        switch TranscriptLine.parse(raw) {
-        case .utterance(let ts, let speaker, let text):
-            (Text("[\(ts)] ")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-             + Text("\(speaker)  ")
-                .font(.callout.weight(.semibold))
-             + Text(text)
-                .font(.callout))
-                .textSelection(.enabled)
-        case .header(let title):
-            Text(title).font(.headline).padding(.bottom, 2)
-        case .plain(let s):
-            Text(s).font(.callout).textSelection(.enabled)
-        case .marker, .blank:
-            EmptyView()
+            TranscriptTextView(
+                lines: lines, controller: nil, findActivator: findActivator)
         }
     }
 }
 
-/// Smart-auto-scrolling variant used by the live-transcript window (R45).
+/// NSScrollView-backed transcript view — the single renderer for both live
+/// and static modes (§5).
 ///
-/// Wraps the live-transcript ScrollView and the "Jump to latest" pill. The
-/// scroll view itself is `LiveScrollableTranscript` — an NSScrollView-backed
-/// `NSViewRepresentable` so we can read the user's scroll position
-/// *synchronously, before the new text lays out*. That's the algorithm the
-/// user asked for: "before the new line is scheduled to render, is the user
-/// at the bottom? If yes, keep them at the bottom."
-private struct SmartScrollingTranscript: View {
-    let lines: [String]
-    let controller: AutoScrollController
-
-    var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            LiveScrollableTranscript(lines: lines, controller: controller)
-
-            // Pill is overlaid on the scroll area. Animation modifiers are
-            // scoped to this Group so they can't cascade into the scroll
-            // view's content (which would animate the scroll position).
-            Group {
-                if !controller.isAtBottom, controller.pendingNewLines > 0 {
-                    JumpToLatestPill(count: controller.pendingNewLines) {
-                        controller.jumpToLatest()
-                    }
-                    .padding(12)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-            }
-            .animation(.easeOut(duration: 0.15), value: controller.isAtBottom)
-            .animation(.easeOut(duration: 0.15), value: controller.pendingNewLines)
-        }
-    }
-}
-
-/// NSScrollView-backed transcript view. Owns the "before-render" check: each
+/// In live mode (`controller != nil`) it owns the "before-render" check: each
 /// time `updateNSView` runs (called with the new `lines` but *before* the
 /// underlying NSTextView's string has been replaced), we sample the
 /// `NSScrollView`'s current scroll offset to see if the user was at the
 /// bottom. If yes, we set the new text and scroll to the new bottom. If no,
 /// we set the new text and leave the scroll position alone, telling the
-/// controller to bump `pendingNewLines` so the pill appears.
+/// controller to bump `pendingNewLines` so the pill appears. In static mode
+/// (`controller == nil`) the view simply renders the lines and opens at the
+/// top — no scroll observation, no follow-mode.
 ///
 /// Why NSScrollView and not pure SwiftUI: in SwiftUI, `GeometryReader` and
 /// `PreferenceKey` fire *after* layout. By the time we'd get the new
@@ -113,9 +75,11 @@ private struct SmartScrollingTranscript: View {
 /// unanswerable from geometry alone. NSScrollView gives us a synchronous
 /// read of the *current* scroll position, sampled at exactly the right
 /// moment.
-private struct LiveScrollableTranscript: NSViewRepresentable {
+@MainActor
+private struct TranscriptTextView: NSViewRepresentable {
     let lines: [String]
-    let controller: AutoScrollController
+    let controller: AutoScrollController?
+    let findActivator: TranscriptFindActivator?
 
     /// "Essentially at the bottom" — within ~half a line-height (body font is
     /// ~18pt by default, so 8pt is well under a line). Strict on purpose:
@@ -138,7 +102,11 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
 
-        let textView = NSTextView()
+        // TextKit 1 explicitly: every measurement here (`isAtBottom`,
+        // `scrollToBottom`, `ensureLayout`) assumes synchronous full layout.
+        // A bare NSTextView() would start on TextKit 2 and silently downgrade
+        // on the first `layoutManager` access — pin the engine instead.
+        let textView = NSTextView(usingTextLayoutManager: false)
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -155,23 +123,38 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
             width: 0,
             height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
+        // Find-in-transcript (⌘F): the system find bar, incremental search on.
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         textView.textStorage?.setAttributedString(Self.attributed(from: lines))
 
         scrollView.documentView = textView
 
-        // Subscribe to live scroll notifications so we can keep the
-        // controller's `isAtBottom` in sync with the user's actual position.
-        scrollView.contentView.postsBoundsChangedNotifications = true
-        context.coordinator.observe(scrollView: scrollView, threshold: Self.bottomThreshold)
+        // Wire the find activator to this text view so the toolbar Find button
+        // / ⌘F can drive the find bar (the accessory app has no visible menu
+        // bar, so the standard responder-chain route is replaced — §5).
+        findActivator?.textView = textView
+
         context.coordinator.lastSeenLineCount = lines.count
         context.coordinator.lastSeenRawText = lines.joined(separator: "\n")
 
-        // Open at the bottom — user's intent is "show me the latest." We
-        // need to wait one runloop turn so the text view has finished
-        // laying out before we can compute the bottom.
-        DispatchQueue.main.async {
-            Self.scrollToBottom(in: scrollView, animated: false)
-            controller.setIsAtBottom(true)
+        // Live mode only: subscribe to scroll notifications so the
+        // controller's `isAtBottom` tracks the user's position, and open at
+        // the bottom (user's intent is "show me the latest"). Static mode
+        // opens at the top — NSScrollView's natural origin — so there is
+        // nothing to do. The mode is fixed at make time on purpose:
+        // `TranscriptView.body`'s branches guarantee a fresh NSView whenever
+        // `autoScroll` flips nil↔non-nil.
+        if let controller {
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            context.coordinator.observe(scrollView: scrollView, threshold: Self.bottomThreshold)
+
+            // Wait one runloop turn so the text view has finished laying out
+            // before we compute the bottom.
+            DispatchQueue.main.async {
+                Self.scrollToBottom(in: scrollView, animated: false)
+                controller.setIsAtBottom(true)
+            }
         }
 
         return scrollView
@@ -180,26 +163,41 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
 
+        // SwiftUI may rebuild this representable's `rootView` (and so re-run
+        // `updateNSView`) while reusing the same NSView; re-register the find
+        // activator so it always points at the live text view.
+        findActivator?.textView = textView
+
         // Change detection compares the RAW joined lines (tracked in the
         // coordinator), not `textView.string` — the rendered text is a
         // styled reformatting that drops marker/blank lines, so it never
         // equals the raw source.
+        let oldText = context.coordinator.lastSeenRawText
         let newText = lines.joined(separator: "\n")
-        let textChanged = context.coordinator.lastSeenRawText != newText
+        let textChanged = oldText != newText
 
-        // ---- The before-render check the user asked for ----
+        // ---- The before-render check (live mode only) ----
         // Sample NOW, with the OLD text still in place.
-        let wasAtBottom = Self.isAtBottom(in: scrollView, threshold: Self.bottomThreshold)
-        // -----------------------------------------------------
+        let wasAtBottom = controller != nil
+            && Self.isAtBottom(in: scrollView, threshold: Self.bottomThreshold)
+        // ---------------------------------------------------
 
         if textChanged {
-            let oldLineCount = context.coordinator.lastSeenLineCount
-            // Wholesale rebuild — same O(n) shape the old `string =` setter
-            // had. If long meetings ever make this measurable: live changes
-            // are suffix-only appends, so `textStorage.append` over
-            // `lines[oldCount...]` would work, with a full rebuild fallback
-            // when the line count decreases (truncation/overwrite).
-            textView.textStorage?.setAttributedString(Self.attributed(from: lines))
+            let oldCount = context.coordinator.lastSeenLineCount
+            // Suffix-append fast path (§5): live updates append
+            // `lines[oldCount...]` instead of rebuilding the whole attributed
+            // string per poll tick. The boundary must be a clean line break —
+            // a mutated tail line falls back to the full rebuild, as does a
+            // shrink (truncation/overwrite).
+            if lines.count > oldCount, oldCount > 0,
+               newText.count > oldText.count,
+               newText.hasPrefix(oldText),
+               newText[newText.index(newText.startIndex, offsetBy: oldText.count)] == "\n" {
+                textView.textStorage?.append(
+                    Self.attributed(from: Array(lines[oldCount...])))
+            } else {
+                textView.textStorage?.setAttributedString(Self.attributed(from: lines))
+            }
             context.coordinator.lastSeenRawText = newText
             // Force layout so the document view's frame reflects the new
             // text before we measure or scroll.
@@ -208,20 +206,23 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
             }
             context.coordinator.lastSeenLineCount = lines.count
 
-            if wasAtBottom {
-                // Keep the user at the bottom.
-                Self.scrollToBottom(in: scrollView, animated: false)
-                controller.setIsAtBottom(true)
-            } else {
-                let delta = lines.count - oldLineCount
-                controller.notePendingNewLines(delta)
+            if let controller {
+                if wasAtBottom {
+                    // Keep the user at the bottom.
+                    Self.scrollToBottom(in: scrollView, animated: false)
+                    controller.setIsAtBottom(true)
+                } else {
+                    controller.notePendingNewLines(lines.count - oldCount)
+                }
             }
         }
 
-        // Process explicit "Jump to latest" requests from the controller.
-        // The controller bumps `jumpToLatestGeneration` each time; we
-        // animate a scroll-to-bottom the first time we see a new value.
-        if context.coordinator.lastSeenJumpGeneration != controller.jumpToLatestGeneration {
+        // Process explicit "Jump to latest" requests from the controller
+        // (live mode only). The controller bumps `jumpToLatestGeneration` each
+        // time; we animate a scroll-to-bottom the first time we see a new
+        // value.
+        if let controller,
+           context.coordinator.lastSeenJumpGeneration != controller.jumpToLatestGeneration {
             context.coordinator.lastSeenJumpGeneration = controller.jumpToLatestGeneration
             Self.scrollToBottom(in: scrollView, animated: true)
             controller.setIsAtBottom(true)
@@ -240,8 +241,7 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
         return distance <= threshold
     }
 
-    /// Styled rendering of the raw transcript lines — same per-line shapes
-    /// as the static viewer's `transcriptRow` (timestamp dimmed +
+    /// Styled rendering of the raw transcript lines (timestamp dimmed +
     /// monospaced digits, speaker semibold, text plain; marker and blank
     /// lines dropped).
     private static func attributed(from lines: [String]) -> NSAttributedString {
@@ -295,7 +295,7 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
 
     @MainActor
     final class Coordinator {
-        private let controller: AutoScrollController
+        private let controller: AutoScrollController?
         private var scrollObserver: NSObjectProtocol?
         var lastSeenLineCount: Int = 0
         var lastSeenJumpGeneration: Int = 0
@@ -304,12 +304,12 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
         /// view no longer mirrors the raw source.
         var lastSeenRawText: String = ""
 
-        init(controller: AutoScrollController) {
+        init(controller: AutoScrollController?) {
             self.controller = controller
         }
 
         func observe(scrollView: NSScrollView, threshold: CGFloat) {
-            let controller = controller
+            guard let controller else { return }
             scrollObserver = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification,
                 object: scrollView.contentView,
@@ -317,7 +317,7 @@ private struct LiveScrollableTranscript: NSViewRepresentable {
             ) { [weak scrollView] _ in
                 guard let scrollView else { return }
                 MainActor.assumeIsolated {
-                    let atBottom = LiveScrollableTranscript.isAtBottom(
+                    let atBottom = TranscriptTextView.isAtBottom(
                         in: scrollView,
                         threshold: threshold)
                     controller.setIsAtBottom(atBottom)
@@ -363,11 +363,31 @@ private struct JumpToLatestPill: View {
     }
 }
 
-/// Copy a transcript's lines to the general pasteboard — backs the "Copy"
-/// button in the live and recorded transcript views (#4).
+/// Bridges the SwiftUI Find affordance (toolbar button / ⌘F) to the
+/// NSTextView's NSTextFinder find bar. The accessory app has no visible menu
+/// bar, so the standard ⌘F responder-chain route is wired explicitly (§5
+/// risk flag).
+@MainActor
+final class TranscriptFindActivator {
+    weak var textView: NSTextView?
+
+    func showFind() {
+        guard let textView else { return }
+        textView.window?.makeFirstResponder(textView)
+        let item = NSMenuItem()
+        item.tag = NSTextFinder.Action.showFindInterface.rawValue
+        textView.performTextFinderAction(item)
+    }
+}
+
+/// Copy a transcript's lines to the general pasteboard as rendered plain text
+/// — "Copy copies what you see" (§5). The styled renderer drops marker/blank
+/// lines and reformats utterances, so we copy that rendering (the same text
+/// selection + ⌘C from the NSTextView yields), not the raw Markdown source;
+/// the raw file remains one Reveal-in-Finder away.
 @MainActor
 func copyTranscriptToPasteboard(_ lines: [String]) {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
-    pasteboard.setString(lines.joined(separator: "\n"), forType: .string)
+    pasteboard.setString(TranscriptPlainText.rendered(from: lines), forType: .string)
 }

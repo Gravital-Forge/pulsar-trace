@@ -14,7 +14,7 @@ import Logging
 ///   producing **committed** utterances ≤ 5 s behind real time (R10).
 /// - `LiveDiarizer` — windowed-pyannote provisional speaker IDs for the system
 ///   stream (R15, R16). Optional: when unavailable the system stream is still
-///   transcribed, labelled `Them (provisional)`.
+///   transcribed, labelled `Them?`.
 /// - `SpeakerLibrary` — opened **read-only** (R18, R32): a provisional speaker
 ///   whose centroid matches a known library speaker is shown by name. The live
 ///   pass **never writes** to the library — invariant #5.
@@ -43,7 +43,7 @@ public struct StreamingPipeline: Sendable {
         /// Streaming-transcription tunables.
         public let transcriberConfig: StreamingTranscriber.Configuration
         /// Live-diarization subprocess config. `nil` → no live diarization
-        /// (system speakers stay the generic `Them (provisional)`).
+        /// (system speakers stay the generic `Them?`).
         public let liveDiarizerConfig: LiveDiarizer.Configuration?
         /// How often the system stream is handed to the live diarizer, and the
         /// window length it sees.

@@ -335,7 +335,7 @@ struct LiveRunnerResilienceTests {
         // loop's critical path (Fix B).
         #expect(output.utteranceLines > 0)
         let text = try String(contentsOf: output.liveURL, encoding: .utf8)
-        #expect(text.contains("(provisional):"))
+        #expect(text.contains("?:** "))
         // diarizeWindow was reached (windows were dispatched) but at most one
         // was ever in flight — the single-window bound held.
         #expect(await diarizer.windowsStarted >= 1)

@@ -100,7 +100,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done & committed
       per-line append (R12/R36); emits `live_md_started`
 - [x] `MicEchoDedup`: text-similarity ±5s mic-echo drop (R19)
 - [x] Read-only speaker-library lookup during live → known names, still
-      `(provisional)` (R18, R32); library never written by the live pass
+      provisional (`?` suffix) (R18, R32); library never written by the live pass
 - [x] `pulsartrace-engine --live [--stdin|--source fixture] [--out] [--model]
       [--no-live-diarization]`; single piped stream → system stream; writes
       `audio-system.wav` so a later `refine` works

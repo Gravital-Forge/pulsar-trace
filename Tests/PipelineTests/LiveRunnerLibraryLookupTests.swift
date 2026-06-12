@@ -3,8 +3,8 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// R18 coverage: during the live pass a provisional speaker whose centroid
-/// matches a known library speaker is surfaced **by name** — `<name>
-/// (provisional)` — not the generic `Them (provisional)`.
+/// matches a known library speaker is surfaced **by name** — `<name>?` —
+/// not the generic `Them?`.
 ///
 /// This exercises the exact wiring fixed in review item SW-B: `LiveRunner`
 /// must pass the live diarizer's *real* pyannote model revision to
@@ -104,7 +104,7 @@ struct LiveRunnerLibraryLookupTests {
             for: utterance, diarState: diarState, diarizer: diarizer)
 
         // R18: the known name is surfaced, still flagged provisional (R16).
-        #expect(label == "Dana Lee (provisional)")
+        #expect(label == "Dana Lee?")
     }
 
     @Test("a model-revision mismatch falls back to the generic Them label")
@@ -144,6 +144,6 @@ struct LiveRunnerLibraryLookupTests {
         let label = await runner.resolveSystemLabel(
             for: utterance, diarState: diarState, diarizer: diarizer)
 
-        #expect(label == "Them (provisional)")
+        #expect(label == "Them?")
     }
 }

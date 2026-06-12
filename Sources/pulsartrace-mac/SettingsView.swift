@@ -80,13 +80,14 @@ struct SettingsView: View {
             }
 
             Section("Output") {
-                HStack {
-                    Text(settings.outputFolderURL?.path ?? "No folder chosen")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Button("Choose…") { chooseOutputFolder() }
+                LabeledContent("Location") {
+                    HStack {
+                        Text(settings.outputFolderURL?.path ?? "No folder chosen")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button("Choose…") { chooseOutputFolder() }
+                    }
                 }
             }
 
@@ -109,6 +110,7 @@ struct SettingsView: View {
         // sidebar extent) matches the Recordings and Speakers panes — those
         // carry a toolbar; a pane without one renders different chrome.
         .toolbar {
+            ToolbarItem(placement: .navigation) { RecordToolbarButton() }
             ToolbarItem {
                 Button {
                     if let url = settings.outputFolderURL {

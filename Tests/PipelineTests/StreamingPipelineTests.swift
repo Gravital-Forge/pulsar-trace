@@ -79,8 +79,8 @@ struct StreamingPipelineTests {
         #expect(lines[0] == "<!-- pulsartrace:live -->")
         #expect(lines[1].hasPrefix("## Transcript — "))
 
-        // R14/R16: system speakers labelled `Them … (provisional)`.
-        #expect(text.contains("Them (provisional):"))
+        // R14/R16: system speakers labelled `Them …?`.
+        #expect(text.contains("Them?:"))
         #expect(!text.contains("Speaker_"))   // no offline-style labels
         #expect(output.utteranceLines > 0)
 
@@ -212,7 +212,7 @@ struct StreamingPipelineTests {
             start: .seconds(2), end: .seconds(5),
             text: "lets review the auth flow before the demo")
         await sink.appendSystemUtterance(
-            systemUtterance, label: "Them (provisional)",
+            systemUtterance, label: "Them?",
             realElapsed: .seconds(6))
 
         // The mic picks the *same words* up off the speakers, 0.4 s later —
@@ -238,7 +238,7 @@ struct StreamingPipelineTests {
         #expect(stats.utteranceLines == 2)
 
         let text = try String(contentsOf: liveURL, encoding: .utf8)
-        #expect(text.contains("Them (provisional):** lets review the auth flow"))
+        #expect(text.contains("Them?:** lets review the auth flow"))
         #expect(text.contains("You:** sounds good i will share my screen"))
         // The echoed line never reached live.md.
         #expect(!text.contains("You:** lets review the auth flow"))

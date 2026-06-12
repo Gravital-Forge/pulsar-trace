@@ -187,10 +187,10 @@ PulsarTrace's public API is three plain-text surfaces on disk. They are document
 
 **[00:00:05] You:** So the main issue is the auth flow.
 
-**[00:00:12] Them (provisional):** Right, the redirect URI isn't handled.
+**[00:00:12] Them?:** Right, the redirect URI isn't handled.
 ```
 
-The `<!-- pulsartrace:live -->` / `<!-- pulsartrace:final -->` marker lets a consumer tell a provisional transcript from a finalized one. `(provisional)` annotations and provisional labels are resolved in the refinement pass.
+The `<!-- pulsartrace:live -->` / `<!-- pulsartrace:final -->` marker lets a consumer tell a provisional transcript from a finalized one. Provisional `?` labels are resolved in the refinement pass.
 
 ### `events/*.jsonl` — the activity stream
 

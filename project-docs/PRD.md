@@ -355,7 +355,7 @@ Offline diarization (Epic 3 / v0.1) is the source of truth; streaming diarizatio
 | ID | Pri | Requirement | Acceptance |
 |----|-----|-------------|------------|
 | R15 | P0 | Run `diart` on system stream during live capture | Speaker IDs appear in transcript with ≤ 3s lag from utterance |
-| R16 | P0 | Live speaker IDs are working hypotheses; explicitly marked provisional in `live.md` (e.g., `*Them (provisional)*`) | Distinguishable from final labels |
+| R16 | P0 | Live speaker IDs are working hypotheses; explicitly marked provisional in `live.md` (e.g., `*Them?*`) | Distinguishable from final labels |
 | R18 | P1 | Live speaker library lookup: if a centroid exists matching the new speaker, display the known name (provisional but named) | Match threshold tunable; default 0.7 cosine |
 | R19 | P0 | Mic-echo dedup: when speaker plays system audio out loud and mic picks it up, drop the mic-side duplicate | Text similarity > 0.5 within ±5s window between mic and system, drop mic side. (Carry over from `transcribe-md`.) |
 
@@ -1126,10 +1126,10 @@ Signing, notarization, first-run permissions wizard (TCC + Hugging Face token pa
 
 **[14:30:05] You:** So the main issue is the authentication flow breaks on mobile.
 
-**[14:30:12] Sarah (provisional):** Right, I think the redirect URI isn't being handled correctly by the webview.
+**[14:30:12] Sarah?:** Right, I think the redirect URI isn't being handled correctly by the webview.
 
 ...
 ```
 
-After post-pass, the marker becomes `<!-- pulsartrace:final -->` and `(provisional)` annotations are removed. Format is line-oriented; consumers can `tail -f` it.
+After post-pass, the marker becomes `<!-- pulsartrace:final -->` and the provisional `?` speaker suffixes are removed. Format is line-oriented; consumers can `tail -f` it.
 

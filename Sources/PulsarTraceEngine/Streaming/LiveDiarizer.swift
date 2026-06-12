@@ -471,7 +471,7 @@ public actor LiveDiarizer: LiveDiarizing {
     }
 
     /// The Nth provisional speaker key: `Them`, `Them #2`, `Them #3`, …
-    /// (R16 — the `(provisional)` suffix is added by the line formatter).
+    /// (R16 — the `?` suffix is added by `LiveRunner.resolveSystemLabel`).
     public static func provisionalKey(index: Int) -> String {
         index == 0 ? "Them" : "Them #\(index + 1)"
     }

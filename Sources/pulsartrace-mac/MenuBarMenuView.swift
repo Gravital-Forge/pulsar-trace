@@ -196,20 +196,39 @@ struct MenuBarMenuView: View {
 
     /// Open an auxiliary window and bring the app forward.
     ///
-    /// `NSApp.activate()` is required: PulsarTrace is an accessory-policy
-    /// process (no Dock icon, D27), so a freshly-opened window does not become
-    /// key on its own. When opening the unified window, the target sidebar
-    /// section is set first so it lands on the pane the user picked.
+    /// Activation is required (PulsarTrace is an accessory-policy process,
+    /// D27) and it must land AFTER this dropdown panel closes: dismissing a
+    /// status-item panel hands focus back to the previously active app, and
+    /// that hand-back arrives after this button action returns — a
+    /// synchronous `NSApp.activate()` here gets undone by it, leaving the
+    /// window inactive and behind the other app's windows (QA round 6). The
+    /// delay parks the request until the close has settled; the click that
+    /// got us here is the user intent that makes the system grant it.
+    ///
+    /// The target window is also raised explicitly: `openWindow` on an
+    /// already-open window (e.g. restored at launch, sitting behind the
+    /// frontmost app) does not reorder it while the app is inactive. SwiftUI
+    /// names scene windows `<scene id>-AppWindow-<n>`, hence the prefix
+    /// match. When opening the unified window, the target sidebar section is
+    /// set first so it lands on the pane the user picked.
     private func open(_ id: String, section: AppSection? = nil) {
         if let section { navigation.section = section }
         openWindow(id: id)
-        NSApp.activate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NSApp.activate()
+            if let window = NSApp.windows.first(
+                where: { $0.identifier?.rawValue.hasPrefix(id) == true }) {
+                window.makeKeyAndOrderFront(nil)
+                window.orderFrontRegardless()
+            }
+        }
     }
 }
 
 /// A button style that renders a menubar-dropdown row (#2): full-width,
-/// left-aligned, with an accent-coloured highlight on hover — so the panel
-/// reads as a native-looking menu list instead of a stack of bordered buttons.
+/// left-aligned, with the system menu-selection highlight on hover — so the
+/// panel reads as a native-looking menu list instead of a stack of bordered
+/// buttons.
 struct MenuRowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         MenuRow(configuration: configuration)
@@ -230,15 +249,23 @@ struct MenuRowButtonStyle: ButtonStyle {
                 .contentShape(Rectangle())
                 .foregroundStyle(foreground(highlighted: highlighted))
                 .background(
+                    // System menu-selection colors, so the highlight stays
+                    // correct under any user-selected accent color.
                     RoundedRectangle(cornerRadius: 5)
-                        .fill(highlighted ? Color.accentColor : .clear))
+                        .fill(highlighted
+                            ? Color(nsColor: .selectedContentBackgroundColor)
+                            : .clear))
                 .opacity(configuration.isPressed ? 0.7 : 1)
                 .onHover { hovering = $0 }
         }
 
         private func foreground(highlighted: Bool) -> Color {
             if !isEnabled { return .secondary }
-            return highlighted ? .white : .primary
+            // Pairs with .selectedContentBackgroundColor above — the system
+            // menu-selection text color, correct under any accent color.
+            return highlighted
+                ? Color(nsColor: .selectedMenuItemTextColor)
+                : .primary
         }
     }
 }

@@ -21,34 +21,57 @@ struct LiveTranscriptView: View {
     /// trigger re-renders without needing `@Bindable`.
     @State private var autoScroll = AutoScrollController()
 
+    /// Bridges the toolbar Find button / ⌘F to the renderer's find bar.
+    @State private var find = TranscriptFindActivator()
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Live Transcript").font(.headline)
-                if watcher.isActive {
+        TranscriptView(
+            lines: watcher.lines,
+            placeholder: watcher.isActive
+                ? "Waiting for transcript…"
+                : "No recording in progress.",
+            autoScroll: autoScroll,
+            findActivator: find)
+        .frame(minWidth: 360, minHeight: 320)
+        // Same launch-quiet rule as the main window (see
+        // `WindowRestorationOptOut`): never re-presented by restoration.
+        .background(WindowRestorationOptOut())
+        .navigationTitle("Live Transcript")
+        .toolbar {
+            // Conditionally PRESENT, not a conditionally-empty item: an empty
+            // ToolbarItem draws a ghost button (regression fixed in 55ec1b8).
+            if watcher.isActive {
+                ToolbarItem {
                     Label("Recording", systemImage: "circle.fill")
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.red)
                         .font(.caption)
+                        // Breathing room inside the toolbar-item chrome —
+                        // without it the dot touches the item's leading edge
+                        // (QA rounds 5 and 8: 6pt still read as tight).
+                        .padding(.horizontal, 10)
+                        .accessibilityLabel("Recording in progress")
                 }
-                Spacer()
+            }
+            ToolbarItem {
+                Button {
+                    find.showFind()
+                } label: {
+                    Label("Find", systemImage: "magnifyingglass")
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(watcher.lines.isEmpty)
+                .help("Find in transcript (⌘F)")
+            }
+            ToolbarItem {
                 Button {
                     copyTranscriptToPasteboard(watcher.lines)
                 } label: {
                     Label("Copy", systemImage: "doc.on.doc")
                 }
                 .disabled(watcher.lines.isEmpty)
+                .help("Copy the transcript text")
             }
-            .padding(12)
-            Divider()
-
-            TranscriptView(
-                lines: watcher.lines,
-                placeholder: watcher.isActive
-                    ? "Waiting for transcript…"
-                    : "No recording in progress.",
-                autoScroll: autoScroll)
         }
-        .frame(minWidth: 360, minHeight: 320)
     }
 }

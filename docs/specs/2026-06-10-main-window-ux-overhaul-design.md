@@ -1,0 +1,446 @@
+# Main Window UX Overhaul — Master–Detail Recordings, In-Window Live Transcript, Queue Folding
+
+- **Status:** design approved 2026-06-10 (brainstormed; visual/IA decisions delegated to the agent by the user — "more polished, internally consistent, feels good"). Amended same day after an adversarial UX review by a second agent: action-scoped auto-select, user-mediated refine swap, filter field instead of `.searchable`, window min-size math, transient completion badge, Move to Trash, distinct `.error` banner, renderer scroll/append requirements, speakers multi-select. Second amendment (user request): renameable recordings (UI-owned sidecar title) and symbol rendering of the "(provisional)" live label. Third amendment (user decision): the provisional marker is fixed at the source — the engine writes a compact `?` suffix into `live.md`; no display-layer transformation, format docs and R16's example updated ("clean over compatibility — the app is too new to tangle"). Fourth amendment (user-set guiding principle): breaking changes are allowed and **preferred** over compatibility layers — simplifications applied throughout (clock-free completion badge, unify-don't-map id rule). Fifth amendment (user correction): the principle removes *mechanisms*, never *functionality* — rename triggers are double-click + context menu (Return-to-rename dropped as unnatural here); the double-click/selection coexistence is to be implemented correctly, not avoided.
+- **Date:** 2026-06-10
+- **Scope:** `pulsartrace-mac` (views) + `PulsarTraceMenuBar` (new view models), plus **one deliberate engine/format change**: the live provisional-label suffix in `live.md` becomes `?` (§5; `docs/file-format.md` and the R16 example updated with it). `final.md` and `events/*.jsonl` untouched; no capture changes.
+- **Builds on:** `docs/specs/2026-06-10-ui-polish-plan.md` (previous polish round, implemented — transcript parser/styled rendering, friendly titles, menubar icon states, notifications, context menus, hotkey recorder).
+- **Floor:** macOS 14 (`ContentUnavailableView`, `@Observable`, `symbolEffect(.pulse)` available; `.rotate` is not).
+
+## 1. Problem
+
+The unified window works but reads as a debug surface, not a product:
+
+1. **Transcripts — the app's core content — open in a fixed 540×480 modal sheet.**
+   No resize, no browse-while-reading, no live view of the recording in
+   progress from the main window.
+2. **The primary action is invisible.** Start/stop exists only in the menubar
+   dropdown and the global hotkey; the main window has no record affordance.
+3. **Internal machinery leaks into the UI.** A "Refinements" sidebar pane shows
+   raw monospaced recording ids and queue states; users think in recordings,
+   not jobs.
+4. **Lists feel dead.** Single click does nothing (double-click and context
+   menu only); every refined row carries a permanent green check (noise);
+   recordings are a flat undifferentiated list with no filtering.
+5. **Assorted inconsistencies:** brand heading inside the sidebar, duplicated
+   in-content window headers, banners overlaying list rows, two divergent
+   transcript renderers (cross-line selection broken in one of them).
+
+## 2. Goals / Non-goals
+
+**Guiding principle (user-set):** the app is pre-release. Breaking changes —
+to file formats, interactions, internal contracts — are allowed and
+*preferred* over compatibility layers, dual representations, legacy shims,
+or migration code. When a choice trades a breaking change against an extra
+mechanism, break. One representation, the fewest mechanisms that serve the
+user.
+
+**Goals**
+
+- Recordings pane becomes master–detail: list left, transcript right,
+  resizable split; the transcript of the selected recording — including the
+  one being recorded right now — renders in the window.
+- One-click record from the window toolbar on every pane; pressing it shows
+  the live transcript streaming.
+- Refinement status lives on recording rows; the Refinements pane is deleted.
+- Day-grouped, filterable, selection-driven recordings list with
+  exceptional-only status badges (plus a transient just-completed badge).
+- Recordings can be moved to the Trash from the list, and **renamed** — a
+  user-assigned title replaces the date-based default everywhere (list,
+  detail header, notifications).
+- The live transcript's verbose " (provisional)" speaker suffix is replaced
+  by a compact `?` suffix **in the format itself** — engine, file, parser,
+  and display all carry the same representation (§5).
+- `ContentUnavailableView` empty states with actions (the PRD's R44 epic
+  explicitly asks for a quick-start CTA in the recordings empty state).
+- One transcript renderer (the NSTextView-backed path) everywhere: fixes
+  cross-line selection, enables find-in-transcript (⌘F).
+- Internal consistency sweep: Speakers list adopts a selection model;
+  banners stop covering content; duplicated headers removed.
+
+**Non-goals**
+
+- No activation-policy / Dock-icon / menu-bar change (locked decision D27:
+  menubar-only accessory app).
+- No Liquid Glass adoption, no onboarding tour (R46 stays deferred), no
+  speaker "play sample" (R31 remainder), no menubar dropdown redesign beyond
+  the hover-color correctness fix.
+- The detached Live Transcript window (R45) is kept — considered for
+  deletion under the simplicity principle, but it serves a function the main
+  window can't (a compact floating companion while another app is focused
+  during a call) and costs almost nothing since it shares the single
+  renderer. Kept for function, not compatibility.
+- No new index database — the list stays scan-based (R44). The recording
+  title sidecar (§4.1) lives inside the recording folder, so it moves with
+  the recording and respects R44's documented move-out-of-folder behavior.
+
+## 3. Information architecture and window frame
+
+Sidebar shrinks to three sections: **Recordings, Speakers, Settings**
+(`AppSection.refinements` deleted). The "PulsarTrace" text heading above the
+sidebar list is removed; the main window is deliberately brandless in-content
+(the per-pane `.navigationTitle` stays — same as Apple's own one-window
+apps; the brand lives in the menubar icon and the window's title in the
+Windows menu). The two-column `NavigationSplitView` shell, pinned sidebar,
+and the every-detail-pane-carries-a-toolbar chrome rule are unchanged.
+
+**Window frame math** (the split's minimums must fit): sidebar 210 +
+list ≥ 240 + detail ≥ 320 + dividers ≈ 790. The window's `minWidth` rises
+from 640 to **800**, `defaultSize` from 760×480 to **900×560**. The split
+divider position **persists across launches** (`@AppStorage`; if
+`HSplitView` min-width handling proves unreliable at small sizes, fall back
+to an `NSViewRepresentable` `NSSplitView` with `autosaveName`).
+
+Considered and rejected: an app-wide three-column `NavigationSplitView`
+(only Recordings has list→detail depth; per-section column changes make the
+window chrome jump), and window-per-transcript (no live detail, window
+litter). Chosen: the Recordings pane owns an internal resizable split.
+
+## 4. Recordings pane
+
+### 4.1 List (left side of the split, min 240 pt, user-resizable)
+
+- **Day-grouped sections.** Section keys derived from `recordingStart` with
+  the current calendar: "Today", "Yesterday", weekday + date within the last
+  week (e.g. "Monday, June 8"), full date older (e.g. "June 3, 2026"). Row
+  title: the custom title when one is set (time + duration drop to a caption
+  line beneath), otherwise time + duration ("2:30 PM · 42:18"); duration
+  omitted when unknown (unrefined rows carry `durationSeconds == 0`).
+  `displayTitle` (custom title if set, else "Today at 2:30 PM") remains the
+  one source for the detail header and notifications.
+- **Selection-driven** (`List(selection:)` bound to
+  `AppNavigation.selectedRecordingID: String?`). Single click (or arrow-key
+  selection) shows the transcript in the detail — selecting *is* opening;
+  the existing context menu still works. On pane appear, if the selection is
+  nil or its row no longer exists, the newest recording auto-selects so the
+  detail is never blank.
+- **Renameable recordings.** Double-click on a row, or context-menu
+  "Rename", begins an inline rename TextField — the same two affordances as
+  the Speakers list (internal consistency). Double-click is free for rename
+  here because single-click selection already *is* "open" in this design.
+  Return-to-rename is deliberately not offered (user call: a Finder-ism that
+  feels wrong in this app). **The double-click gesture must coexist with
+  `List` selection correctly** — the known macOS SwiftUI click-swallowing
+  issue is to be solved properly in implementation (per the guiding
+  principle: fix the mechanism, don't drop the functionality). Storage: a
+  UI-owned sidecar in the recording folder (`title.txt`, single line,
+  whitespace-trimmed, newlines stripped, atomic write; filename constant
+  added to `RecordingFolder.FileName`). The engine never reads it,
+  `metadata.json` stays refine-owned (a re-refine cannot clobber the title),
+  and the folder basename — which the recording id derives from — is never
+  renamed. Absent or cleared sidecar → the date-based default title.
+  Renaming the in-progress row is allowed (harmless; the engine ignores the
+  file). No event is emitted: the title is presentation metadata, not
+  transcript content.
+- **Filter field, not `.searchable`.** An inline filter field pinned to the
+  top of the *list column* (prompt: "Filter by title, speaker, or date") —
+  custom titles are matched too, which is what makes the filter genuinely
+  useful. Rationale:
+  a toolbar-level `.searchable` field next to a transcript reads as
+  search-the-transcript and would fail the natural topic-word queries
+  (speaker labels exist only on refined rows); it would also fight ⌘F.
+  ⌘F is reserved exclusively for find-in-transcript (§5). The synthesized
+  live row is exempt from filtering while recording. No matches → inline
+  "No matches" placeholder in the list column.
+- **Exceptional-only status badges** (with `.help` tooltips and
+  accessibility labels, as today). A steady refined recording shows *no*
+  badge. Badges:
+  - recording now — pulsing red dot + ticking elapsed time (`TimelineView`)
+  - queued — clock symbol
+  - refining — small determinate progress (fraction from `queueVM`)
+  - failed — red badge with humanized copy; raw `errorClass` in the tooltip
+  - not yet refined — subtle orange clock, as today
+  - **just refined — transient green check**: shown while the recording's
+    latest terminal job in `queueVM.recent` is `.completed` and the row has
+    not been selected since completion; clears on selection or when the job
+    ages out of `recent`. A row that is *already selected* when its refine
+    completes never shows the badge — the detail's completion banner (§4.2)
+    is the signal there; the badge exists for rows the user is not looking
+    at. No timer, no clock injection — two existing signals, zero new
+    mechanisms. Gives the queued→refining wait a visible ending even when
+    the notification was missed/denied, without permanent check-mark noise.
+  Queue state wins over the intrinsic refined flag (preserves today's
+  documented `RefineStatusIcon` precedence).
+- **Context menu**: View Transcript (selects), Rename, Reveal in Finder,
+  Refine (disabled while in flight), Cancel Refinement (queued rows), Retry
+  (failed rows, only when the queue marked the failure retryable), and
+  **Move to Trash** (also bound to ⌫ on the selection) via
+  `NSWorkspace.shared.recycle` — the Trash itself is the undo, no new
+  machinery; the scanner refreshes after and the selection falls back per
+  the auto-select rule.
+- **Synthesized in-progress row.** While `recording.status == .recording`,
+  the list prepends a live row built from the VM's status (id, startedAt) and
+  `liveMarkdownURL` (folder = its parent) — no dependence on the scanner
+  noticing the new folder (no filesystem race). Once a scan returns an entry
+  with the same recording id, the synthesized row dedupes against it (ids are
+  stable across refine — documented on `RecordingEntry`).
+- Speaker pills are unchanged. The `lastEnqueueError` banner stays, moves to
+  `.safeAreaInset(edge: .top)` with a transition.
+- Toolbar: Record/Stop (shared, §6), Refresh (kept — R44 scan-on-demand).
+
+### 4.2 Transcript detail (right side, min 320 pt)
+
+A `TranscriptDetailModel` picks the source and banner for the selected row:
+
+| Selected row state          | Source                                      | Banner |
+|-----------------------------|----------------------------------------------|--------|
+| Recording now               | `LiveTranscriptWatcher` stream               | header shows red Recording badge + elapsed timer |
+| Queued                      | file (`final.md` if present else `live.md`)  | "Queued for refinement" + **Cancel** |
+| Refining                    | file as above                                | "Refining 45% · Transcribe" (live from `queueVM`) + **Cancel** |
+| Refine just completed       | file content currently on screen (unchanged) | "Refinement complete" + **Show refined transcript** button |
+| Unrefined, idle             | `live.md`                                    | "This transcript hasn't been refined yet" + Refine button |
+| Refined                     | `final.md`                                   | none |
+| Failed (latest job)         | file as above                                | humanized failure + Retry when retryable |
+| No selection / no recordings| —                                            | `ContentUnavailableView` |
+
+- **Refine completion never swaps content under the user.** The refined
+  transcript is not the live text plus polish — labels, wording, and line
+  structure change, so an automatic reload would destroy scroll position and
+  selection mid-read. When a refine completes for the on-screen recording,
+  the banner flips to "Refinement complete — Show refined transcript" and
+  the content reloads on click — or naturally on the next selection change.
+  Only when the detail is showing a placeholder or error (nothing to
+  disturb) does it reload immediately.
+- File reads stay async/off-main with the existing three-way result
+  (lines / empty-with-placeholder / unreadable-with-error-line) lifted from
+  `RecordedTranscriptSheet.load()`. The live path keeps the smart auto-scroll
+  and "N new" jump pill via the existing `AutoScrollController`.
+- Detail header: `displayTitle` (custom title when set, with the date as a
+  caption beneath it), duration, speaker pills; Copy and Reveal in Finder
+  buttons (also still in the row context menu).
+- **The fixed-size `RecordedTranscriptSheet` is deleted.**
+
+## 5. One transcript renderer
+
+The SwiftUI `LazyVStack` static path in `TranscriptView` is retired. The
+NSTextView-backed renderer (`LiveScrollableTranscript`, generalized) becomes
+the single implementation, with auto-scroll behavior optional exactly as the
+current `autoScroll: AutoScrollController?` parameter works. Wins:
+
+- cross-line text selection in recorded transcripts (broken today — each row
+  is independently selectable);
+- find-in-transcript via `usesFindBar` / `isIncrementalSearchingEnabled`,
+  on ⌘F exclusively (the list filter field deliberately does not claim it).
+  **Risk flag for planning:** ⌘F routing in an accessory app without a
+  visible menu bar may need an explicit `.keyboardShortcut("f")` hook calling
+  `performTextFinderAction(_:)`; verify during implementation and wire
+  explicitly if needed.
+
+**The provisional marker changes in the format itself.** User decision: the
+app is too new to preserve the verbose marker for compatibility's sake —
+clean wins. The engine component that composes live system-speaker labels
+switches from the `" (provisional)"` suffix to a bare `?` suffix:
+`**[00:01:23] Them?:** …`, `Them #2?`, `Steve?` (a library-matched but
+still-live name, R18). One representation everywhere — engine, `live.md`,
+parser, display; **no display-layer transformation at all**.
+
+- Symbol choice: `?` rather than the suggested `*`/`'` because a `*` inside
+  the `**…**` bold span breaks CommonMark emphasis parsing and `'` reads as
+  an apostrophe; `?` has no Markdown meaning and is the natural English for
+  a tentative identification.
+- R16's requirement ("live speaker IDs explicitly marked provisional,
+  distinguishable from final labels") remains satisfied — only its example
+  string changes. Deliverables alongside the code: update `project-docs/
+  PRD.md` everywhere the old suffix appears (the R16 example row AND the
+  sample-transcript section near the end, including its "`(provisional)`
+  annotations are removed" prose), the `(provisional)` sections of
+  `docs/file-format.md`, and every test pinning the old suffix (engine sink
+  tests, the `TranscriptLine` parser test).
+- `final.md` semantics are untouched: refinement never wrote provisional
+  markers, so nothing changes there.
+- Legacy files: `live.md` files recorded before this change still contain
+  `(provisional)` and render verbatim until their recording is refined — no
+  migration, accepted (consistent with the no-compatibility-tangle stance).
+
+**Copy copies what you see.** Today the Copy buttons put the raw Markdown
+lines on the pasteboard (`**[00:01:23] Them?:** hi`, comment markers and
+all) while the screen shows styled text. Copy switches to the rendered plain
+text (what selection + ⌘C from the NSTextView already yields); the raw file
+remains one Reveal-in-Finder away for anyone who wants the source form.
+
+Two explicit requirements (not discoveries):
+
+- **Initial scroll position depends on mode**: live (auto-scroll controller
+  present) opens at the bottom, as today; static transcripts open at the
+  **top** — the current `makeNSView` always scrolls to bottom and must be
+  parameterized.
+- **Suffix-append fast path**: live updates append
+  `lines[oldCount...]` to the existing `textStorage` instead of rebuilding
+  the full attributed string per poll tick (the rebuild is acknowledged as a
+  scaling hazard in the current code; under this design the renderer becomes
+  the primary surface for multi-hour meetings, possibly twice concurrently
+  — main-window detail + detached window). Full rebuild remains the fallback
+  when the line count shrinks (truncation/overwrite).
+
+The detached Live Transcript window keeps this renderer (it already does);
+its duplicated in-content header ("Live Transcript" title, Copy, Recording
+badge) moves into that window's toolbar.
+
+## 6. Record button
+
+A shared toolbar component present on **all three panes** (each detail pane
+already must carry a `.toolbar` — chrome rule), leading placement:
+
+- idle → "Record" with red-filled circle symbol
+- launching → spinner + "Starting…", disabled
+- recording → "Stop · 12:34" (ticking, red tint)
+- crashed/error → Record shown but disabled (`.crashed`/`.error` are not
+  startable states), with a `.help` tooltip carrying the short reason; the
+  pane banner (below) resolves the state back to idle
+
+**Navigation and auto-select are scoped to the button action, not the
+status transition.** Pressing Record calls `recording.startRecording()`,
+sets `navigation.section = .recordings`, and selects the synthesized live
+row once it appears — a direct response to the user's click. Recording
+started via global hotkey or the menubar must NOT change the window's
+selection or section: if the user is reading an old transcript and starts a
+recording with the hotkey, the live row appears with its pulsing badge but
+the reading is not interrupted. (An earlier draft triggered auto-select on
+the idle→recording status edge; rejected in review because the same edge
+fires for hotkey starts.) Planning note: the button-driven navigation away
+from Speakers must not silently reset an in-progress inline rename — commit
+or preserve the field.
+
+Crash/error parity (the window must be self-sufficient; today both states
+surface only in the menubar dropdown):
+
+- `.crashed` → banner on the Recordings pane: "Recording stopped
+  unexpectedly" + **Recover Transcript** / **Dismiss** (mirrors the menubar).
+- `.error` → distinct banner showing the VM's guidance message verbatim
+  (these are carefully written: permission remediation paths, whisper-lock
+  retry advice) + **Dismiss** only — "Recover" is nonsensical here.
+
+## 7. Refinements pane folded into Recordings
+
+`RefinementsListView` and `AppSection.refinements` are deleted. Coverage map:
+
+| Today (Refinements pane)        | After                                    |
+|---------------------------------|------------------------------------------|
+| Running row + progress          | row badge (§4.1) + detail banner with Cancel (§4.2) |
+| Queued rows + Cancel            | row badge + "Cancel Refinement" context item + detail banner Cancel |
+| Recent completed rows           | transient just-refined row badge (§4.1) + completion banner (§4.2) + existing notification |
+| Failed rows + Retry + tooltip   | row badge + Retry (context item + detail banner) + tooltip |
+| Re-enqueue from recent          | "Refine" context item (already exists)   |
+| Orphan jobs (folder deleted)    | dropped silently — no row, no UI         |
+
+The menubar dropdown's status line and determinate progress bar are
+unchanged.
+
+## 8. Consistency and polish sweep
+
+- **Empty states** → `ContentUnavailableView` with actions: Recordings gets
+  "Start Recording" (PRD quick-start CTA), Speakers keeps record-first
+  guidance, detail pane gets "Select a recording".
+- **Speakers list** becomes selection-driven with **multi-select**
+  (`Set<String>` selection): ⌘-click two speakers enables **Merge** in the
+  toolbar with both operands pre-seeded (sheet pickers stay editable —
+  which one to keep is still an explicit choice); exactly one selection
+  enables **Split**. Rename keeps today's double-click gesture (plus the
+  context menu) — consistent with the recordings list; no Return-to-rename.
+  Single-selection seeding was rejected in review: merge is a two-operand
+  action. Context menu and delete-with-undo-toast behavior unchanged.
+- **Banners/toasts**: Speakers error + undo overlays move from `.overlay` to
+  `.safeAreaInset`; all banners/toasts get appear/disappear transitions
+  (`.move + .opacity`, `.animation(_:value:)`). WCAG-checked tint scheme kept.
+- **Merge/split sheets** get `minWidth`/`minHeight` instead of fixed frames.
+- **Menubar dropdown hover** switches hardcoded `.white`-on-accent to
+  `Color(nsColor: .selectedMenuItemTextColor)` /
+  `.selectedContentBackgroundColor` (correct under user accent colors).
+- **Settings**: output-folder row wrapped in `LabeledContent("Location")`.
+
+## 9. New/changed components
+
+Per D27, all new logic lives in `PulsarTraceMenuBar` (testable, SwiftUI-free
+where possible); views in `pulsartrace-mac` stay pure bindings.
+
+| Component | Target | Role |
+|-----------|--------|------|
+| `RecordingsPaneModel` (new, `@Observable`) | PulsarTraceMenuBar | Composes scanner entries + recording status + queue state + filter text into day sections of row models: live-row synthesis & dedup, badge derivation incl. transient just-refined window (absorbs `RefineStatusIcon` precedence logic; injectable clock), filtering (incl. titles), auto-select rules, rename (sidecar write + refresh), move-to-Trash (recycle + refresh + selection fallback). |
+| `RecordingEntry` (modified) | PulsarTraceMenuBar | Decodes the `title.txt` sidecar into `customTitle: String?`; `displayTitle` prefers it. |
+| `TranscriptDetailModel` (new, `@Observable`) | PulsarTraceMenuBar | Source/banner decision table (§4.2), async file loading, pending-refined-content gate (banner-mediated swap), reload triggers. |
+| `AppNavigation` (modified) | PulsarTraceMenuBar | Drops `.refinements`; gains `selectedRecordingID: String?` (process-lifetime, like `section`). |
+| `RecordingsSplitView` (new; replaces `RecordingsListView` content) | pulsartrace-mac | Resizable split: list + detail, toolbar, divider persistence. |
+| `TranscriptDetailView` (new) | pulsartrace-mac | Header + banner + renderer. |
+| `RecordToolbarButton` (new) | pulsartrace-mac | Shared toolbar item, all panes; action-scoped navigation. |
+| `TranscriptView` (modified) | pulsartrace-mac | Single NSTextView renderer; find bar; mode-dependent initial scroll; suffix-append fast path. |
+| Live label composition (engine, `PulsarTraceEngine/Streaming`) | PulsarTraceEngine | `" (provisional)"` suffix → `"?"` (§5), with PRD R16 example + `docs/file-format.md` updates. |
+| `RefinementsListView` (deleted), `RecordedTranscriptSheet` (deleted) | pulsartrace-mac | Folded per §7 / §4.2. |
+| `SpeakerEditorView`, `SettingsView`, `LiveTranscriptView`, `MenuBarMenuView`, `MainWindowView`, `PulsarTraceMacApp` (modified) | pulsartrace-mac | §8 sweep; sidebar heading removal; window min/default size (§3). |
+
+## 10. Error handling
+
+- Detail file-read failure → explicit error line + Retry (re-read) in the
+  detail, never a silent empty pane.
+- Crashed recording → `.crashed` banner in the Recordings pane
+  (Recover/Dismiss) and the existing menubar treatment; the synthesized live
+  row is removed when status leaves `.recording` (the folder row reappears
+  via scan as unrefined, and crash recovery enqueues refine on it).
+- Start errors → `.error` banner with the VM's message + Dismiss (§6).
+- Enqueue failures → existing dismissible banner, now inset + animated.
+- Selected recording deleted from disk (externally or via Move to Trash) →
+  next scan drops the row; selection falls back to newest (auto-select rule
+  §4.1).
+- Live row with `live.md` not yet created (engine still starting) → watcher
+  simply has no lines yet; detail shows the existing "Waiting for
+  transcript…" placeholder.
+
+## 11. Testing
+
+New suites in `Tests/MenuBarTests` (Swift Testing, `@MainActor`, throwaway
+`UserDefaults` + `MenuBarFixtures.tempDir()` conventions):
+
+- `RecordingsPaneModelTests` — day-section keys across date boundaries
+  (fixed reference dates, category-level assertions, not locale strings);
+  filter matching incl. live-row exemption; badge precedence (queue wins
+  over intrinsic; cancelled/unknown falls through — preserves today's
+  behavior); transient just-refined badge clearing on selection and on
+  eviction from `recent`; live-row synthesis, dedup on id, removal on stop;
+  auto-select rules (nil/stale selection → newest; **no** auto-select on
+  status transitions — action-scoped only); rename round-trip (sidecar
+  write/read, trim + newline-strip rules, clear restores default,
+  `displayTitle` preference, filter matches titles).
+- `TranscriptDetailModelTests` — source/banner decision table (§4.2)
+  including queued/failed banners; the pending-refined-content gate (no
+  auto-swap while content is on screen; swap on explicit action and on
+  selection change; immediate reload from placeholder/error); three-way
+  load result.
+- Provisional-suffix format change — engine sink/streaming tests pinning
+  `"Them (provisional)"` updated to `"Them?"`; the `TranscriptLine` parser
+  test's provisional case updated (the parser needs no code change — the
+  suffix is part of the speaker capture either way). Engine suites
+  (`--filter Streaming`, `--filter Transcription`) added to the §11
+  verification list because of this change.
+- Existing suites: `AppSection`-related and `RefinementsListView`-adjacent
+  tests updated for the deleted pane; everything else untouched.
+
+Verification: bare `swift build`, then `swift test --filter MenuBar`,
+`--filter UnitTests`, `--filter Refinement`, `--filter Streaming`,
+`--filter Transcription` (no new cross-suite IPC
+exposure; the broad `PipelineTests` filter stays off-limits per CLAUDE.md).
+Manual GUI smoke (`scripts/make-dev-app.sh`) at branch finish: record →
+watch live detail → stop → watch row settle through queued/refining/
+completion banner → filter, day groups, double-click rename (recording and
+speaker; selection must not glitch), Move to Trash, speakers multi-select
+merge, find-in-transcript (⌘F), divider persistence across relaunch, all
+three empty states (recordings, speakers, no-selection detail),
+hotkey-start-while-reading (selection must not move), live transcript shows
+`Them?` labels.
+
+## 12. Open questions deferred to planning
+
+- Exact `RecordPlan.recordingId` vs `RecordingFolder.recordingId(forName:)`
+  equivalence for the synthesized row's id (documented as stable; verify at
+  implementation and pin with a test). If they turn out to differ, **unify
+  the derivation at the source** — do not map between two id schemes
+  (guiding principle, §2).
+- ⌘F routing in the accessory app (§5 risk flag).
+- Double-click-rename coexisting with `List` selection (§4.1/§8): the
+  first-click-swallowing behavior of `.onTapGesture(count: 2)` on selected
+  lists must be solved properly (e.g. `simultaneousGesture`, or an
+  NSEvent `clickCount` path) — dropping either selection or the gesture is
+  not an acceptable resolution.
+
+## 13. Named follow-ups (out of scope, recorded so they aren't lost)
+
+- Activation-policy revisit (D27) if the unified window grows into the
+  primary surface.
+- Speaker "play sample" (R31 remainder).

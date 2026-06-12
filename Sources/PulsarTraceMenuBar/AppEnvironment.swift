@@ -18,8 +18,17 @@ public final class AppEnvironment {
     public let liveWatcher: LiveTranscriptWatcher
     public let onboarding: OnboardingTourViewModel
 
-    /// Shared sidebar-navigation state for the unified window (#6).
-    public let navigation = AppNavigation()
+    /// Recordings-pane list model (§4.1) — process-lifetime so the selection
+    /// and filter survive window churn.
+    public let paneModel: RecordingsPaneModel
+
+    /// Transcript detail model (§4.2).
+    public let detailModel: TranscriptDetailModel
+
+    /// Shared sidebar-navigation state for the unified window (#6). Assigned
+    /// explicitly in `init()` (not inline) so `paneModel` can be constructed
+    /// with it while all stored properties are still being initialized.
+    public let navigation: AppNavigation
 
     /// The process-wide events writer (§8.13). Bootstrapped here and shared by
     /// every component that emits events — the re-refine pass and the speaker
@@ -101,9 +110,22 @@ public final class AppEnvironment {
                     lockPath: lockProbePath,
                     timeout: .seconds(5))
             })
-        self.scanner = RecordingsScanner(settings: settings)
-        self.liveWatcher = LiveTranscriptWatcher()
+        let scanner = RecordingsScanner(settings: settings)
+        let liveWatcher = LiveTranscriptWatcher()
+        let navigation = AppNavigation()
+        self.scanner = scanner
+        self.liveWatcher = liveWatcher
+        self.navigation = navigation
         self.onboarding = OnboardingTourViewModel()
+
+        // §4.1 / §4.2 view models. Built from the locals above purely for
+        // symmetry with their assignments — already-assigned stored
+        // properties (like `self.recording` here) are fine to read mid-init.
+        self.paneModel = RecordingsPaneModel(
+            scanner: scanner, queueVM: queueVM,
+            recording: self.recording, navigation: navigation)
+        self.detailModel = TranscriptDetailModel(
+            queueVM: queueVM, liveWatcher: liveWatcher)
 
         // Chain events bootstrap → queue bootstrap in a single stored Task so
         // that `RefinementJobQueue.makeStandard` (and any `runJob` it spawns)
@@ -156,6 +178,7 @@ public final class AppEnvironment {
             whisperOptions: refineWhisperOptions)
         await queueVM.setQueue(q)
         queueVM.onJobsTerminated = { [weak self] jobs in
+            self?.detailModel.noteJobsTerminated(jobs)
             Task { [weak self] in await self?.scanner.refresh() }
             // Bare-binary dev runs (`.build/debug/pulsartrace-mac`) have no
             // bundle — UN APIs crash in non-bundled processes.
@@ -180,8 +203,8 @@ public final class AppEnvironment {
         }
         // Single process-wide poller. The menubar dropdown and the
         // recordings-list RefineBadge both read from queueVM; before this
-        // change polling only ran while RefinementsListView was visible,
-        // so those two surfaces were stale.
+        // change polling only ran while the (since-deleted) Refinements pane
+        // was visible, so those two surfaces were stale.
         queueVM.startPolling()
         // Open the handle last — a pre-bootstrap enqueue that resumes here
         // must see the fully wired queue + polling VM.

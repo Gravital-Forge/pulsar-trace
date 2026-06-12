@@ -91,6 +91,39 @@ struct SpeakerEditorViewModelTests {
         #expect(renamedIdx!.lowerBound < rewrittenIdx!.lowerBound)
     }
 
+    @Test("rename to the unchanged name is a no-op: no rewrite, no event")
+    func renameUnchangedNameIsNoOp() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recordingFolder = try MenuBarFixtures.makeRecordingFolder(
+            root: root, name: "standup", recordingId: "rec_standup")
+        let libURL = root.appendingPathComponent("speakers.sqlite")
+        let library = try await SpeakerLibrary(databaseURL: libURL)
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.1), modelRevision: "rev1",
+            recordingId: "rec_standup",
+            recordingFolderName: recordingFolder.lastPathComponent)
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+
+        let vm = SpeakerEditorViewModel(
+            library: library, events: events,
+            settings: try settings(outputRoot: root))
+        await vm.reload()
+        // The rename field's blur-commit routinely re-submits the unchanged
+        // name — that must not touch disk or the events log.
+        await vm.rename(speakerId: steve.id, to: "Steve")
+
+        #expect(vm.lastError == nil)
+        #expect(!FileManager.default.fileExists(
+            atPath: recordingFolder.appendingPathComponent("final.md.bak").path))
+        await events.flush()
+        let log = (try? String(
+            contentsOf: await events.currentFileURL(), encoding: .utf8)) ?? ""
+        #expect(!log.contains("speaker_renamed"))
+        #expect(!log.contains("final_md_rewritten"))
+    }
+
     @Test("merge rewrites the merged speaker's recordings")
     func mergeRewritesFinalMarkdown() async throws {
         let root = MenuBarFixtures.tempDir()

@@ -13,10 +13,10 @@ struct TranscriptLineTests {
         #expect(kind == .utterance(timestamp: "00:01:23", speaker: "Steve", text: "hello there"))
     }
 
-    @Test("a provisional live label keeps its suffix in the speaker field")
+    @Test("a provisional live label keeps its ? suffix in the speaker field")
     func provisionalSpeaker() {
-        let kind = TranscriptLine.parse("**[00:00:05] Them (provisional):** hi")
-        #expect(kind == .utterance(timestamp: "00:00:05", speaker: "Them (provisional)", text: "hi"))
+        let kind = TranscriptLine.parse("**[00:00:05] Them?:** hi")
+        #expect(kind == .utterance(timestamp: "00:00:05", speaker: "Them?", text: "hi"))
     }
 
     @Test("speaker names containing colons survive (greedy up to the last ':**')")

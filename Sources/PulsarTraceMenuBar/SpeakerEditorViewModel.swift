@@ -127,6 +127,12 @@ public final class SpeakerEditorViewModel {
     /// D16).
     public func rename(speakerId: String, to newName: String) async {
         guard validateName(newName) else { return }
+        // No-op guard: committing an unchanged name (the rename field's
+        // blur-commit does this routinely) must not rewrite every final.md
+        // the speaker appears in — nor flash isRewriting, which disables
+        // the whole editor while it runs.
+        guard liveSpeakers.first(where: { $0.id == speakerId })?.name != newName
+        else { return }
         await withRewrite {
             let oldName = try await self.library.rename(
                 speakerId: speakerId, to: newName, suppressEvent: true)

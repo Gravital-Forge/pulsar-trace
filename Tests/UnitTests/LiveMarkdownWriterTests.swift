@@ -67,7 +67,7 @@ struct LiveMarkdownWriterTests {
         try await writer.start()
         try await writer.appendUtterance(
             offset: .seconds(5),
-            speakerLabel: "Them (provisional)",
+            speakerLabel: "Them?",
             text: "so the auth flow breaks")
         try await writer.appendUtterance(
             offset: .seconds(3672),   // 01:01:12
@@ -76,7 +76,7 @@ struct LiveMarkdownWriterTests {
         await writer.finish()
 
         let text = try String(contentsOf: url, encoding: .utf8)
-        #expect(text.contains("**[00:00:05] Them (provisional):** so the auth flow breaks"))
+        #expect(text.contains("**[00:00:05] Them?:** so the auth flow breaks"))
         #expect(text.contains("**[01:01:12] You:** right, the redirect uri"))
     }
 
@@ -93,7 +93,7 @@ struct LiveMarkdownWriterTests {
         for i in 0..<10 {
             try await writer.appendUtterance(
                 offset: .seconds(i),
-                speakerLabel: "Them (provisional)",
+                speakerLabel: "Them?",
                 text: "utterance number \(i)")
             sizes.append(await writer.bytesWritten)
         }
@@ -118,9 +118,9 @@ struct LiveMarkdownWriterTests {
         try await writer.start()
 
         var snapshots: [String] = []
-        try await writer.appendLine("**[00:00:01] Them (provisional):** first")
+        try await writer.appendLine("**[00:00:01] Them?:** first")
         snapshots.append(try String(contentsOf: url, encoding: .utf8))
-        try await writer.appendLine("**[00:00:02] Them (provisional):** second")
+        try await writer.appendLine("**[00:00:02] Them?:** second")
         snapshots.append(try String(contentsOf: url, encoding: .utf8))
         try await writer.appendLine("**[00:00:03] You:** third")
         snapshots.append(try String(contentsOf: url, encoding: .utf8))
@@ -203,7 +203,7 @@ struct LiveMarkdownWriterTests {
         // Emoji + accented characters — encoded before the write.
         try await writer.appendUtterance(
             offset: .seconds(1),
-            speakerLabel: "Them (provisional)",
+            speakerLabel: "Them?",
             text: "café résumé 日本語 👍")
         await writer.finish()
 
