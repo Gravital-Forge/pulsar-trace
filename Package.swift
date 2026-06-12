@@ -30,6 +30,13 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.17.0"),
+        // ANE transcription backends (docs/specs/2026-06-12-ane-transcription-pipeline/).
+        // Pinned exact: both projects churn their APIs release-to-release
+        // (FluidAudio broke `transcribe` twice in 0.12→0.13; WhisperKit's
+        // v1.0.0 was a breaking rename). Bump deliberately, with the release
+        // notes open.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.2"),
+        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", exact: "1.0.0"),
     ],
     targets: [
         // System-library wrapper around the vendored whisper.cpp.
@@ -42,6 +49,8 @@ let package = Package(
             dependencies: [
                 .product(name: "Logging", package: "swift-log"),
                 "CWhisper",
+                .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ],
             cSettings: [
                 .unsafeFlags(["-I", whisperInclude]),
