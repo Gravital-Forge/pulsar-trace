@@ -835,6 +835,122 @@ struct RefinementJobQueueTests {
         #expect(total == 2, "the job must have run exactly twice (cancel, then success)")
     }
 
+    /// Fix I1: a pause that lands in a NON-decode window (VAD / WAV-load /
+    /// parked-between-regions — no in-flight decode) must STILL requeue the job,
+    /// not fail it. In that window the release hook's `cancelPending()` is a
+    /// no-op, but `box.release()` POISONS the box, so the worker does not unwind
+    /// during `pauseForRecording` (its `waitOpen()` parks, it does not throw).
+    /// The worker exits only LATER — at its next `box.get()` AFTER
+    /// `resumeAfterRecording` — and by then `pausedForRecording` is already
+    /// `false`. The requeue arm must therefore match `CancellationError`
+    /// UNCONDITIONALLY; before Fix I1 it gated on `pausedForRecording` and so
+    /// misclassified this interleave to `.transcribeFailed` (spurious UI failure,
+    /// stranded checkpoint).
+    ///
+    /// Spy shape (mirrors the failure trace, not the production decode path):
+    /// 1. registers a release hook that only flips a flag — it does NOT make the
+    ///    worker exit (simulating "no in-flight decode to cancel"),
+    /// 2. parks on a manual `resumed` signal (simulating `waitOpen()` parking),
+    /// 3. after resume, throws `CancellationError` (simulating the next
+    ///    `box.get()` throwing off the poisoned box).
+    ///
+    /// Timing note: with no in-flight decode to cancel, `pauseForRecording`
+    /// cannot observe the worker exit and returns via its ~5 s worker-exit poll
+    /// (the bound is a constant in the queue — not injectable — so this test
+    /// takes ~5 s; acceptable for a pipeline suite). The first assertion below
+    /// only runs after that wait elapses.
+    @Test("pause in a non-decode window requeues the job, does not fail it")
+    func pauseInNonDecodeWindowRequeues() async throws {
+        let store = RefinementJobStore(directory: tempDir())
+        let gate = PauseGate(initiallyOpen: true)
+        let started = Gate()        // runJob (first attempt) is executing
+        let resumed = Gate()        // test → runJob: resume happened, now throw
+        let completed = Gate()      // second attempt reached completion
+
+        actor Attempts { var n = 0; func next() -> Int { n += 1; return n } }
+        let attempts = Attempts()
+
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in /* placeholder */ },
+            pauseGate: gate)
+        await queue.setRunJob({ [queue] _ in
+            let attempt = await attempts.next()
+            if attempt == 1 {
+                // Register a release hook that merely flips a flag — it does NOT
+                // unwind the worker. This is the "no in-flight decode" case:
+                // `cancelPending()` would be a no-op; only `box.release()` (the
+                // box-poison) matters, simulated by the post-resume throw below.
+                await queue.setInflightTranscriberRelease { /* no worker exit */ }
+                await started.open()
+                // Park like `pauseGate.waitOpen()` would — does NOT throw on the
+                // pause. The worker stays here through the whole
+                // pauseForRecording 5 s poll.
+                await resumed.wait()
+                // After resume, the next `box.get()` throws off the poisoned box.
+                throw CancellationError()
+            } else {
+                // Second attempt (after requeue + resume re-pump): completes.
+                await completed.open()
+            }
+        })
+        try await queue.start()
+
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/x"),
+            recordingId: "rec_nondecode", modelName: "base",
+            modelSHA256: "deadbeef")
+        await started.wait()
+        let originalId = try #require(await queue.snapshot().running?.id)
+
+        // Pause: no decode to cancel, so this returns via the ~5 s worker-exit
+        // poll (the worker is parked on `resumed`, hasn't thrown yet).
+        await queue.pauseForRecording()
+
+        // The worker has not thrown yet — it is still the running job, paused.
+        let paused = await queue.snapshot()
+        #expect(paused.running?.id == originalId,
+                "worker must still be parked (not yet unwound) after the pause")
+        #expect(paused.pausedForRecording == true)
+
+        // Resume FIRST (clears pausedForRecording), THEN release the worker so it
+        // throws CancellationError — reproducing the resume-then-throw interleave
+        // where the flag is already false when the requeue arm runs.
+        await queue.resumeAfterRecording()
+        await resumed.open()
+
+        // The requeue arm (matching CancellationError unconditionally) must put
+        // the SAME job back as `.queued`, not `.failed`, not in `recent`, and
+        // then `pumpIfIdle` (guard now passes — not paused) must re-run it.
+        await completed.wait()
+
+        var snap = await queue.snapshot()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline,
+              !(snap.running == nil && snap.recent.contains { $0.id == originalId }) {
+            try await Task.sleep(for: .milliseconds(5))
+            snap = await queue.snapshot()
+        }
+        #expect(snap.running == nil)
+        // The cancelled first attempt never produced a failure entry.
+        #expect(!snap.recent.contains {
+            $0.id == originalId && {
+                if case .failed = $0.state { return true } else { return false }
+            }($0)
+        }, "a non-decode-window pause-cancel must NOT produce a .failed entry")
+        let finished = try #require(
+            snap.recent.first { $0.id == originalId },
+            "the requeued job (same id) must reach terminal completion after resume")
+        if case .completed = finished.state {
+            // expected
+        } else {
+            Issue.record("expected .completed for the resumed job, got \(finished.state)")
+        }
+        let total = await attempts.n
+        #expect(total == 2,
+                "job must run exactly twice: cancelled in non-decode window, then re-run")
+    }
+
     @Test("recent list is capped at 100 entries")
     func recentListCapped() async throws {
         let dir = FileManager.default.temporaryDirectory

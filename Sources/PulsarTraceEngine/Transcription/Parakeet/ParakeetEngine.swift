@@ -79,7 +79,9 @@ public actor ParakeetEngine {
                     sha256: digest.sha256,
                     sourceHost: "huggingface.co"))
             } catch {
-                logger.warning("parakeet: model_downloaded not emitted: \(error)")
+                // DirectoryDigest.compute can rethrow raw NSErrors embedding
+                // full home paths — redact before logging.
+                logger.warning("parakeet: model_downloaded not emitted: \(PathRedactor.redactHome("\(error)"))")
             }
         }
 
