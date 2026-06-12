@@ -9,7 +9,7 @@ struct ParakeetTokenMapperTests {
         .init(token: piece, start: start, end: end)
     }
 
-    @Test func groupsSentencePiecesIntoWords() {
+    @Test func groupsSentencePiecesIntoWords() throws {
         // "▁Hello ▁wor ld ." → words "Hello", "world." (punctuation piece
         // glues onto the current word, exactly as SentencePiece intends).
         let result = ParakeetTokenMapper.transcriptionResult(
@@ -23,6 +23,9 @@ struct ParakeetTokenMapperTests {
             windowStart: .seconds(2),
             windowDuration: .seconds(4))
         #expect(result.segments.map(\.text) == ["Hello", "world."])
+        // Guard the index-based expectations below: a count regression should
+        // fail the test, not trap on out-of-bounds.
+        try #require(result.segments.count == 2)
         // Recording-absolute: window-relative times shifted by windowStart.
         #expect(result.segments[0].start == .milliseconds(2100))
         #expect(result.segments[0].end == .milliseconds(2400))
@@ -58,6 +61,16 @@ struct ParakeetTokenMapperTests {
             tokens: [], fallbackText: "  ",
             windowStart: .zero, windowDuration: .seconds(4))
         #expect(result.segments.isEmpty)
+    }
+
+    @Test func multiMarkerPieceDoesNotLeakMarkerGlyphs() {
+        // A piece like "▁▁foo" must not leave a literal U+2581 in the text:
+        // the marker is category So, not whitespace, so trim won't remove it.
+        let result = ParakeetTokenMapper.transcriptionResult(
+            tokens: [tok("▁▁foo", 0, 0.2)],
+            fallbackText: "foo",
+            windowStart: .zero, windowDuration: .seconds(1))
+        #expect(result.segments.map(\.text) == ["foo"])
     }
 
     @Test func whitespaceOnlyWordsAreDropped() {

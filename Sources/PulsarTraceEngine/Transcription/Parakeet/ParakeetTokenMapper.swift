@@ -64,12 +64,18 @@ public enum ParakeetTokenMapper {
         for piece in tokens {
             var text = piece.token
             let startsWord = text.first == wordMarker
-            if startsWord { text.removeFirst() }
+            // The leading marker decides the word boundary, but strip ALL
+            // markers: U+2581 is category So (a symbol), not whitespace, so the
+            // later `.whitespacesAndNewlines` trim won't catch a stray one and
+            // a piece like "▁▁foo" would leak a block glyph into the text.
+            text.removeAll { $0 == wordMarker }
             if startsWord || words.isEmpty {
                 words.append(Word(pieces: [text], start: piece.start, end: piece.end))
             } else {
                 words[words.count - 1].pieces.append(text)
-                words[words.count - 1].end = piece.end
+                // Keep the word span monotonic: a continuation piece whose `end`
+                // precedes the word's current `end` must not shrink/invert it.
+                words[words.count - 1].end = max(words[words.count - 1].end, piece.end)
             }
         }
 
