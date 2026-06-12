@@ -9,7 +9,8 @@ import Foundation
 /// 2. exactly one allowed code pins;
 /// 3. several allowed codes → detect on the region's audio and pin the
 ///    highest-probability **allowed** code (`WhisperKitRegionTranscriber`
-///    runs the actual detection);
+///    runs the actual detection); `detectAmong` preserves the allow-list's
+///    order;
 /// 4. nothing → full auto-detect.
 public enum WhisperKitLanguagePolicy {
 
@@ -20,10 +21,13 @@ public enum WhisperKitLanguagePolicy {
     }
 
     public static func resolve(explicit: String?, allowed: [String]) -> Resolution {
-        if let explicit, !explicit.isEmpty {
+        if let explicit = explicit?.trimmingCharacters(in: .whitespaces), !explicit.isEmpty {
             return .pin(explicit.lowercased())
         }
-        let codes = allowed.map { $0.lowercased() }
+        var seen = Set<String>()
+        let codes = allowed
+            .map { $0.lowercased() }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
         switch codes.count {
         case 0: return .auto
         case 1: return .pin(codes[0])

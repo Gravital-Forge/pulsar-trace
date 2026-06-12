@@ -31,4 +31,21 @@ struct WhisperKitLanguagePolicyTests {
     @Test func nothingMeansAuto() {
         #expect(WhisperKitLanguagePolicy.resolve(explicit: nil, allowed: []) == .auto)
     }
+
+    @Test func explicitIsTrimmedAndNormalized() {
+        #expect(WhisperKitLanguagePolicy.resolve(explicit: " PL ", allowed: [])
+            == .pin("pl"))
+        // Whitespace-only explicit falls through to the allow-list rules.
+        #expect(WhisperKitLanguagePolicy.resolve(explicit: "  ", allowed: ["en"])
+            == .pin("en"))
+    }
+
+    @Test func allowedListIsSanitized() {
+        // Lowercasing + dropping empties collapses to one code → pin.
+        #expect(WhisperKitLanguagePolicy.resolve(explicit: nil, allowed: ["en", "EN", ""])
+            == .pin("en"))
+        // Order-preserving dedupe keeps first-seen order.
+        #expect(WhisperKitLanguagePolicy.resolve(explicit: nil, allowed: ["EN", "pl", "en"])
+            == .detectAmong(["en", "pl"]))
+    }
 }
