@@ -65,4 +65,44 @@ struct ParakeetTranscriberTests {
         let decoded = try await engine.transcribeWindow(window, languageHint: "en")
         #expect(!decoded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
+
+    @Test func conformsToWindowTranscribingWithAbsoluteTimestamps() async throws {
+        let engine = try await Self.engineTask.value
+        let transcriber: any WindowTranscribing = ParakeetWindowTranscriber(engine: engine)
+        let window = try Self.fixtureSamples(seconds: 10)
+        let result = try transcriber.transcribeWindow(
+            window, windowStart: .seconds(60), options: WhisperOptions(), abort: nil)
+        #expect(!result.segments.isEmpty)
+        for seg in result.segments {
+            // Shifted onto the recording timeline: window starts at 60 s.
+            #expect(seg.start >= .seconds(60))
+            #expect(seg.end <= .seconds(71))
+            #expect(!seg.text.isEmpty)
+        }
+    }
+
+    @Test func subMinimumWindowReturnsEmptyInsteadOfThrowing() async throws {
+        // Parakeet rejects audio under 300 ms; the end-of-stream flush can
+        // produce such a tail. Contract: empty result, not an error.
+        let engine = try await Self.engineTask.value
+        let transcriber = ParakeetWindowTranscriber(engine: engine)
+        let result = try transcriber.transcribeWindow(
+            [Float](repeating: 0.1, count: 1600),   // 100 ms
+            windowStart: .zero, options: WhisperOptions(), abort: nil)
+        #expect(result.segments.isEmpty)
+    }
+
+    @Test func allowedLanguagesSingletonFlowsAsScriptHint() async throws {
+        // options.allowedLanguages == ["en"] → languageHint "en" → still a
+        // non-empty English decode (the hint steers token scripts, it does
+        // not gate output).
+        let engine = try await Self.engineTask.value
+        let transcriber = ParakeetWindowTranscriber(engine: engine)
+        var options = WhisperOptions()
+        options.allowedLanguages = ["en"]
+        let window = try Self.fixtureSamples(seconds: 8)
+        let result = try transcriber.transcribeWindow(
+            window, windowStart: .zero, options: options, abort: nil)
+        #expect(!result.segments.isEmpty)
+    }
 }
