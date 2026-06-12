@@ -29,16 +29,6 @@ struct DoctorTests {
             isAppleSilicon: false).status == .warn)
     }
 
-    // MARK: - whisper models
-
-    @Test("a missing model is a warning — it auto-downloads on first use")
-    func modelPresence() {
-        #expect(EnvironmentDoctor.modelCheck(
-            name: "base", present: true).status == .ok)
-        #expect(EnvironmentDoctor.modelCheck(
-            name: "large-v3", present: false).status == .warn)
-    }
-
     // MARK: - Python runtime
 
     @Test("a missing diarization runtime is a warning")

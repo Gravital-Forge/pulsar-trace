@@ -110,9 +110,8 @@ public struct StreamingPipeline: Sendable {
     /// - Parameters:
     ///   - configuration: inputs + tunables.
     ///   - systemTranscriber: a `WindowTranscribing` conformer for the system
-    ///     stream — the in-process `WhisperTranscriber` for tests, or
-    ///     `RemoteWindowTranscriber` in production live runs (one transcriber
-    ///     per stream — D8).
+    ///     stream — `ParakeetWindowTranscriber` in production live runs (D39),
+    ///     one transcriber per stream.
     ///   - micTranscriber: a separate `WindowTranscribing` for the mic stream,
     ///     when a `micSource` is supplied.
     ///   - systemSource: the system-audio `AudioFrameSource` (any conforming

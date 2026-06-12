@@ -32,11 +32,11 @@ public struct TranscriptionResult: Sendable, Equatable {
 /// A contiguous span of detected voice activity in a recording, in
 /// recording-relative time.
 ///
-/// Produced by `WhisperTranscriber.detectSpeechRegions(in:vadModelURL:…)` and
-/// consumed by `transcribe(_:regions:options:)`, which decodes each region
-/// independently so the offline transcript breaks at conversational turn
-/// pauses instead of emitting one long segment that the time-order merge would
-/// float ahead of an interleaved speaker.
+/// Produced by `FluidVADRegionDetector.detectRegions(_:)` and consumed by
+/// `WhisperKitRegionTranscriber.transcribe(_:regions:options:)`, which decodes
+/// each region independently so the offline transcript breaks at conversational
+/// turn pauses instead of emitting one long segment that the time-order merge
+/// would float ahead of an interleaved speaker.
 public struct SpeechRegion: Sendable, Equatable {
     /// Offset from recording start to the region's first sample.
     public let start: Duration

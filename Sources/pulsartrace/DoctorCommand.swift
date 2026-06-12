@@ -51,15 +51,6 @@ enum DoctorCommand {
         checks.append(EnvironmentDoctor.architectureCheck(
             isAppleSilicon: isAppleSilicon()))
 
-        // --- whisper model cache -------------------------------------------
-        let modelDir = ModelStore.defaultCacheDirectory()
-        for model in ModelCatalog.all {
-            let url = modelDir.appendingPathComponent(model.fileName)
-            checks.append(EnvironmentDoctor.modelCheck(
-                name: model.name,
-                present: modelFilePresent(url, expectedSize: model.sizeBytes)))
-        }
-
         // --- Python diarization runtime ------------------------------------
         checks.append(EnvironmentDoctor.pythonRuntimeCheck(
             interpreterPresent: FileManager.default.fileExists(
@@ -108,15 +99,6 @@ enum DoctorCommand {
         var size = MemoryLayout<Int32>.size
         let rc = sysctlbyname("hw.optional.arm64", &value, &size, nil, 0)
         return rc == 0 && value == 1
-    }
-
-    /// A cheap "model present" probe: the file exists and is the expected size.
-    /// Full SHA-256 verification happens at load time (R54d) — too slow for a
-    /// diagnostic over a multi-GB model.
-    private static func modelFilePresent(_ url: URL, expectedSize: Int) -> Bool {
-        guard let attrs = try? FileManager.default.attributesOfItem(
-            atPath: url.path), let size = attrs[.size] as? Int else { return false }
-        return size == expectedSize
     }
 
     /// True when `directory` can be created and written. Probes by creating the

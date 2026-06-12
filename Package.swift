@@ -1,17 +1,5 @@
 // swift-tools-version: 6.0
 import PackageDescription
-import Foundation
-
-// whisper.cpp is vendored + built by `scripts/build-whisper.sh` into
-// `vendor/whisper-install/` (gitignored, reproducible from the pinned commit in
-// project-docs/DECISIONS.md D7). SwiftPM can't run that script, so PulsarTraceEngine reaches
-// the built library through absolute -I/-L/-rpath flags computed here from the
-// package directory. `swift build` works once the script has run.
-let whisperInstall = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent()
-    .appendingPathComponent("vendor/whisper-install")
-let whisperInclude = whisperInstall.appendingPathComponent("include").path
-let whisperLib = whisperInstall.appendingPathComponent("lib").path
 
 let package = Package(
     name: "PulsarTrace",
@@ -25,67 +13,38 @@ let package = Package(
         .executable(name: "pulsartrace", targets: ["pulsartrace"]),
         .executable(name: "pulsartrace-capture", targets: ["pulsartrace-capture"]),
         .executable(name: "pulsartrace-mac", targets: ["pulsartrace-mac"]),
-        .executable(name: "pulsartrace-whisper", targets: ["pulsartrace-whisper"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.17.0"),
-        // ANE transcription backends (docs/specs/2026-06-12-ane-transcription-pipeline/).
-        // Pinned exact: both projects churn their APIs release-to-release
-        // (FluidAudio broke `transcribe` twice in 0.12→0.13; WhisperKit's
-        // v1.0.0 was a breaking rename). Bump deliberately, with the release
-        // notes open.
+        // ANE transcription backends (D39). Pinned exact: both projects
+        // churn their APIs release-to-release. Bump deliberately, with the
+        // release notes open.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.2"),
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", exact: "1.0.0"),
     ],
     targets: [
-        // System-library wrapper around the vendored whisper.cpp.
-        // The dylib + headers are produced by scripts/build-whisper.sh; see
-        // project-docs/DECISIONS.md D7 for the integration approach and pinned commit.
-        .systemLibrary(name: "CWhisper"),
-        // Core library: the engine, all AudioFrameSources, logging, events log, IPC.
+        // Core library: the engine, all AudioFrameSources, transcription
+        // (Parakeet live / WhisperKit refine, both ANE — D39), logging,
+        // events log, IPC.
         .target(
             name: "PulsarTraceEngine",
             dependencies: [
                 .product(name: "Logging", package: "swift-log"),
-                "CWhisper",
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
-            ],
-            cSettings: [
-                .unsafeFlags(["-I", whisperInclude]),
-            ],
-            swiftSettings: [
-                .unsafeFlags(["-I", whisperInclude]),
-            ],
-            linkerSettings: [
-                .unsafeFlags([
-                    "-L", whisperLib,
-                    "-Xlinker", "-rpath", "-Xlinker", whisperLib,
-                ]),
             ]
         ),
-        // The streaming engine binary. Consumes an AudioFrameSource; counts/logs frames.
+        // The streaming engine binary. Consumes an AudioFrameSource; runs
+        // the live pass.
         .executableTarget(
             name: "pulsartrace-engine",
             dependencies: ["PulsarTraceEngine"]
         ),
-        // The whisper inference subprocess (docs/specs/2026-05-26-whisper-subprocess-design.md).
-        // One per concurrent transcription workload; SIGKILL'd by the
-        // parent to recover from a wedged decode. Depends on
-        // `PulsarTraceEngine` so it can reuse `WhisperTranscriber` and
-        // the shared IPC + lock types.
-        .executableTarget(
-            name: "pulsartrace-whisper",
-            dependencies: [
-                .product(name: "Logging", package: "swift-log"),
-                "PulsarTraceEngine",
-            ]
-        ),
         // The user-facing CLI. `refine`/`speakers`, plus `record`, `doctor`,
-        // and `events tail`. Depends on
-        // PulsarTraceCapture so `doctor` can read TCC permission state and
-        // `doctor --capture-test` can drive the real capture path (R68).
+        // and `events tail`. Depends on PulsarTraceCapture so `doctor` can
+        // read TCC permission state and `doctor --capture-test` can drive
+        // the real capture path (R68).
         .executableTarget(
             name: "pulsartrace",
             dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
@@ -117,11 +76,11 @@ let package = Package(
         // The thin SwiftUI executable — `MenuBarExtra` + `Settings`
         // scenes bound to `PulsarTraceMenuBar`'s ViewModels. No logic, no
         // unit tests; exercised only by manual smoke test (D27).
-        // `PulsarTraceEngine` is declared honestly (it was reached
-        // transitively before): a few views legitimately name engine types —
-        // static catalogs (`ModelCatalog`, `WhisperLanguageCatalog`,
-        // `AudioInputDevices`) and display types (`RefinementJob`, `Speaker`,
-        // `EventWriter`) — but never construct engine objects.
+        // `PulsarTraceEngine` is declared honestly: a few views name engine
+        // types — static catalogs (`WhisperKitModelCatalog`,
+        // `LanguageCatalog`, `AudioInputDevices`) and display types
+        // (`RefinementJob`, `Speaker`, `EventWriter`) — but never construct
+        // engine objects.
         .executableTarget(
             name: "pulsartrace-mac",
             dependencies: ["PulsarTraceMenuBar", "PulsarTraceEngine"]

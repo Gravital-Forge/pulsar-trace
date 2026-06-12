@@ -60,8 +60,8 @@ public struct CommittedUtterance: Sendable, Equatable {
 /// (coarser commits, but bounded memory and bounded lag) and logs the overrun.
 /// It never blocks the source or crashes.
 ///
-/// Not `Sendable` by construction — it owns a non-`Sendable` `WhisperTranscriber`.
-/// Drive it from one task.
+/// Not `Sendable` by construction — it owns a non-`Sendable`
+/// `WindowTranscribing` conformer. Drive it from one task.
 public final class StreamingTranscriber {
 
     /// Tunables for the sliding-window streaming loop.

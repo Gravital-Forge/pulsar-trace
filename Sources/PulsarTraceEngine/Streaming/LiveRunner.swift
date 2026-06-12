@@ -11,14 +11,14 @@ import Logging
 /// ## Concurrency design
 ///
 /// The system and mic streams must be consumed *concurrently* so both run at
-/// real-time pace. But a `WhisperTranscriber` is not `Sendable` (it owns a
-/// `whisper_context`), so the transcribers cannot be captured into child
+/// real-time pace. But a window transcriber is not `Sendable` (it drives a
+/// resident model), so the transcribers cannot be captured into child
 /// tasks. The resolution: the **frame reading** runs on child tasks (an
 /// `AudioFrameSource` *is* `Sendable`, only its iterator is not), each feeding
 /// a single `AsyncStream` of `(stream, frame)` tuples. The run loop then
 /// consumes that merged stream on one task, holding both transcribers as
-/// locals — so whisper is only ever touched from one task and `live.md` only
-/// ever sees one append at a time.
+/// locals — so the decode is only ever touched from one task and `live.md`
+/// only ever sees one append at a time.
 final class LiveRunner: Sendable {
 
     /// Which physical stream a merged frame came from.
@@ -281,8 +281,8 @@ final class LiveRunner: Sendable {
                 onActivity: { wakeContinuation.yield(()) })
             : nil
 
-        // The streamers are non-Sendable (`StreamingTranscriber` owns a
-        // `whisper_context`). Box them so the worker Task can capture them
+        // The streamers are non-Sendable (`StreamingTranscriber` drives a
+        // resident model). Box them so the worker Task can capture them
         // across the Swift 6 concurrency boundary. Safe: the box's contents are
         // ONLY ever touched on the worker task below — nowhere else.
         let streamerBox = StreamerBox(system: systemStreamer, mic: micStreamer)
@@ -294,18 +294,15 @@ final class LiveRunner: Sendable {
         // The poll loop is the same cancellation-safe shape as `DiarGate.drain`.
         let workerResult = WorkerLanguageResult()
 
-        // Phase 4: the per-decode watchdog is gone. Wedge recovery now lives
-        // **inside** the `WindowTranscribing` conformer. For the system
-        // stream that's `RemoteWindowTranscriber`, which SIGKILLs + respawns
-        // its `pulsartrace-whisper` subprocess past the deadline (spec §6).
-        // For the mic stream (still in-process per Phase 4 Option A) there is
-        // no in-process recovery — a wedged mic decode is a known smaller
-        // gap pending the shared-host proxy (spec §4 / §9). The
-        // `abort: nil` here is intentional: there is nothing useful for the
-        // remote transcriber to do with it (it ignores the token per its
-        // doc-comment) and nothing in-process arming it any more.
+        // The per-decode watchdog is gone. Wedge recovery now lives **inside**
+        // the `WindowTranscribing` conformer: `ParakeetWindowTranscriber`
+        // bounds a wedged window decode with a 30 s deadline and skips it —
+        // the post-pass recovers the audio (D39). The `abort: nil` here is
+        // intentional: there is nothing useful for the in-process transcriber
+        // to do with it (it ignores the token per its doc-comment) and nothing
+        // arming it any more.
 
-        // The whisper worker: owns the streamers, drains both queues, writes
+        // The decode worker: owns the streamers, drains both queues, writes
         // committed utterances to the sink. Never blocks the drain — the queues
         // drop-oldest under backpressure. Publishes the system stream's detected
         // language to `workerResult` at end of stream (teardown polls it).

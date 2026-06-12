@@ -329,7 +329,7 @@ public struct RecordingStartedEvent: EventPayload {
     public let micDevice: String
     /// Whether system-audio capture is enabled for this session (R6).
     public let systemAudioEnabled: Bool
-    /// The whisper model name used for the live pass.
+    /// The live model name used for the live pass.
     public let modelLive: String
 
     public init(

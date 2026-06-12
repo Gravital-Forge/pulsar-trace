@@ -90,20 +90,10 @@ public enum RefinementJobError: Error {
     /// Map any thrown `Error` to a `RefinementJobError`.
     ///
     /// Priority:
-    /// 1. `ModelStore.ModelStoreError` — download / checksum failures.
-    /// 2. `Diarizer.DiarizeError` — subprocess-level failures.
-    /// 3. `RefinementPipeline.RefineError` — pipeline-typed wrapping errors.
-    /// 4. Everything else → `.io` (retryable fallback).
+    /// 1. `Diarizer.DiarizeError` — subprocess-level failures.
+    /// 2. `RefinementPipeline.RefineError` — pipeline-typed wrapping errors.
+    /// 3. Everything else → `.io` (retryable fallback).
     public static func classify(_ error: Error) -> RefinementJobError {
-        if let ms = error as? ModelStore.ModelStoreError {
-            switch ms {
-            case .hashMismatch, .sizeMismatch:
-                return .modelChecksum
-            case .httpError, .noData:
-                return .modelMissing
-            }
-        }
-
         if let de = error as? Diarizer.DiarizeError {
             switch de {
             case .pythonNotFound, .launchFailed:

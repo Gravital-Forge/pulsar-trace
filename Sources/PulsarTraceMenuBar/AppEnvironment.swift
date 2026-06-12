@@ -88,13 +88,6 @@ public final class AppEnvironment {
         let queueHandle = RefinementQueueHandle(settings: settings)
         self.queueHandle = queueHandle
 
-        // Phase 6 / Layer B: probe the binary-level `whisper.lock` between
-        // pauseRefinement and the orchestrator's start. `pauseRefinement`
-        // terminates the refinement-whisper subprocess (Layer A); this
-        // probe is the defence-in-depth that catches the rare slow-teardown
-        // window before the engine subprocess hits the flock.
-        let lockProbePath = paths.applicationSupport
-            .appendingPathComponent("whisper.lock", isDirectory: false)
         self.recording = RecordingViewModel(
             settings: settings, paths: paths, events: events,
             enqueueAutoRefine: { url, recordingId in
@@ -104,12 +97,7 @@ public final class AppEnvironment {
                     folderURL: url, recordingId: recordingId)
             },
             pauseRefinement: { await queueHandle.pauseForRecording() },
-            resumeRefinement: { await queueHandle.resumeAfterRecording() },
-            waitForWhisperLockFree: {
-                try await WhisperLockProbe.waitUntilFree(
-                    lockPath: lockProbePath,
-                    timeout: .seconds(5))
-            })
+            resumeRefinement: { await queueHandle.resumeAfterRecording() })
         let scanner = RecordingsScanner(settings: settings)
         let liveWatcher = LiveTranscriptWatcher()
         let navigation = AppNavigation()

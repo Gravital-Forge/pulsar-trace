@@ -88,13 +88,13 @@ struct RecordOrchestratorTests {
 
     // MARK: - engineEnvironment merge behavior
     //
-    // The orchestrator's `engineEnvironment` field — added with the
-    // `PULSARTRACE_WHISPER_BINARY` thread-through fix — must merge onto the
-    // parent process's environment (caller-wins) before being assigned to the
-    // engine subprocess. Replacing rather than merging would strip HOME, PATH,
-    // USER, etc. and break anything downstream that depends on them. These
-    // tests assert the observable contract by spawning a stand-in engine
-    // script that echoes the env it actually receives.
+    // The orchestrator's `engineEnvironment` field (the generic
+    // subprocess-environment seam; no production caller sets it today) must
+    // merge onto the parent process's environment (caller-wins) before being
+    // assigned to the engine subprocess. Replacing rather than merging would
+    // strip HOME, PATH, USER, etc. and break anything downstream that depends
+    // on them. These tests assert the observable contract by spawning a
+    // stand-in engine script that echoes the env it actually receives.
 
     /// Builds a config whose capture is a vanilla ready+idle script and whose
     /// engine is the supplied shell snippet (typically an `echo` reading env

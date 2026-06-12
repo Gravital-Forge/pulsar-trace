@@ -5,17 +5,14 @@ import PulsarTraceEngine
 /// `pulsartrace-engine` — the streaming engine binary.
 ///
 /// In its simplest mode it consumes an `AudioFrameSource` and reports a frame
-/// count. `--transcribe` runs a source through `WhisperTranscriber` and
-/// prints the R13 markdown transcript. Whisper streaming and diarization run
-/// behind the same source-consuming loop.
+/// count. `--live` runs the streaming transcription + diarization pass over a
+/// source, growing an append-only `live.md`.
 ///
 /// Usage:
 ///   pulsartrace-engine --stdin                  Read raw f32le PCM from stdin.
 ///   pulsartrace-engine --fixture <path>         Replay a WAV fixture (fast mode).
 ///   pulsartrace-engine --source fixture <path>  Same; verbose source syntax.
 ///   pulsartrace-engine --socket <path>          Read framed PCM from a socket.
-///   pulsartrace-engine --source fixture <path> --transcribe [--model base]
-///                                               Offline-transcribe + print R13 markdown.
 @main
 struct EngineMain {
     static func main() async {
@@ -27,9 +24,6 @@ struct EngineMain {
             if args.contains("--live") {
                 let summary = try await live(args: args, lifecycle: lifecycle)
                 FileHandle.standardOutput.write(Data((summary + "\n").utf8))
-            } else if args.contains("--transcribe") {
-                let markdown = try await transcribe(args: args, lifecycle: lifecycle)
-                FileHandle.standardOutput.write(Data(markdown.utf8))
             } else {
                 let result = try await run(args: args)
                 FileHandle.standardOutput.write(Data(
@@ -70,34 +64,6 @@ struct EngineMain {
         throw UsageError(message: """
             usage: pulsartrace-engine [--stdin | --fixture <wav> | --socket <path>]
             """)
-    }
-
-    /// Offline-transcribe a fixture source and render R13 markdown.
-    ///
-    /// Downloads/verifies the requested model on first use (R54c/R54d), keeps
-    /// it resident in one `WhisperTranscriber`, and runs the whole fixture
-    /// through a single `whisper_full` call.
-    static func transcribe(args: [String], lifecycle: AppLifecycle) async throws -> String {
-        guard let path = fixturePath(in: args) else {
-            throw UsageError(message: """
-                usage: pulsartrace-engine --source fixture <wav> --transcribe [--model base|large-v3]
-                """)
-        }
-        let modelName = value(after: "--model", in: args) ?? "base"
-        guard let model = ModelCatalog.model(named: modelName) else {
-            throw UsageError(message: "unknown model '\(modelName)'; known: "
-                + ModelCatalog.all.map(\.name).joined(separator: ", "))
-        }
-
-        let store = ModelStore(events: lifecycle.events)
-        let modelURL = try await store.ensureAvailable(model)
-
-        let transcriber = try WhisperTranscriber(modelURL: modelURL)
-        let pipeline = OfflineTranscriptionPipeline()
-        let source = FixturePlaybackSource(
-            file: URL(fileURLWithPath: path), realtime: false)
-        let output = try await pipeline.run(source: source, transcriber: transcriber)
-        return output.markdown
     }
 
     /// Run the live pass — streaming transcription + provisional

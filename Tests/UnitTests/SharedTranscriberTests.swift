@@ -8,7 +8,7 @@ struct SharedTranscriberTests {
 
     /// A bare object with reference identity so the test can check that two
     /// `.get()` calls return the same instance without depending on a real
-    /// `WhisperTranscriber` (which needs an on-disk model).
+    /// `WhisperKitRegionTranscriber` (which needs an on-disk model).
     private final class Sentinel: @unchecked Sendable {
         let id = UUID()
     }

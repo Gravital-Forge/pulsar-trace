@@ -103,20 +103,6 @@ public enum EnvironmentDoctor {
                 + "Apple Silicon is recommended")
     }
 
-    /// A pinned whisper model's cache state. An absent model is only a warning:
-    /// it downloads automatically on first transcription (R54c).
-    public static func modelCheck(name: String, present: Bool) -> DoctorCheck {
-        if present {
-            return DoctorCheck(
-                name: "whisper model: \(name)", status: .ok,
-                detail: "cached")
-        }
-        return DoctorCheck(
-            name: "whisper model: \(name)", status: .warn,
-            detail: "not downloaded — it downloads automatically on first use "
-                + "(`pulsartrace refine` / `record`)")
-    }
-
     /// The Python diarization runtime. Without it, diarization is unavailable
     /// and transcripts fall back to a single unlabeled speaker.
     public static func pythonRuntimeCheck(interpreterPresent: Bool) -> DoctorCheck {

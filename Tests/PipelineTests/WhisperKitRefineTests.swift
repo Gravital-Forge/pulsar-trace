@@ -66,8 +66,7 @@ struct WhisperKitRefineTests {
     }
 
     @Test func emptyRegionListDecodesWholeBuffer() async throws {
-        // The `regions: []` contract = whole-buffer fallback, mirroring
-        // the old `WhisperTranscriber.transcribe(_:regions:options:)`.
+        // The `regions: []` contract = whole-buffer fallback.
         let samples = try Self.fixtureSamples("single-speaker-30s.wav")
         let result = try await Self.transcriber.transcribe(
             samples, regions: [], options: WhisperOptions())

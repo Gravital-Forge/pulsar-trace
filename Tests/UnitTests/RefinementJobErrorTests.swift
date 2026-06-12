@@ -11,37 +11,6 @@ struct RefinementJobErrorTests {
 
     // MARK: - Classifier unit tests
 
-    @Test("ModelStoreError.hashMismatch → modelChecksum, not retryable")
-    func classifiesHashMismatch() {
-        let err = ModelStore.ModelStoreError.hashMismatch(expected: "abc", actual: "xyz")
-        let classified = RefinementJobError.classify(err)
-        #expect(classified.errorClass == "modelChecksum")
-        #expect(classified.retryAvailable == false)
-    }
-
-    @Test("ModelStoreError.sizeMismatch → modelChecksum, not retryable")
-    func classifiesSizeMismatch() {
-        let err = ModelStore.ModelStoreError.sizeMismatch(expected: 100, actual: 50)
-        let classified = RefinementJobError.classify(err)
-        #expect(classified.errorClass == "modelChecksum")
-        #expect(classified.retryAvailable == false)
-    }
-
-    @Test("ModelStoreError.httpError → modelMissing, not retryable")
-    func classifiesHttpError() {
-        let err = ModelStore.ModelStoreError.httpError(404)
-        let classified = RefinementJobError.classify(err)
-        #expect(classified.errorClass == "modelMissing")
-        #expect(classified.retryAvailable == false)
-    }
-
-    @Test("ModelStoreError.noData → modelMissing, not retryable")
-    func classifiesNoData() {
-        let classified = RefinementJobError.classify(ModelStore.ModelStoreError.noData)
-        #expect(classified.errorClass == "modelMissing")
-        #expect(classified.retryAvailable == false)
-    }
-
     @Test("DiarizeError.pythonNotFound → missingDependency, not retryable")
     func classifiesPythonNotFound() {
         let err = Diarizer.DiarizeError.pythonNotFound("/usr/bin/python3")
@@ -184,14 +153,14 @@ struct RefinementJobErrorTests {
         return snap.recent.first?.state ?? .queued
     }
 
-    @Test("queue: modelChecksum error produces .failed(errorClass: modelChecksum, retryAvailable: false)")
-    func queueProducesModelChecksumFailed() async throws {
+    @Test("queue: transcribeFailed error produces .failed(errorClass: transcribeFailed, retryAvailable: true)")
+    func queueProducesTranscribeFailed() async throws {
         let queue = try await makeQueue(
-            throwing: ModelStore.ModelStoreError.hashMismatch(expected: "a", actual: "b"))
+            throwing: WhisperTranscribeError.transcriptionFailed(-1))
         let state = try await runAndWaitForFailure(queue)
         if case .failed(let cls, let retry) = state {
-            #expect(cls == "modelChecksum")
-            #expect(retry == false)
+            #expect(cls == "transcribeFailed")
+            #expect(retry == true)
         } else {
             Issue.record("expected .failed, got \(state)")
         }

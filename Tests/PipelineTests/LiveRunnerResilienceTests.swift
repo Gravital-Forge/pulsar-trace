@@ -10,17 +10,13 @@ import Logging
 /// silent without an EOF) and a **hanging** `LiveDiarizing` stub, neither of
 /// which `StreamingPipeline.run` exposes a seam for.
 ///
-/// `.serialized`: each test constructs a `WhisperTranscriber` (whisper.cpp is
-/// single-context per process, D8) — `WhisperTestGate` serializes them across
-/// the whole process.
+/// `.serialized`: tests share the process-wide resident `ParakeetEngine`
+/// (`ParakeetTestEngine`); serializing keeps the decode interleaving
+/// deterministic enough for the timing-shaped assertions.
 @Suite("LiveRunner resilience (silence watchdog, diarizer decoupling)", .serialized)
 struct LiveRunnerResilienceTests {
 
     // MARK: - Helpers
-
-    private func baseModelURL() async throws -> URL {
-        try await WhisperTestGate.model(ModelCatalog.base)
-    }
 
     private func tempFolder() -> URL {
         let dir = FileManager.default.temporaryDirectory
@@ -38,7 +34,7 @@ struct LiveRunnerResilienceTests {
     /// A non-silent 20 ms frame whose peak clears the streaming VAD gate
     /// (`silencePeakThreshold` 0.01), so the streaming transcriber actually
     /// reaches `transcribeWindow` once a window is due. `.silence` frames are
-    /// VAD-gated out before whisper, so they cannot exercise the wedge.
+    /// VAD-gated out before the decode, so they cannot exercise the wedge.
     private func tone(sequenceIndex: Int) -> AudioFrame {
         let n = AudioFormat.samplesPerFrame
         var s = [Float](repeating: 0, count: n)
@@ -81,7 +77,7 @@ struct LiveRunnerResilienceTests {
 
     @Test("a stream that goes silent without EOF does not wedge the run loop and is not prematurely ended")
     func stalledStreamDoesNotWedge() async throws {
-        let modelURL = try await baseModelURL()
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -91,8 +87,9 @@ struct LiveRunnerResilienceTests {
         // treat the silence as an end-of-stream.
         let source = ControllableSource()
 
-        let output: StreamingPipeline.Output = try await WhisperTestGate.run {
-            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+        let output: StreamingPipeline.Output
+        do {
+            let transcriber = ParakeetWindowTranscriber(engine: engine)
             let (runner, writer, _) = makeRunner(folder: folder)
             try await writer.start()
 
@@ -126,7 +123,7 @@ struct LiveRunnerResilienceTests {
             let out = try await runTask.value
             #expect(await done.isDone == true)
             await writer.finish()
-            return out
+            output = out
         }
 
         // The live.md still exists and is valid — the run completed.
@@ -138,16 +135,17 @@ struct LiveRunnerResilienceTests {
 
     @Test("both streams stalling silently still terminates once both .ended arrive")
     func bothStreamsStallThenEndCleanly() async throws {
-        let modelURL = try await baseModelURL()
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
         let systemSource = ControllableSource()
         let micSource = ControllableSource()
 
-        let output: StreamingPipeline.Output = try await WhisperTestGate.run {
-            let sysTranscriber = try WhisperTestTranscriber.make(modelURL: modelURL)
-            let micTranscriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+        let output: StreamingPipeline.Output
+        do {
+            let sysTranscriber = ParakeetWindowTranscriber(engine: engine)
+            let micTranscriber = ParakeetWindowTranscriber(engine: engine)
             let (runner, writer, _) = makeRunner(folder: folder)
             try await writer.start()
 
@@ -178,7 +176,7 @@ struct LiveRunnerResilienceTests {
             let out = try await runTask.value
             #expect(await done.isDone == true)
             await writer.finish()
-            return out
+            output = out
         }
 
         let text = try String(contentsOf: output.liveURL, encoding: .utf8)
@@ -187,7 +185,7 @@ struct LiveRunnerResilienceTests {
 
     @Test("the silence gap annotation is append-only — live.md only ever grows")
     func silenceGapIsAppendOnly() async throws {
-        let modelURL = try await baseModelURL()
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -195,8 +193,8 @@ struct LiveRunnerResilienceTests {
         let liveURL = folder.appendingPathComponent(RecordingFolder.FileName.live)
 
         let sizes = SizeSamples()
-        try await WhisperTestGate.run {
-            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+        do {
+            let transcriber = ParakeetWindowTranscriber(engine: engine)
             let (runner, writer, _) = makeRunner(folder: folder)
             try await writer.start()
 
@@ -242,7 +240,7 @@ struct LiveRunnerResilienceTests {
 
     @Test("each stream's silence gap is annotated independently — a mic-only stall after a joint-stall recovery still gets its own note")
     func perStreamSilenceAnnotationIsIndependent() async throws {
-        let modelURL = try await baseModelURL()
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -250,9 +248,10 @@ struct LiveRunnerResilienceTests {
         let micSource = ControllableSource()
         let liveURL = folder.appendingPathComponent(RecordingFolder.FileName.live)
 
-        let output: StreamingPipeline.Output = try await WhisperTestGate.run {
-            let sysTranscriber = try WhisperTestTranscriber.make(modelURL: modelURL)
-            let micTranscriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+        let output: StreamingPipeline.Output
+        do {
+            let sysTranscriber = ParakeetWindowTranscriber(engine: engine)
+            let micTranscriber = ParakeetWindowTranscriber(engine: engine)
             let (runner, writer, _) = makeRunner(folder: folder)
             try await writer.start()
 
@@ -287,7 +286,7 @@ struct LiveRunnerResilienceTests {
             await micSource.finish()
             let out = try await runTask.value
             await writer.finish()
-            return out
+            output = out
         }
 
         // The mic stall after the system stream recovered still produced a
@@ -304,7 +303,7 @@ struct LiveRunnerResilienceTests {
 
     @Test("a wedged live diarizer does not stall transcription or live.md output")
     func wedgedDiarizerDoesNotStallTranscription() async throws {
-        let modelURL = try await baseModelURL()
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -312,11 +311,12 @@ struct LiveRunnerResilienceTests {
         // forever, exactly like a wedged windowed-pyannote subprocess.
         let diarizer = HangingDiarizer()
 
-        let output: StreamingPipeline.Output = try await WhisperTestGate.run {
-            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+        let output: StreamingPipeline.Output
+        do {
+            let transcriber = ParakeetWindowTranscriber(engine: engine)
             let (runner, writer, _) = makeRunner(folder: folder)
             try await writer.start()
-            // A real fixture so whisper actually has speech to commit.
+            // A real fixture so the transcriber actually has speech to commit.
             let source = FixturePlaybackSource(
                 file: FixtureLocator.audio("two-speakers-alternating.wav"),
                 realtime: false)
@@ -327,7 +327,7 @@ struct LiveRunnerResilienceTests {
                 micSource: nil,
                 liveDiarizer: diarizer)
             await writer.finish()
-            return out
+            output = out
         }
 
         // The diarizer hung on every window, yet transcription still ran to
@@ -346,7 +346,7 @@ struct LiveRunnerResilienceTests {
 
     @Test("diarBuffer stays bounded over a long stream")
     func diarBufferStaysBounded() async throws {
-        let modelURL = try await baseModelURL()
+        let engine = try await ParakeetTestEngine.shared()
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -362,8 +362,8 @@ struct LiveRunnerResilienceTests {
         // is what triggers the trim) all through the stream.
         let diarizer = InstantDiarizer()
 
-        try await WhisperTestGate.run {
-            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
+        do {
+            let transcriber = ParakeetWindowTranscriber(engine: engine)
             let (runner, writer, config) = makeRunner(
                 folder: folder, diarBufferProbe: probe)
             try await writer.start()
@@ -395,10 +395,10 @@ struct LiveRunnerResilienceTests {
         }
     }
 
-    // MARK: - Recording safety — WAV is never blocked by whisper
+    // MARK: - Recording safety — WAV is never blocked by the decode
 
-    @Test("a wedged whisper decode never stalls the WAV recording")
-    func wedgedWhisperDoesNotStallRecording() async throws {
+    @Test("a wedged decode never stalls the WAV recording")
+    func wedgedDecodeDoesNotStallRecording() async throws {
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -427,10 +427,10 @@ struct LiveRunnerResilienceTests {
         // The recording-folder WAV stores mono Int16 PCM — 2 bytes/sample —
         // so 100 frames of 320 samples is 100 * 320 * 2 data bytes on disk
         // (plus the 44-byte header). Assert the data bytes are all present while
-        // whisper is wedged: the WAV grew, the decode did not block it.
+        // the decode is wedged: the WAV grew, the decode did not block it.
         let size = (try? Data(contentsOf: systemWAV))?.count ?? 0
         #expect(size >= 100 * AudioFormat.samplesPerFrame * 2,
-                "WAV did not grow while whisper was wedged; size=\(size)")
+                "WAV did not grow while the decode was wedged; size=\(size)")
 
         await source.finish()
         _ = await withTimeoutOrNil(seconds: 5) { try await runTask.value }
@@ -440,7 +440,7 @@ struct LiveRunnerResilienceTests {
         #expect(finalSize >= 100 * AudioFormat.samplesPerFrame * 2)
     }
 
-    @Test("when whisper falls behind, the live view notes the drop and recording is whole")
+    @Test("when the decode falls behind, the live view notes the drop and recording is whole")
     func dropNoteOnBacklog() async throws {
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -456,8 +456,8 @@ struct LiveRunnerResilienceTests {
                 systemTranscriber: blocking, micTranscriber: nil,
                 systemSource: source, micSource: nil, liveDiarizer: nil)
         }
-        // 200 non-silent frames into a 200 ms (= 10-frame) queue while whisper is
-        // wedged: the queue saturates and starts dropping, which the drain notes
+        // 200 non-silent frames into a 200 ms (= 10-frame) queue while the decode
+        // is wedged: the queue saturates and starts dropping, which the drain notes
         // once in live.md as a recording-paused gap.
         for i in 0..<200 { await source.yieldFrame(tone(sequenceIndex: i)) }
         try await Task.sleep(for: .milliseconds(300))
@@ -469,18 +469,15 @@ struct LiveRunnerResilienceTests {
         #expect(text.contains("_(recording paused)_"))
     }
 
-    // MARK: - Phase 4 — wedge recovery moved out of LiveRunner
+    // MARK: - Wedge recovery lives in the transcriber, not LiveRunner
     //
-    // The pre-Phase-4 `DecodeWatchdog` lived in-process and flipped an
-    // `AbortToken` on a hung decode. Phase 4 deleted that watchdog: wedge
-    // recovery now lives inside `RemoteWindowTranscriber`, which SIGKILLs +
-    // respawns its `pulsartrace-whisper` subprocess past the deadline (spec
-    // §6). The two Phase-2 tests that exercised the in-process watchdog
-    // (`watchdogAbortsHungDecodeAndResumes`, `unrecoverableHangIsMonitored`)
-    // were therefore removed in Phase 4 — the recovery behavior they pinned
-    // is now covered by `RemoteWindowTranscriberTests`, and the
-    // `decodeDeadline` / `abortGrace` knobs they used no longer exist on
-    // `LiveRunner.init`.
+    // An earlier design ran an in-process decode watchdog inside `LiveRunner`
+    // that flipped an `AbortToken` on a hung decode. That watchdog was deleted:
+    // wedge recovery now lives inside the window transcriber itself
+    // (`ParakeetWindowTranscriber` bounds a wedged window decode with a 30 s
+    // deadline and skips it; the post-pass recovers the audio). The
+    // `decodeDeadline` / `abortGrace` knobs the old in-process watchdog used no
+    // longer exist on `LiveRunner.init`.
 }
 
 // MARK: - Test doubles
@@ -575,11 +572,11 @@ actor DoneFlag {
 }
 
 /// A `WindowTranscribing` whose every decode blocks forever — the live wedge.
-/// Will honor an abort token if one is passed, but since Phase 4 deleted the
-/// in-process `DecodeWatchdog` the runner now passes `abort: nil`, so in
-/// these tests this block is unbounded — exactly the wedge condition being
-/// stress-tested (recording-safety: WAV keeps growing through the wedge).
-/// The surrounding tests bound the wait themselves via `withTimeoutOrNil`.
+/// Will honor an abort token if one is passed, but the runner passes
+/// `abort: nil`, so in these tests this block is unbounded — exactly the wedge
+/// condition being stress-tested (recording-safety: WAV keeps growing through
+/// the wedge). The surrounding tests bound the wait themselves via
+/// `withTimeoutOrNil`.
 final class BlockingWindowTranscriber: WindowTranscribing, @unchecked Sendable {
     func transcribeWindow(
         _ samples: [Float],

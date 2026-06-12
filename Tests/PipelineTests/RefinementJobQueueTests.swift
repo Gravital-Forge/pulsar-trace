@@ -482,11 +482,11 @@ struct RefinementJobQueueTests {
         #expect(stage == .diarizing, "lastStage should round-trip through resume")
     }
 
-    /// Phase 6 / Layer A: `pauseForRecording` fires the registered
-    /// transcriber-release hook so the refinement-whisper subprocess
-    /// terminates before the engine subprocess tries to acquire the
-    /// binary-level `whisper.lock`. The hook is set/cleared by the
-    /// worker; the queue invokes it inside `pauseForRecording` after
+    /// `pauseForRecording` fires the registered transcriber-release hook so
+    /// the resident WhisperKit transcriber drops its CoreML models (ARC frees
+    /// them) before the live pass loads its own model, so the two passes don't
+    /// contend for ANE/memory at recording start. The hook is set/cleared by
+    /// the worker; the queue invokes it inside `pauseForRecording` after
     /// cancelling the diarizer.
     @Test("pauseForRecording fires the transcriber-release hook")
     func pauseFiresTranscriberRelease() async throws {
