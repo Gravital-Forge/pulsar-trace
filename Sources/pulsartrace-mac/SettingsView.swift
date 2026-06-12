@@ -33,20 +33,18 @@ struct SettingsView: View {
             }
 
             Section("Transcription") {
-                Picker("Live transcription model",
-                       selection: $settings.liveModelName) {
-                    ForEach(ModelCatalog.all, id: \.name) { model in
-                        Text(model.name).tag(model.name)
-                    }
-                }
                 Picker("Refinement model",
                        selection: $settings.refineModelName) {
-                    ForEach(ModelCatalog.all, id: \.name) { model in
-                        Text(model.name).tag(model.name)
+                    ForEach(WhisperKitModelCatalog.all.map(\.name), id: \.self) { name in
+                        Text(name).tag(name)
                     }
                 }
-                Text("large-v3 is higher quality and ~3 GB — it downloads on "
-                    + "first use if not already cached.")
+                Text("Runs on the Neural Engine — recording never competes "
+                    + "with Meet or screen-share for the GPU. large-v3-turbo "
+                    + "is the fast default (~626 MB download on first use); "
+                    + "large-v3-whisperkit is the slower accuracy fallback "
+                    + "(~947 MB). Live transcription always uses Parakeet v3 "
+                    + "(~0.5 GB on first recording).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -72,9 +70,13 @@ struct SettingsView: View {
                         languagePopoverContent
                     }
                 }
-                Text("Leave empty to let whisper auto-detect freely. With "
-                    + "a selection, every window's language is forced to "
-                    + "the highest-probability code from your list.")
+                Text("Applies to both passes. Pick exactly one language to "
+                    + "pin refinement to it and steer live transcription "
+                    + "toward its script. Pick several and refinement "
+                    + "detects the best match among them per turn (live "
+                    + "stays auto). Leave empty for full auto-detect. "
+                    + "Changes apply to refinements queued after the next "
+                    + "app launch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

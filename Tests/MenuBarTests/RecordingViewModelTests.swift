@@ -286,9 +286,9 @@ struct RecordingViewModelTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let settings = try settings(outputRoot: root)
-        // The live pass has exactly one backend (D39) and ignores
-        // `liveModelName`; `refineModelName` is the only model the user
-        // still chooses, and it must never leak into the live argv.
+        // The live pass has exactly one backend (D39) and takes no model
+        // knob; `refineModelName` is the only model the user still chooses,
+        // and it must never leak into the live argv.
         settings.refineModelName = "large-v3"
 
         // Capture the RecordPlan the live pass is launched with.
