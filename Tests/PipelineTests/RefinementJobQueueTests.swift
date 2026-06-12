@@ -574,7 +574,14 @@ struct RefinementJobQueueTests {
     /// If `pauseForRecording`'s wait were still the broken `withTaskGroup`
     /// race (drains all children; can't time out) OR the release hook didn't
     /// actually cancel the decode, this test would hang past its bound.
-    @Test("pauseForRecording cancels the in-flight decode and returns once the worker exits")
+    ///
+    /// Recovery-contract assertions (Fix 1): the cancel via the release hook
+    /// must complete *well inside* the 5 s timeout (proving the worker exited
+    /// because the decode was cancelled, NOT because the timeout escape fired),
+    /// and the cancelled job must land back as `.queued` at the head of the
+    /// queue — NOT `.failed`, and NOT in `recent` as a failure. The on-disk
+    /// checkpoint stays addressable by the unchanged job id.
+    @Test("pauseForRecording cancels the in-flight decode and requeues the job")
     func pauseCancelsDecodeAndAwaitsWorkerExit() async throws {
         let store = RefinementJobStore(directory: tempDir())
         let gate = PauseGate(initiallyOpen: true)
@@ -592,8 +599,6 @@ struct RefinementJobQueueTests {
         let cancel = CancelSpy()
         let workerExited = Gate()
 
-        struct DecodeCancelled: Error {}
-
         let queue = RefinementJobQueue(
             store: store,
             runJob: { _ in /* placeholder */ },
@@ -608,14 +613,10 @@ struct RefinementJobQueueTests {
             // Simulate a decode parked inside `pipe.transcribe`: block until
             // cancelled, then throw `CancellationError` like `decode` does
             // once its callback returns `false`. The throw unwinds the worker.
-            do {
-                while !cancel.didFire() {
-                    try await Task.sleep(for: .milliseconds(10))
-                }
-                throw CancellationError()
-            } catch is CancellationError {
-                throw CancellationError()   // propagate out of the worker
+            while !cancel.didFire() {
+                try await Task.sleep(for: .milliseconds(10))
             }
+            throw CancellationError()   // propagate out of the worker
         })
         try await queue.start()
 
@@ -624,10 +625,14 @@ struct RefinementJobQueueTests {
             recordingId: "rec_await", modelName: "base",
             modelSHA256: "deadbeef")
         await started.wait()
+        let runningId = try #require(await queue.snapshot().running?.id)
 
         // pauseForRecording must return within its bound. Race it against a
         // generous watchdog so a regression to the old unbounded behaviour
-        // fails the test instead of hanging the suite.
+        // fails the test instead of hanging the suite. Measure elapsed so we
+        // can assert the cancel path (not the 5 s timeout escape) is what
+        // returned.
+        let pauseStart = ContinuousClock.now
         let returnedInTime = await withTaskGroup(of: Bool.self) { group in
             group.addTask { await queue.pauseForRecording(); return true }
             group.addTask {
@@ -638,16 +643,196 @@ struct RefinementJobQueueTests {
             group.cancelAll()
             return first
         }
+        let pauseElapsed = ContinuousClock.now - pauseStart
         #expect(returnedInTime,
                 "pauseForRecording did not return within its bounded wait")
+        // The cancel must unwind the worker; the 5 s poll is an escape hatch,
+        // not the normal path. Returning in < 5 s proves the worker exited via
+        // the cancel, not the timeout.
+        #expect(pauseElapsed < .seconds(5),
+                "pause returned via the timeout escape, not the decode cancel (\(pauseElapsed))")
         #expect(cancel.didFire(), "release hook must have cancelled the decode")
         await workerExited.wait()
 
-        // The worker has exited: a fresh snapshot shows no running job, and
-        // the job landed terminal (the cancelled decode classified as a
-        // retryable transcribe failure).
-        let snap = await queue.snapshot()
+        // Recovery contract: the worker has exited, no job is running, and the
+        // cancelled job requeued (same id, .queued) at the head — it did NOT
+        // fail and is NOT in `recent`.
+        // Poll briefly: runNext's requeue housekeeping lands after the worker
+        // task's body returns, which may trail `workerExited`.
+        var snap = await queue.snapshot()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline,
+              !(snap.running == nil && snap.queued.contains { $0.id == runningId }) {
+            try await Task.sleep(for: .milliseconds(5))
+            snap = await queue.snapshot()
+        }
         #expect(snap.running == nil)
+        let requeued = try #require(
+            snap.queued.first { $0.id == runningId },
+            "cancelled job must requeue with the SAME id, not a fresh one")
+        #expect(requeued.state == .queued,
+                "requeued job must be .queued, not .failed — got \(requeued.state)")
+        #expect(!snap.recent.contains { $0.id == runningId },
+                "a pause-cancelled job must NOT appear in recent as a failure")
+    }
+
+    /// Deadlock pin (Fix 4a). A `runJob` that registers a release hook,
+    /// IGNORES it, and blocks indefinitely (never exits) must still let
+    /// `pauseForRecording` return — via the bounded 5 s worker-exit poll. The
+    /// old `withTaskGroup`-racing-a-sleep code drained all children before
+    /// returning and so would HANG this test forever; the poll-on-actor-state
+    /// rewrite bounds it.
+    ///
+    /// Gated by a generous watchdog so a regression fails (records a violation
+    /// + `#expect(false)`) instead of wedging the whole suite.
+    @Test("pauseForRecording returns even if the worker ignores the release hook")
+    func pauseReturnsWhenWorkerIgnoresRelease() async throws {
+        let store = RefinementJobStore(directory: tempDir())
+        let gate = PauseGate(initiallyOpen: true)
+        let started = Gate()
+        let release = ReleaseCounter()
+
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in /* placeholder */ },
+            pauseGate: gate)
+        await queue.setRunJob({ [queue] _ in
+            // Register a hook (so pauseForRecording arms its worker-exit wait)
+            // but the body deliberately never observes it — it blocks forever.
+            await queue.setInflightTranscriberRelease { release.increment() }
+            await started.open()
+            // Block indefinitely, ignoring the release entirely. The 5 s poll
+            // must give up and let pauseForRecording return regardless.
+            while true {
+                try? await Task.sleep(for: .seconds(60))
+            }
+        })
+        try await queue.start()
+
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/x"),
+            recordingId: "rec_wedge", modelName: "base",
+            modelSHA256: "deadbeef")
+        await started.wait()
+
+        // Race pauseForRecording against a 10 s watchdog. The bounded poll is
+        // 5 s; if pauseForRecording returns we win. If the old TaskGroup code
+        // regressed (hangs forever) the watchdog wins and we fail loudly.
+        let pauseStart = ContinuousClock.now
+        let returned = await withTaskGroup(of: Bool.self) { group in
+            group.addTask { await queue.pauseForRecording(); return true }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(10))
+                return false   // watchdog: a regression hangs past the 5 s poll
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        let elapsed = ContinuousClock.now - pauseStart
+        if !returned {
+            Issue.record("pauseForRecording HUNG — the bounded worker-exit poll regressed")
+        }
+        #expect(returned, "pauseForRecording must return even when the worker ignores the release")
+        #expect(elapsed < .seconds(6),
+                "pause should return at the ~5 s poll bound, took \(elapsed)")
+        #expect(release.value() == 1, "the release hook is still fired exactly once")
+
+        // The worker is still wedged; let it leak (the test process tears down).
+        // No further assertions — this test pins the timeout escape only.
+    }
+
+    /// Resume after a pause-cancel (Fix 4c). After the pause cancels the
+    /// in-flight decode and the job requeues, `resumeAfterRecording` must
+    /// re-run that SAME job (same id — so the on-disk checkpoint is honored)
+    /// and let it complete. The spy decode fails (cancels) the first time and
+    /// succeeds the second.
+    @Test("resumeAfterRecording re-runs the requeued job to completion with the same id")
+    func resumeRerunsRequeuedJob() async throws {
+        let store = RefinementJobStore(directory: tempDir())
+        let gate = PauseGate(initiallyOpen: true)
+        let started = Gate()
+        let completed = Gate()
+
+        // Sticky cancel flag (first attempt) and an attempt counter so the
+        // second run succeeds.
+        final class CancelSpy: @unchecked Sendable {
+            private let lock = NSLock()
+            private var fired = false
+            func fire() { lock.lock(); defer { lock.unlock() }; fired = true }
+            func didFire() -> Bool { lock.lock(); defer { lock.unlock() }; return fired }
+        }
+        let cancel = CancelSpy()
+        actor Attempts { var n = 0; func next() -> Int { n += 1; return n } }
+        let attempts = Attempts()
+
+        let queue = RefinementJobQueue(
+            store: store,
+            runJob: { _ in /* placeholder */ },
+            pauseGate: gate)
+        await queue.setRunJob({ [queue] _ in
+            let attempt = await attempts.next()
+            if attempt == 1 {
+                // First run: behave like a decode parked inside transcribe,
+                // cancelled by the release hook → throw CancellationError.
+                await queue.setInflightTranscriberRelease { cancel.fire() }
+                await started.open()
+                while !cancel.didFire() {
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                throw CancellationError()
+            } else {
+                // Second run (after resume): the decode succeeds.
+                await completed.open()
+            }
+        })
+        try await queue.start()
+
+        try await queue.enqueueManualRefine(
+            folderURL: URL(fileURLWithPath: "/tmp/x"),
+            recordingId: "rec_resume", modelName: "base",
+            modelSHA256: "deadbeef")
+        await started.wait()
+        let originalId = try #require(await queue.snapshot().running?.id)
+
+        // Pause: cancels the decode, requeues the job (same id, .queued).
+        await queue.pauseForRecording()
+
+        // Poll until the job is requeued (housekeeping trails the worker exit).
+        var snap = await queue.snapshot()
+        var deadline = ContinuousClock.now + .seconds(3)
+        while ContinuousClock.now < deadline,
+              !(snap.running == nil && snap.queued.contains { $0.id == originalId }) {
+            try await Task.sleep(for: .milliseconds(5))
+            snap = await queue.snapshot()
+        }
+        #expect(snap.queued.contains { $0.id == originalId },
+                "job must be requeued before resume")
+
+        // Resume: re-runs the requeued job; the second attempt completes.
+        await queue.resumeAfterRecording()
+        await completed.wait()
+
+        // The job ran a second time and reached terminal completion. Its id is
+        // unchanged — the checkpoint on disk would have been honored.
+        snap = await queue.snapshot()
+        deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline,
+              !(snap.running == nil && snap.recent.contains { $0.id == originalId }) {
+            try await Task.sleep(for: .milliseconds(5))
+            snap = await queue.snapshot()
+        }
+        #expect(snap.running == nil)
+        let finished = try #require(
+            snap.recent.first { $0.id == originalId },
+            "the requeued job (same id) must reach terminal state after resume")
+        if case .completed = finished.state {
+            // expected
+        } else {
+            Issue.record("expected .completed for the resumed job, got \(finished.state)")
+        }
+        let total = await attempts.n
+        #expect(total == 2, "the job must have run exactly twice (cancel, then success)")
     }
 
     @Test("recent list is capped at 100 entries")

@@ -24,8 +24,13 @@ import Foundation
 /// it never surfaces here. (2) A recording-start decode cancel
 /// (`WhisperKitRegionTranscriber.cancelPending` → `decode` throws
 /// `CancellationError`) DOES propagate out of the refiner — the per-region
-/// retry loop catches only `WhisperTranscribeError` — and is classified below
-/// as a transient `.transcribeFailed` so the job resumes after the recording.
+/// retry loop catches only `WhisperTranscribeError`. In the normal pause flow
+/// that cancel never reaches `classify`: `RefinementJobQueue.runNext` intercepts
+/// it while `pausedForRecording` and *requeues the same job* with its checkpoint
+/// intact rather than failing it (see the queue's pause doc). The
+/// `CancellationError → .transcribeFailed` arm below is therefore a defensive
+/// fallback for a cancel that surfaces here WITHOUT an in-flight pause — if that
+/// is ever reachable, a retryable transcribe-failure is the right classification.
 public enum RefinementJobError: Error {
 
     // MARK: - Stable error identifiers
@@ -142,16 +147,14 @@ public enum RefinementJobError: Error {
             return .transcribeFailed
         }
 
-        // Recording-start decode cancel (D39 in-process). When
-        // `pauseForRecording` fires the transcriber-release hook,
-        // `WhisperKitRegionTranscriber.decode` throws `CancellationError`; the
-        // per-region retry loop deliberately does NOT catch it (it catches only
-        // `WhisperTranscribeError`), so it propagates here. Classify as a
-        // transient transcription failure — `retryAvailable: true` — so the job
-        // resumes after the recording from its last checkpoint, repeating only
-        // the cancelled region. This mirrors the old subprocess-kill path, where
-        // the IPC EOF surfaced as `WhisperTranscribeError.transcriptionFailed`
-        // and likewise classified to `.transcribeFailed`.
+        // Defensive fallback for a `CancellationError` that reaches `classify`
+        // WITHOUT an in-flight pause (D39 in-process). The normal
+        // recording-start cancel does NOT come through here: `RefinementJobQueue`
+        // intercepts it while `pausedForRecording` and requeues the same job with
+        // its checkpoint intact (no failure, no `refinement_failed`). Should a
+        // cancel ever surface here un-paused, treat it as a transient
+        // transcription failure — `retryAvailable: true` — the same bucket the
+        // old subprocess-kill IPC-EOF mapped to (`transcriptionFailed`).
         if error is CancellationError {
             return .transcribeFailed
         }

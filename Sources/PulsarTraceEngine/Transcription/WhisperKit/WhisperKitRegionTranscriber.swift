@@ -250,10 +250,16 @@ public actor WhisperKitRegionTranscriber {
 
         // Cancel gate (entry). If the queue's release hook already fired
         // `cancelPending()` — recording start while this job was mid-decode —
-        // bail before touching the model. This also covers the detect pre-pass
-        // below: it sits after this check, so a cancel observed here never
-        // reaches `pipe.detectLangauge`. The instance is now poisoned; every
+        // bail before touching the model. The instance is now poisoned; every
         // later decode on it throws here too (the queue rebuilds a fresh one).
+        //
+        // Cancel is observed at four points so a recording start unwinds
+        // promptly regardless of where the decode is: (1) here at entry, (2)
+        // immediately after `ensureLoaded()` below — a cancel that lands during a
+        // long model load / prewarm would otherwise be blind until the first
+        // token callback, and in the `.detectAmong` case would let an entire
+        // uncancelled `pipe.detectLangauge` encoder pass run first, (3) per token
+        // in the `pipe.transcribe` callback, and (4) post-decode before returning.
         if cancelFlag.didFire { throw CancellationError() }
 
         // Pre-decode digital-silence guard (D31). The legacy whisper.cpp path
@@ -276,6 +282,14 @@ public actor WhisperKitRegionTranscriber {
         }
 
         let pipe = try await ensureLoaded()
+
+        // Cancel gate (post-load). The load/prewarm above can take seconds; a
+        // recording-start `cancelPending()` that landed during it would be blind
+        // until the first `pipe.transcribe` token callback. Worse, in the
+        // `.detectAmong` branch below a whole uncancelled `pipe.detectLangauge`
+        // encoder pass would run first. Observe the cancel here so neither
+        // happens — bail before the detect pre-pass and the decode.
+        if cancelFlag.didFire { throw CancellationError() }
 
         var decodeOptions = DecodingOptions()
         decodeOptions.task = .transcribe

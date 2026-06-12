@@ -110,6 +110,16 @@ public actor ResumableRefiner {
                 speakersIdentified: assembled.speakerCount,
                 speakersNew: assembled.speakersNew,
                 speakersMatched: assembled.speakersMatched))
+        } catch is CancellationError {
+            // A recording-start decode cancel (`WhisperKitRegionTranscriber`
+            // throws `CancellationError` after `cancelPending()`) is NOT a job
+            // failure — it is a pause. The completed regions are already durable
+            // in `refine-progress.json` keyed by this job's id; the queue
+            // requeues the SAME job, which resumes from that checkpoint. So do
+            // NOT write `lastError` and do NOT emit `refinement_failed` — both
+            // would misreport a paused job as failed. Just propagate so the
+            // queue's `runNext` sees the cancel and requeues.
+            throw CancellationError()
         } catch {
             progress.lastError = Self.redactPath(
                 "\(type(of: error)): \(error)",

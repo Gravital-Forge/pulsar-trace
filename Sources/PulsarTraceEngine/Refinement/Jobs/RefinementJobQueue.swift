@@ -215,9 +215,28 @@ public actor RefinementJobQueue {
     ///    it (the per-region retry loop catches only `WhisperTranscribeError`);
     ///    the worker finishes `runNext` and clears itself.
     ///
-    /// The cancelled region is *not* lost: `ResumableRefiner` resumes from the
-    /// previous completed checkpoint on the next `resumeAfterRecording`,
-    /// repeating the cancelled region. A few seconds of recompute, no data loss.
+    /// **Recovery contract — the cancelled job requeues, it does not fail.**
+    /// When the cancel lands while `pausedForRecording`, `runNext`'s catch path
+    /// does NOT mark the job `.failed`; instead it requeues the *same* job (same
+    /// id, state `.queued`) at the head of the queue and writes no
+    /// `refinement_failed` / `lastError` (neither here nor in
+    /// `ResumableRefiner.run`, which skips both for `CancellationError`). On the
+    /// next `resumeAfterRecording`, `pumpIfIdle` re-runs that job; because its id
+    /// is unchanged, `ResumableRefiner.loadOrInitProgress` matches
+    /// `p.jobId == job.id` and honors the on-disk checkpoint, recomputing only
+    /// the cancelled region. A few seconds of recompute, no data loss, and no
+    /// terminal failure entry in `recent`.
+    ///
+    /// **Width of the residual 5 s wait (be honest).** The release hook only
+    /// cancels an *active WhisperKit decode*. Any pause that lands during the
+    /// diarize stage (long — a whole subprocess run), VAD region detection, or
+    /// WAV load — i.e. anywhere the worker is NOT inside `pipe.transcribe` — has
+    /// no decode to cancel, so this method waits the full 5 s poll before
+    /// returning and letting recording proceed. In those windows the worker then
+    /// exits at its next `pauseGate.waitOpen()` / box `get()` checkpoint, and
+    /// (per the recovery contract above) the job requeues with its checkpoint
+    /// intact. The 5 s is a ceiling on the recording-start latency in those
+    /// non-decode windows, not a between-regions-only cost.
     public func pauseForRecording() async {
         pausedForRecording = true
         await pauseGate.close()
@@ -264,7 +283,13 @@ public actor RefinementJobQueue {
         // no-op.) Polling actor state sidesteps both.
         if hadRelease {
             let deadline = ContinuousClock.now + .seconds(5)
+            // Break on caller cancellation too: a cancelled `pauseForRecording`
+            // caller should not busy-spin the actor for the remaining deadline
+            // (the `Task.sleep` already throws on cancel, so the loop would
+            // otherwise spin tight). The job still requeues via runNext's own
+            // unwind; this just stops *us* from holding the actor.
             while worker != nil, ContinuousClock.now < deadline {
+                if Task.isCancelled { break }
                 try? await Task.sleep(for: .milliseconds(50))
             }
             if worker != nil {
@@ -342,6 +367,41 @@ public actor RefinementJobQueue {
                 job.state = .completed(durationSeconds: 0.0, speakerCount: 0)
             }
         } catch {
+            // A pause-cancelled decode is NOT a job failure. When a recording
+            // start fires the transcriber-release hook mid-decode,
+            // `WhisperKitRegionTranscriber.decode` throws `CancellationError`,
+            // which propagates out of the refiner (the per-region retry loop
+            // catches only `WhisperTranscribeError`). The on-disk
+            // `refine-progress.json` still holds every region completed before
+            // the cancel, keyed by THIS job's id. Requeue the SAME job (same id,
+            // `.queued`) at the HEAD of the queue so `resumeAfterRecording` →
+            // `pumpIfIdle` re-runs it: `ResumableRefiner.loadOrInitProgress`
+            // matches `p.jobId == job.id` and honors the checkpoint, recomputing
+            // only the cancelled region. Marking it `.failed` instead would
+            // strand the checkpoint (the UI Retry enqueues a FRESH id, whose
+            // progress won't match) and force a full recompute.
+            //
+            // Gated on `pausedForRecording` so a `CancellationError` that arrives
+            // WITHOUT a pause in flight (defensive; e.g. a poisoned-instance
+            // entry-gate throw after an aborted pause) still classifies to
+            // `.transcribeFailed` — the correct default if it is ever reachable.
+            if pausedForRecording, error is CancellationError {
+                // Clear the per-job slots first (same happens-before reasoning
+                // as the terminal path below), then requeue at the head.
+                inflightCancellable = nil
+                inflightTranscriberRelease = nil
+                job.state = .queued
+                // Defensive: never double-insert. The job was removed from
+                // `queued` at the top of runNext and is not terminal, so it
+                // exists in neither list now; the filter is belt-and-suspenders.
+                queued.removeAll { $0.id == job.id }
+                queued.insert(job, at: 0)
+                try? await store.upsert(job)
+                current = nil
+                self.worker = nil      // clear BEFORE pumpIfIdle so guard passes
+                pumpIfIdle()           // no-op while paused; resume re-pumps
+                return                 // do NOT add a `recent` failure entry
+            }
             let classified = RefinementJobError.classify(error)
             job.state = .failed(
                 errorClass: classified.errorClass,
