@@ -22,7 +22,7 @@ public actor FluidVADRegionDetector {
     private let minTurnGap: Duration
     private let cacheRoot: URL
     private let logger: Logger
-    private var manager: VadManager?
+    private var managerTask: Task<VadManager, Error>?
 
     public init(
         minTurnGap: Duration = .milliseconds(800),
@@ -34,6 +34,12 @@ public actor FluidVADRegionDetector {
         self.logger = logger
     }
 
+    /// Detect coalesced speech regions in `samples`.
+    ///
+    /// - Important: `samples` must be 16 kHz mono Float32
+    ///   (`AudioFormat.sampleRate`). The Silero VAD model has no notion of the
+    ///   input rate, so passing any other rate silently yields wrong
+    ///   timestamps (regions scaled by the rate ratio) rather than an error.
     public func detectRegions(_ samples: [Float]) async throws -> [SpeechRegion] {
         guard !samples.isEmpty else { return [] }
         let manager = try await ensureManager()
@@ -49,11 +55,27 @@ public actor FluidVADRegionDetector {
     }
 
     private func ensureManager() async throws -> VadManager {
-        if let manager { return manager }
+        if let managerTask {
+            // A failed init must not be cached — clear it so the caller's
+            // retry contract (fallback decision) can attempt a fresh load.
+            do { return try await managerTask.value }
+            catch {
+                self.managerTask = nil
+                throw error
+            }
+        }
         let modelDirectory = cacheRoot.appendingPathComponent(
             "silero-vad-coreml", isDirectory: true)
-        let created = try await VadManager(modelDirectory: modelDirectory)
-        manager = created
-        return created
+        // Store the Task before awaiting so a concurrent detectRegions call
+        // awaits the same in-flight init instead of racing a second
+        // VadManager load against the same pinned directory (FluidAudio's
+        // corrupted-cache recovery deletes + re-downloads).
+        let task = Task { try await VadManager(modelDirectory: modelDirectory) }
+        managerTask = task
+        do { return try await task.value }
+        catch {
+            self.managerTask = nil
+            throw error
+        }
     }
 }
