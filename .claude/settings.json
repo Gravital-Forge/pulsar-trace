@@ -5,6 +5,7 @@
     "network": {
       "allowedDomains": [
         "github.com",
+        "api.github.com",
         "codeload.github.com",
         "objects.githubusercontent.com",
         "github-cloud.s3.amazonaws.com",
