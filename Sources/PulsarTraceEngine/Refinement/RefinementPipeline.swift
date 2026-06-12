@@ -155,10 +155,10 @@ public struct RefinementPipeline: Sendable {
     ///
     /// - Parameters:
     ///   - inputPath: a bare `.wav` file or a recording folder.
-    ///   - transcriberFactory: builds a model-resident `WhisperTranscriber`.
-    ///     A factory (not a single instance) so the mic and system streams get
-    ///     independent transcribers — whisper.cpp keeps a per-context Metal
-    ///     residency set and one context per source is the safe usage pattern.
+    ///   - transcriber: backend-agnostic transcription closures
+    ///     (`RefinementTranscriber`) — region detection + region/whole
+    ///     decode, shared by the mic and system streams (the WhisperKit
+    ///     actor serializes).
     ///   - diarizer: the pyannote diarization driver.
     ///   - whisperModelName: model name recorded in `metadata.json` / events.
     ///   - whisperModelSHA256: pinned model hash recorded in `metadata.json`.
@@ -174,7 +174,7 @@ public struct RefinementPipeline: Sendable {
     ///   - progress: optional progress sink (R26).
     public func run(
         inputPath: URL,
-        transcriberFactory: @Sendable () throws -> WhisperTranscriber,
+        transcriber: RefinementTranscriber,
         diarizer: Diarizer,
         whisperModelName: String,
         whisperModelSHA256: String,
@@ -208,7 +208,7 @@ public struct RefinementPipeline: Sendable {
         do {
             return try await refine(
                 folder: folder,
-                transcriberFactory: transcriberFactory,
+                transcriber: transcriber,
                 diarizer: diarizer,
                 whisperModelName: whisperModelName,
                 whisperModelSHA256: whisperModelSHA256,
@@ -236,7 +236,7 @@ public struct RefinementPipeline: Sendable {
 
     private func refine(
         folder: RecordingFolder,
-        transcriberFactory: @Sendable () throws -> WhisperTranscriber,
+        transcriber: RefinementTranscriber,
         diarizer: Diarizer,
         whisperModelName: String,
         whisperModelSHA256: String,
@@ -253,7 +253,7 @@ public struct RefinementPipeline: Sendable {
         progress?(.transcribingSystem)
         let systemTranscription = try await transcribe(
             wav: folder.systemStream.url,
-            transcriberFactory: transcriberFactory,
+            transcriber: transcriber,
             options: whisperOptions)
 
         // --- Stage 3: diarize the system stream -----------------------------
@@ -305,7 +305,7 @@ public struct RefinementPipeline: Sendable {
             progress?(.transcribingMic)
             micTranscription = try await transcribe(
                 wav: mic.url,
-                transcriberFactory: transcriberFactory,
+                transcriber: transcriber,
                 options: whisperOptions)
         }
 
@@ -420,23 +420,22 @@ public struct RefinementPipeline: Sendable {
         let audioDuration: Duration
     }
 
-    /// Transcribe a single WAV through `FixturePlaybackSource` → whisper.
+    /// Transcribe a single WAV through `FixturePlaybackSource` → the backend.
     ///
     /// A partial / slightly-malformed WAV header is tolerated by `WAVReader`,
     /// which recovers what is readable rather than crashing (edge case).
     private func transcribe(
         wav: URL,
-        transcriberFactory: @Sendable () throws -> WhisperTranscriber,
+        transcriber: RefinementTranscriber,
         options: WhisperOptions
     ) async throws -> StreamTranscription {
         do {
-            let transcriber = try transcriberFactory()
             let source = FixturePlaybackSource(file: wav, realtime: false)
             let pipeline = OfflineTranscriptionPipeline(logger: logger)
             let samples = try await pipeline.accumulate(source)
 
             // No usable speech at all: hand back an empty transcript rather
-            // than letting `whisper_full` throw `emptyAudio`. The pipeline then
+            // than letting the backend throw `emptyAudio`. The pipeline then
             // writes a valid, explanatory `final.md` (edge case).
             guard !samples.isEmpty else {
                 return StreamTranscription(
@@ -445,28 +444,17 @@ public struct RefinementPipeline: Sendable {
             let duration = Duration.milliseconds(
                 samples.count * 1000 / AudioFormat.sampleRate)
 
-            // VAD-segmented transcription: when a Silero VAD model is
-            // available, detect this stream's speech regions and decode each
-            // independently, so a speaker's turn ends at the pause where they
-            // stopped to listen. The time-order merge can then interleave the
-            // other stream's utterances in causal order, instead of floating
-            // one long glued-together turn ahead of them. A VAD failure is
-            // non-fatal — fall back to a whole-buffer decode.
-            let result: TranscriptionResult
-            if let vadModelURL = options.vadModelURL {
-                var regions: [SpeechRegion] = []
-                do {
-                    regions = try WhisperTranscriber.detectSpeechRegions(
-                        in: samples, vadModelURL: vadModelURL, logger: logger)
-                } catch {
-                    logger.warning(
-                        "VAD region detection failed — whole-buffer decode")
-                }
-                result = try transcriber.transcribe(
-                    samples, regions: regions, options: options)
-            } else {
-                result = try transcriber.transcribe(samples, options: options)
+            // Region-segmented decode (D26): regions from the backend's VAD;
+            // a detection failure degrades to the backend's whole-buffer
+            // decode (regions == []), never fails the refine.
+            var regions: [SpeechRegion] = []
+            do {
+                regions = try await transcriber.detectRegions(samples)
+            } catch {
+                logger.warning("VAD region detection failed — whole-buffer decode")
             }
+            let result = try await transcriber.transcribeRegions(
+                samples, regions, options)
             return StreamTranscription(
                 segments: result.segments,
                 language: result.language,

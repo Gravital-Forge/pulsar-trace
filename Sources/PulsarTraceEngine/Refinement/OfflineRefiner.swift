@@ -12,10 +12,9 @@ import Logging
 /// `TranscriptAssembly.assembleAndWrite`.
 ///
 /// `OfflineRefiner` owns everything `RefinementPipeline` needs but does not
-/// build itself: ensuring the whisper + VAD models are available, wiring the
-/// dev-environment `Diarizer` (venv interpreter, repo root, `.env`), opening
-/// the persistent speaker library, and constructing the `WhisperTranscriber`
-/// factory.
+/// build itself: wiring the dev-environment `Diarizer` (venv interpreter,
+/// repo root, `.env`), opening the persistent speaker library, and
+/// constructing the WhisperKit transcriber + FluidVAD wiring.
 ///
 /// Robustness overrides (D3): the repo root is otherwise the `#filePath`
 /// dev-tree path baked into the binary at build time.
@@ -39,39 +38,56 @@ public struct OfflineRefiner: Sendable {
         self.paths = paths
     }
 
+    /// Setup failures that precede the pipeline (so they are never confused
+    /// with a `RefineError.input` path problem — verified:
+    /// `RecordingFolder.InputError` only has path-shaped cases).
+    public enum SetupError: Error, CustomStringConvertible, Equatable {
+        case unknownModel(String)
+
+        public var description: String {
+            switch self {
+            case .unknownModel(let name):
+                return "unknown refine model '\(name)' (expected: "
+                    + WhisperKitModelCatalog.all.map(\.name).joined(separator: ", ")
+                    + ")"
+            }
+        }
+    }
+
     /// Run the offline refine pass over one audio file or recording folder.
     ///
     /// - Parameters:
     ///   - inputPath: audio file or recording folder.
-    ///   - model: the whisper model (e.g. `ModelCatalog.base`).
+    ///   - modelName: a `WhisperKitModelCatalog` name
+    ///     (`large-v3-turbo` | `large-v3-whisperkit`).
+    ///   - language: ISO-639-1 code pinning the decode language
+    ///     (`refine --language`), or `nil` → the allowed-languages policy /
+    ///     auto-detect (`WhisperKitLanguagePolicy`).
     ///   - progress: optional human-readable progress callback.
     /// - Returns: the `RefinementPipeline.Output`.
-    /// - Throws: `RefinementPipeline.RefineError` (or a model-fetch error) on
-    ///   failure — callers must propagate it, never swallow it.
+    /// - Throws: `SetupError`, or `RefinementPipeline.RefineError` — callers
+    ///   must propagate, never swallow.
     @discardableResult
     public func refine(
         inputPath: URL,
-        model: WhisperModel,
+        modelName: String,
+        language: String? = nil,
         progress: ProgressReporter? = nil
     ) async throws -> RefinementPipeline.Output {
-        // The whisper model must be present and verified before transcription
-        // (R54c/R54d). Cached after the first run.
-        progress?("ensuring whisper model '\(model.name)' is available…")
-        let modelStore = ModelStore(events: events)
-        let modelURL = try await modelStore.ensureAvailable(model)
-
-        // The Silero VAD model gates the offline transcription. A VAD-model
-        // fetch failure must not lose a refine: fall back to a no-VAD decode.
-        var vadModelURL: URL?
-        do {
-            progress?("ensuring VAD model is available…")
-            vadModelURL = try await modelStore
-                .ensureAvailable(ModelCatalog.sileroVAD)
-        } catch {
-            progress?("VAD model unavailable (\(error)) — transcribing without VAD")
-            vadModelURL = nil
+        guard let model = WhisperKitModelCatalog.model(named: modelName) else {
+            throw SetupError.unknownModel(modelName)
         }
-        let whisperOptions = WhisperOptions(vadModelURL: vadModelURL)
+
+        progress?("preparing \(model.name) (ANE)…")
+        let whisperKit = WhisperKitRegionTranscriber(
+            configuration: .init(
+                model: model,
+                downloadBase: ModelStore.defaultCacheDirectory()
+                    .appendingPathComponent("whisperkit", isDirectory: true)),
+            events: events)
+        let transcriber: RefinementTranscriber = .whisperKit(
+            whisperKit, vad: FluidVADRegionDetector())
+        let whisperOptions = WhisperOptions(language: language)
 
         let diarizer = try Self.makeDiarizer()
 
@@ -90,10 +106,10 @@ public struct OfflineRefiner: Sendable {
 
         return try await pipeline.run(
             inputPath: inputPath,
-            transcriberFactory: { try WhisperTranscriber(modelURL: modelURL) },
+            transcriber: transcriber,
             diarizer: diarizer,
             whisperModelName: model.name,
-            whisperModelSHA256: model.sha256,
+            whisperModelSHA256: "",   // SDK-managed CoreML bundle (D39)
             recordingStart: Date(),
             whisperOptions: whisperOptions,
             library: library,

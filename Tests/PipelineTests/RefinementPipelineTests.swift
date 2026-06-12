@@ -1,26 +1,36 @@
 import Testing
 import Foundation
-import SnapshotTesting
 @testable import PulsarTraceEngine
 
 /// Pipeline coverage of the refinement pass (`pulsartrace refine`):
 /// R20, R21, R24, R27, R38, R39, plus the refinement event sequence.
 ///
-/// These tests run the **real** pipeline end-to-end — real whisper (`base`
-/// model, D4) and a real pyannote subprocess — on a committed fixture, so a
-/// genuine integration break is caught. They are therefore slow (pyannote
-/// model load ~10–30s) and depend on the dev venv + an `HF_TOKEN`; the suite
-/// **skips cleanly** when that environment is absent, so a `swift test`
-/// without the Python layer set up does not fail.
+/// These tests run the **real** pipeline end-to-end — real WhisperKit
+/// (`large-v3-turbo`, D39) and a real pyannote subprocess — on a committed
+/// fixture, so a genuine integration break is caught. They are therefore
+/// slow (pyannote model load ~10–30s) and depend on the dev venv + an
+/// `HF_TOKEN`; the suite **skips cleanly** when that environment is absent,
+/// so a `swift test` without the Python layer set up does not fail.
 ///
-/// Determinism: whisper is greedy / single-thread with a pinned model hash and
-/// a sampler RNG seeded with a fixed per-call constant (so a non-zero decode
-/// temperature is still byte-reproducible run-to-run), and pyannote runs with
-/// fixed seeds (PRD §12) — so the `final.md` body and `metadata.json` (volatile
-/// fields normalized) are stable across runs. `.serialized` because
-/// whisper.cpp's Metal backend is single-context per process (project-docs/DECISIONS.md D8).
+/// Determinism: WhisperKit decodes temperature-0-first; transcript text is
+/// asserted via fixture keywords, which are robust to decoder wording drift.
+/// pyannote runs with fixed seeds (PRD §12) — so `metadata.json` (volatile
+/// fields normalized) is stable across runs. `.serialized` keeps the suite's
+/// shared model loads from racing each other.
 @Suite("Refinement pipeline", .serialized)
 struct RefinementPipelineTests {
+
+    /// One lazily-loading WhisperKit transcriber per process (D39 backend).
+    private static let whisperKit = WhisperKitRegionTranscriber(
+        configuration: .init(
+            model: WhisperKitModelCatalog.largeV3Turbo,
+            downloadBase: ModelStore.defaultCacheDirectory()
+                .appendingPathComponent("whisperkit", isDirectory: true)),
+        events: nil)
+
+    private static func makeTranscriber() -> RefinementTranscriber {
+        .whisperKit(whisperKit, vad: FluidVADRegionDetector())
+    }
 
     /// A fixed wall-clock so the `final.md` header / metadata are deterministic.
     private static let recordingStart = Date(timeIntervalSince1970: 1_777_000_000)
@@ -81,15 +91,6 @@ struct RefinementPipelineTests {
             environment: env))
     }
 
-    /// Fetch (or reuse) the verified `base` whisper model.
-    ///
-    /// Routed through `WhisperTestGate` so the model is fetched once
-    /// process-wide — two suites resolving it via separate `ModelStore`
-    /// instances would otherwise race on the shared cache files.
-    private func baseModelURL() async throws -> URL {
-        try await WhisperTestGate.model(ModelCatalog.base)
-    }
-
     /// A throwaway temp directory; cleaned up by the caller.
     private func tempDir() -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -99,22 +100,11 @@ struct RefinementPipelineTests {
         return url
     }
 
-    /// Body of `final.md` with the wall-clock header line replaced by a stable
-    /// placeholder (same approach as `TranscriptionPipelineTests`).
-    private func body(of markdown: String) -> String {
-        var lines = markdown
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-        if lines.count > 1 { lines[1] = "## Transcript — <recording-start>" }
-        return lines.joined(separator: "\n")
-    }
-
     // MARK: - End-to-end: bare WAV
 
     @Test("refine of a bare WAV produces a well-formed Speaker_N final.md")
     func bareWavEndToEnd() async throws {
         guard let diarizer = Self.makeDiarizer() else { return }  // skip
-        let modelURL = try await baseModelURL()
 
         // Copy the fixture into a temp dir so the output folder is disposable.
         let dir = tempDir()
@@ -124,15 +114,13 @@ struct RefinementPipelineTests {
             at: FixtureLocator.audio("two-speakers-alternating.wav"), to: wav)
 
         let pipeline = RefinementPipeline()
-        let output = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wav,
-                transcriberFactory: { try WhisperTestTranscriber.make(modelURL: modelURL) },
-                diarizer: diarizer,
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart)
-        }
+        let output = try await pipeline.run(
+            inputPath: wav,
+            transcriber: Self.makeTranscriber(),
+            diarizer: diarizer,
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart)
 
         // The output folder is a sibling of the WAV, named for its stem (D13).
         #expect(output.recordingDirectory.lastPathComponent
@@ -149,8 +137,6 @@ struct RefinementPipelineTests {
         #expect(markdown.contains("] Speaker_1:**"))
         // A bare WAV has no mic stream — no "You" label.
         #expect(!markdown.contains("] You:**"))
-        // Recognisable transcript text from the fixture.
-        #expect(markdown.lowercased().contains("coffee"))
 
         #expect(Set(output.speakers) == ["Speaker_0", "Speaker_1"])
         #expect(output.wasReRefine == false)
@@ -160,15 +146,20 @@ struct RefinementPipelineTests {
             RefinementMetadata.self,
             from: Data(contentsOf: output.metadataURL))
         #expect(metadata.recordingId == "rec_two-speakers-alternating")
-        #expect(metadata.whisperModel.name == "base")
+        #expect(metadata.whisperModel.name == "large-v3-turbo")
         #expect(metadata.pyannoteModel?.id
             == "pyannote/speaker-diarization-community-1")
         #expect(metadata.speakers.count == 2)
         #expect(metadata.language == "en")
         #expect(metadata.sourceBasename == "two-speakers-alternating.wav")
 
-        // Snapshot the final.md body — determinism makes this stable.
-        assertSnapshot(of: body(of: markdown), as: .lines)
+        // Distinctive fixture words instead of a byte snapshot (D39):
+        // extracted from the retired whisper snapshot (git history:
+        // __Snapshots__/RefinementPipelineTests/bareWavEndToEnd.1.txt).
+        let lower = markdown.lowercased()
+        for keyword in ["coffee", "barista", "bookstore", "ingestion", "transformation"] {
+            #expect(lower.contains(keyword), "final.md should mention '\(keyword)'")
+        }
     }
 
     // MARK: - Re-refine (R27)
@@ -176,7 +167,6 @@ struct RefinementPipelineTests {
     @Test("re-refine backs up final.md and emits final_md_rewritten")
     func reRefineBackupAndEvent() async throws {
         guard let diarizer = Self.makeDiarizer() else { return }  // skip
-        let modelURL = try await baseModelURL()
 
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -190,35 +180,28 @@ struct RefinementPipelineTests {
         await events.bootstrap()
 
         let pipeline = RefinementPipeline(events: events)
-        let factory: @Sendable () throws -> WhisperTranscriber = {
-            try WhisperTestTranscriber.make(modelURL: modelURL)
-        }
 
         // First refine — fresh final.md.
-        let first = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wav,
-                transcriberFactory: factory,
-                diarizer: diarizer,
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart)
-        }
+        let first = try await pipeline.run(
+            inputPath: wav,
+            transcriber: Self.makeTranscriber(),
+            diarizer: diarizer,
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart)
         #expect(first.wasReRefine == false)
         let backup = first.recordingDirectory
             .appendingPathComponent("final.md.bak")
         #expect(!FileManager.default.fileExists(atPath: backup.path))
 
         // Second refine — re-refine (R27).
-        let second = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wav,
-                transcriberFactory: factory,
-                diarizer: diarizer,
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart)
-        }
+        let second = try await pipeline.run(
+            inputPath: wav,
+            transcriber: Self.makeTranscriber(),
+            diarizer: diarizer,
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart)
         #expect(second.wasReRefine == true)
         // R27: the prior final.md is preserved as final.md.bak.
         #expect(FileManager.default.fileExists(atPath: backup.path))
@@ -238,7 +221,6 @@ struct RefinementPipelineTests {
     @Test("refine emits started → final_md_written → completed in causal order")
     func eventSequenceCausalOrder() async throws {
         guard let diarizer = Self.makeDiarizer() else { return }  // skip
-        let modelURL = try await baseModelURL()
 
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -250,15 +232,13 @@ struct RefinementPipelineTests {
         await events.bootstrap()
 
         let pipeline = RefinementPipeline(events: events)
-        _ = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wav,
-                transcriberFactory: { try WhisperTestTranscriber.make(modelURL: modelURL) },
-                diarizer: diarizer,
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart)
-        }
+        _ = try await pipeline.run(
+            inputPath: wav,
+            transcriber: Self.makeTranscriber(),
+            diarizer: diarizer,
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart)
 
         await events.flush()
         let lines = try String(contentsOf: await events.currentFileURL(), encoding: .utf8)
@@ -289,10 +269,9 @@ struct RefinementPipelineTests {
     @Test("refine of a silence-only WAV writes a valid empty-transcript final.md")
     func silenceProducesValidEmptyFinal() async throws {
         guard let diarizer = Self.makeDiarizer() else { return }  // skip
-        let modelURL = try await baseModelURL()
 
-        // A pure-silence WAV: whisper finds no speech, diarization is skipped,
-        // and the pipeline must still write a valid final.md (edge case).
+        // A pure-silence WAV: the backend finds no speech, diarization is
+        // skipped, and the pipeline must still write a valid final.md (edge case).
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let wav = dir.appendingPathComponent("silence.wav")
@@ -300,15 +279,13 @@ struct RefinementPipelineTests {
         try WAVWriter.encode(samples: silence).write(to: wav)
 
         let pipeline = RefinementPipeline()
-        let output = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wav,
-                transcriberFactory: { try WhisperTestTranscriber.make(modelURL: modelURL) },
-                diarizer: diarizer,
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart)
-        }
+        let output = try await pipeline.run(
+            inputPath: wav,
+            transcriber: Self.makeTranscriber(),
+            diarizer: diarizer,
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart)
 
         let markdown = try String(contentsOf: output.finalURL, encoding: .utf8)
         // Still a valid final.md with the marker — not a crash, not garbage.
@@ -329,9 +306,6 @@ struct RefinementPipelineTests {
 
     @Test("a mid-recording mic pause keeps the resumed turn after the other speaker")
     func interleavedTurnsStayInCausalOrder() async throws {
-        let modelURL = try await baseModelURL()
-        let vadModelURL = try await WhisperTestGate.model(ModelCatalog.sileroVAD)
-
         // Assemble a paired recording from the committed ElevenLabs fixtures
         // that reproduces the two-party shape behind D26: the mic speaker
         // talks, pauses to listen, then resumes — while the system speaker
@@ -362,19 +336,14 @@ struct RefinementPipelineTests {
             embeddings: [])
 
         let pipeline = RefinementPipeline()
-        let output = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: dir,
-                transcriberFactory: {
-                    try WhisperTestTranscriber.make(modelURL: modelURL)
-                },
-                diarizer: diarizer,
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart,
-                whisperOptions: .init(vadModelURL: vadModelURL),
-                precomputedDiarization: diarization)
-        }
+        let output = try await pipeline.run(
+            inputPath: dir,
+            transcriber: Self.makeTranscriber(),
+            diarizer: diarizer,
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart,
+            precomputedDiarization: diarization)
 
         let markdown = try String(contentsOf: output.finalURL, encoding: .utf8)
         let labels = Self.utteranceLabels(in: markdown)
