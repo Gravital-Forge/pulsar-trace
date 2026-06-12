@@ -81,6 +81,11 @@ struct WhisperKitRefineTests {
         let result = try await Self.transcriber.transcribe(
             silence, regions: [SpeechRegion(start: .zero, end: .seconds(8))],
             options: WhisperOptions())
+        // The digital-silence guard skips the decode entirely, so the region
+        // yields no segments at all — the strongest statement of the fix.
+        #expect(result.segments.isEmpty)
+        // Kept: documents the D31 regression shape (a stock-phrase
+        // hallucination on silence) the guard exists to prevent.
         for seg in result.segments {
             #expect(!HallucinationFilter.stockPhrases.contains(
                 HallucinationFilter.normalize(seg.text)))

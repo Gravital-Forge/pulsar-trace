@@ -1,6 +1,10 @@
 import Foundation
 import Logging
 import WhisperKit
+// Scoped import: the umbrella `Accelerate` also re-exports `os`, whose
+// `os.Logger` collides with swift-log's `Logging.Logger` used here. Import
+// just `vDSP` so the namespace stays clean.
+import enum Accelerate.vDSP
 
 /// The ANE refinement transcriber: Whisper large-v3-turbo (or full
 /// large-v3) via WhisperKit, encoder + decoder on `.cpuAndNeuralEngine`.
@@ -8,8 +12,13 @@ import WhisperKit
 /// in-process, no flock, no Metal lock, GPU untouched.
 ///
 /// An actor: WhisperKit's top-level class is not Sendable (v1.0.0 release
-/// note) and keeps per-instance mutable state, so all access is serialized
-/// here — matching the refine queue's single-worker invariant anyway.
+/// note) and keeps per-instance mutable state. The actor serializes *state*
+/// access, but actors are reentrant across `await`, so the actor alone does
+/// not stop two public decodes from interleaving mid-`transcribe` and driving
+/// the non-Sendable WhisperKit instance concurrently. The explicit
+/// non-reentrant decode lock (below) serializes whole decodes across their
+/// suspension points — matching the refine queue's single-worker invariant
+/// anyway, while keeping the public batch loop fair region-by-region.
 ///
 /// Lazy load: construction is cheap and synchronous (so the queue's
 /// `SharedTranscriberBox` can hold it); the model loads on the first decode.
@@ -18,7 +27,12 @@ import WhisperKit
 ///
 /// Wedge recovery: the old design SIGKILLed a wedged Metal decode. Here the
 /// per-token `TranscriptionCallback` returns `false` once the deadline
-/// passes, which makes WhisperKit stop decoding — no process to kill.
+/// passes, which makes WhisperKit stop decoding — no process to kill. That
+/// only bounds decodes that still emit tokens: a hard CoreML hang inside a
+/// single `predict` (no token callbacks — including the detect pre-pass and
+/// prewarm/load) cannot be recovered in-process. That is the accepted risk of
+/// dropping the subprocess design; the refine queue's job-level handling owns
+/// that failure mode.
 ///
 /// Language (Delta B / `WhisperKitLanguagePolicy`), resolved per decode:
 /// explicit pin → forced language token; one allowed code → pin; several →
@@ -73,6 +87,42 @@ public actor WhisperKitRegionTranscriber {
     /// above.
     private var pipeTask: Task<Box, Error>?
 
+    // MARK: - Non-reentrant decode lock
+    //
+    // Actors are reentrant across `await`, so without this two public calls
+    // could interleave mid-decode and drive the non-Sendable WhisperKit
+    // instance concurrently. FIFO waiter queue; the resumed waiter inherits
+    // the lock.
+    private var decodeBusy = false
+    private var decodeWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private func acquireDecodeLock() async {
+        if decodeBusy {
+            await withCheckedContinuation { decodeWaiters.append($0) }
+        } else {
+            decodeBusy = true
+        }
+    }
+
+    private func releaseDecodeLock() {
+        if decodeWaiters.isEmpty {
+            decodeBusy = false
+        } else {
+            decodeWaiters.removeFirst().resume()
+        }
+    }
+
+    /// Records whether the per-token deadline callback actually fired. Testing
+    /// the callback's decision (not the clock, post-decode) avoids failing a
+    /// decode that finished naturally just inside budget — the clock can cross
+    /// the deadline between the last token and a post-hoc `Date()` check.
+    private final class DeadlineFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var fired = false
+        func markFired() { lock.lock(); fired = true; lock.unlock() }
+        var didFire: Bool { lock.lock(); defer { lock.unlock() }; return fired }
+    }
+
     public init(
         configuration: Configuration,
         events: EventWriter?,
@@ -81,6 +131,15 @@ public actor WhisperKitRegionTranscriber {
         self.configuration = configuration
         self.events = events
         self.logger = logger
+    }
+
+    deinit {
+        // Best-effort: cancelling a still-in-flight load lets WhisperKit's
+        // downloader stop at the next file boundary rather than finishing a
+        // download whose actor is already gone. Harmless once loaded.
+        // Direct stored-property access is legal in an actor `deinit` (no
+        // awaits) under Swift 6.
+        pipeTask?.cancel()
     }
 
     // MARK: - Decode API (the refine seam)
@@ -98,7 +157,7 @@ public actor WhisperKitRegionTranscriber {
         let hi = Self.sampleIndex(of: region.end, sampleCount: sampleCount)
         guard lo < hi else {
             return TranscriptionResult(
-                segments: [], language: options.language ?? "unknown")
+                segments: [], language: Self.degenerateLanguage(options))
         }
         return try await decode(
             Array(samples[lo..<hi]),
@@ -124,6 +183,10 @@ public actor WhisperKitRegionTranscriber {
             let result = try await transcribeRegion(
                 samples, region: region, options: options)
             merged.append(contentsOf: result.segments)
+            // First non-"unknown" region wins the summary field; under
+            // detect-among, later regions may legitimately pin a different
+            // code. This field is advisory — per-segment correctness (each
+            // region decoded with its own pin) is what actually matters.
             if language == nil, result.language != "unknown" {
                 language = result.language
             }
@@ -139,6 +202,14 @@ public actor WhisperKitRegionTranscriber {
         shiftedBy offset: Duration,
         options: WhisperOptions
     ) async throws -> TranscriptionResult {
+        // Serialize the whole decode (ensureLoaded + detect + transcribe) as
+        // one critical section. The actor alone can't: it's reentrant across
+        // `await`, so a second public call could interleave mid-decode and
+        // drive the non-Sendable WhisperKit instance concurrently. Acquire
+        // first; the immediate `defer` releases on every throw path.
+        await acquireDecodeLock()
+        defer { releaseDecodeLock() }
+
         // Pre-decode digital-silence guard (D31). The legacy whisper.cpp path
         // dropped silent regions *inside* `whisper_full` via its built-in
         // Silero VAD before any tokens were sampled; on the WhisperKit backend
@@ -155,13 +226,22 @@ public actor WhisperKitRegionTranscriber {
         if Self.isDigitalSilence(slice) {
             logger.notice("whisperkit: region is digital silence — skipping decode")
             return TranscriptionResult(
-                segments: [], language: options.language ?? "unknown")
+                segments: [], language: Self.degenerateLanguage(options))
         }
 
         let pipe = try await ensureLoaded()
 
         var decodeOptions = DecodingOptions()
         decodeOptions.task = .transcribe
+
+        // Start the budget clock *before* the language-resolution switch so a
+        // `detectAmong` pre-pass is charged to the same deadline (the
+        // transcribe callback below then has correspondingly less). Without
+        // this, detect time was unbounded and uncounted.
+        let budgetSeconds = max(
+            configuration.decodeDeadline.seconds,
+            Double(slice.count) / Double(AudioFormat.sampleRate))
+        let deadline = Date().addingTimeInterval(budgetSeconds)
 
         // Language resolution (Delta B), per region decode. With prefill on
         // (default) and detectLanguage off, WhisperKit force-feeds the
@@ -214,17 +294,20 @@ public actor WhisperKitRegionTranscriber {
         // No chunkingStrategy: regions are already speech-only slices; long
         // slices use WhisperKit's sequential seek loop.
 
-        let budgetSeconds = max(
-            configuration.decodeDeadline.seconds,
-            Double(slice.count) / Double(AudioFormat.sampleRate))
-        let deadline = Date().addingTimeInterval(budgetSeconds)
+        // Record the callback's *actual* decision rather than re-reading the
+        // clock after `transcribe` returns: a post-hoc `Date() >= deadline`
+        // can fail a decode that finished naturally just inside budget if the
+        // clock crosses the line between the last token and the check.
+        let flag = DeadlineFlag()
         let callback: TranscriptionCallback = { _ in
-            Date() < deadline ? nil : false   // false = stop decoding
+            if Date() < deadline { return nil }
+            flag.markFired()
+            return false   // stop decoding
         }
 
         let results = try await pipe.transcribe(
             audioArray: slice, decodeOptions: decodeOptions, callback: callback)
-        if Date() >= deadline {
+        if flag.didFire {
             // Deviation A: a budget overrun is a deadline, not a
             // whisper_full(-2). Throw the truthful case.
             logger.error("whisperkit decode exceeded \(Int(budgetSeconds))s budget — treating as failed")
@@ -266,7 +349,7 @@ public actor WhisperKitRegionTranscriber {
             }
         }
 
-        // Capture everything the detached load needs by value (the `model_*`
+        // Capture everything the load `Task` needs by value (the `model_*`
         // event must fire only on a fresh download; a failure must not cache).
         let configuration = self.configuration
         let events = self.events
@@ -302,13 +385,19 @@ public actor WhisperKitRegionTranscriber {
             let loaded = try await WhisperKit(config)
             logger.notice("whisperkit: model resident")
 
-            if !existedBefore, let events,
-               let digest = try? DirectoryDigest.compute(at: variantDir) {
-                _ = try? await events.append(ModelDownloadedEvent(
-                    modelName: configuration.model.name,
-                    sizeBytes: digest.totalBytes,
-                    sha256: digest.sha256,
-                    sourceHost: "huggingface.co"))
+            if !existedBefore, let events {
+                // Best-effort: a digest or append failure must never fail the
+                // load — but keep the failure visible (matches ParakeetEngine).
+                do {
+                    let digest = try DirectoryDigest.compute(at: variantDir)
+                    _ = try await events.append(ModelDownloadedEvent(
+                        modelName: configuration.model.name,
+                        sizeBytes: digest.totalBytes,
+                        sha256: digest.sha256,
+                        sourceHost: "huggingface.co"))
+                } catch {
+                    logger.warning("whisperkit: model_downloaded not emitted: \(error)")
+                }
             }
             return Box(loaded)
         }
@@ -318,6 +407,18 @@ public actor WhisperKitRegionTranscriber {
             if self.pipeTask == task { self.pipeTask = nil }
             throw error
         }
+    }
+
+    /// The language to report on a degenerate (empty-result) decode. Resolve
+    /// it through the same policy a real decode would use so a single-entry
+    /// allow-list reports its pinned code rather than an inconsistent
+    /// "unknown".
+    private static func degenerateLanguage(_ options: WhisperOptions) -> String {
+        if case .pin(let code) = WhisperKitLanguagePolicy.resolve(
+            explicit: options.language, allowed: options.allowedLanguages) {
+            return code
+        }
+        return "unknown"
     }
 
     /// Clamped sample index for a recording-relative offset — same math as
@@ -335,11 +436,8 @@ public actor WhisperKitRegionTranscriber {
     private static let silenceRMSFloor: Float = 1e-4
 
     private static func isDigitalSilence(_ slice: [Float]) -> Bool {
+        // Guard first: vDSP on an empty array is invalid.
         guard !slice.isEmpty else { return true }
-        // Sum-of-squares in Double to avoid Float overflow on long slices.
-        var sumSquares = 0.0
-        for sample in slice { sumSquares += Double(sample) * Double(sample) }
-        let rms = (sumSquares / Double(slice.count)).squareRoot()
-        return rms < Double(silenceRMSFloor)
+        return vDSP.rootMeanSquare(slice) < silenceRMSFloor
     }
 }
