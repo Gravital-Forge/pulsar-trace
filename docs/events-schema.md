@@ -120,8 +120,7 @@ Emitted once when a PulsarTrace process exits cleanly. Same payload shape as
 
 #### `model_downloaded` (version 1)
 
-Emitted once after a model bundle finishes downloading. For the CoreML bundles
-the `sha256` is a computed directory digest (D39), not a pin verification.
+Emitted once after a model bundle finishes downloading.
 Category: `system`.
 
 Downloads are SDK-managed. A download that fails emits **nothing** — only a
@@ -131,8 +130,8 @@ exactly one model is now cached and ready.
 | Field | Type | Description |
 |-------|------|-------------|
 | `model_name` | string | Short model name, e.g. `parakeet-v3`, `large-v3-turbo`. |
-| `size_bytes` | integer | Verified file size in bytes. |
-| `sha256` | string | Lowercase-hex SHA-256 the file was verified against. For the CoreML model bundles (`parakeet-v3`, `large-v3-turbo`, `large-v3-whisperkit`) this is a computed directory digest — deterministic SHA-256 over relative paths + per-file hashes (see D39) — not a pinned hash, and `size_bytes` is the bundle's total size. |
+| `size_bytes` | integer | Total size of the model bundle in bytes. |
+| `sha256` | string | Lowercase-hex SHA-256 — a computed directory digest of the model bundle (deterministic hash over relative paths + per-file hashes, D39). |
 | `source_host` | string | Bare hostname the model came from, e.g. `huggingface.co`. Never a full URL — no query params, no path (privacy + no-telemetry). |
 
 ```jsonl

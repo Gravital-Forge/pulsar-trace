@@ -11,7 +11,7 @@ flows, Gatekeeper, real device switching.
 ## v0.1 — offline CLI
 
 - [ ] Fresh clone builds: `swift build` succeeds with no errors.
-- [ ] `swift test --filter Unit` and `swift test --filter Pipeline` both green.
+- [ ] The narrow filters listed in CLAUDE.md all green (the broad `swift test --filter PipelineTests` is known-flaky under cross-suite races — see CLAUDE.md).
 - [ ] `pytest` green from `python/pulsartrace-ai/` after `python/build-venv.sh`.
 - [ ] `pulsartrace --help` prints usage; `pulsartrace version` prints the version.
 - [ ] Pipe smoke: `ffmpeg -re -i Tests/Fixtures/audio/single-speaker-30s.wav -f f32le -ac 1 -ar 16000 - | .build/debug/pulsartrace-engine --stdin` reports a frame count.

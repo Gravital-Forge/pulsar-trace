@@ -859,6 +859,10 @@ selector across both passes, plus a new explicit override:
   else several → WhisperKit language detection on the region slice, pinned
   to the best code **within** the selection; else auto.
 
+Diarization stays on Python/pyannote (MPS) for now — its ANE migration is
+deferred to a separate plan (the speaker library stores pyannote embeddings;
+switching models needs an embedding-space migration of its own).
+
 **Why:** whisper.cpp's Metal decode pinned the GPU: live transcription
 degraded Google Meet + screen-share fluency, and the large-v3 refine of a
 1 h recording ran at ~1× real time while monopolising the GPU. The ANE is
