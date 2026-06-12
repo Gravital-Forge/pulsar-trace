@@ -120,13 +120,13 @@ Emitted once when a PulsarTrace process exits cleanly. Same payload shape as
 
 #### `model_downloaded` (version 1)
 
-Emitted once after a whisper model file is downloaded **and** its SHA-256
-verified against the pinned hash (R54c, R54d). Category: `system`.
+Emitted once after a model bundle finishes downloading. For the CoreML bundles
+the `sha256` is a computed directory digest (D39), not a pin verification.
+Category: `system`.
 
-A download that fails or fails verification emits **nothing** — the partial /
-corrupt file is deleted and the download retried (resuming via HTTP Range); only
-a fully-verified model produces this event. So one `model_downloaded` line means
-exactly one model is now cached and trustworthy.
+Downloads are SDK-managed. A download that fails emits **nothing** — only a
+fully-downloaded model produces this event. So one `model_downloaded` line means
+exactly one model is now cached and ready.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -136,7 +136,7 @@ exactly one model is now cached and trustworthy.
 | `source_host` | string | Bare hostname the model came from, e.g. `huggingface.co`. Never a full URL — no query params, no path (privacy + no-telemetry). |
 
 ```jsonl
-{"id":"evt_01KR...","model_name":"parakeet-v3","sha256":"60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe","size_bytes":147951465,"source_host":"huggingface.co","ts":"2026-05-16T01:59:45Z","type":"model_downloaded","version":1}
+{"id":"evt_01KR...","model_name":"parakeet-v3","sha256":"a3f1c92b7e0d4856f2c1b9047e63da815c4f0982ab7d3e16c850f72bd419e0af","size_bytes":498238464,"source_host":"huggingface.co","ts":"2026-05-16T01:59:45Z","type":"model_downloaded","version":1}
 ```
 
 ### Refinement lifecycle
@@ -154,10 +154,10 @@ Category: `refinement_lifecycle`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `recording_id` | string | The recording being refined (`rec_<short>`). |
-| `model_refine` | string | Whisper model used for the refine pass, e.g. `large-v3`, `base`. |
+| `model_refine` | string | Refine model name (e.g. `large-v3-turbo`, `large-v3-whisperkit`). |
 
 ```jsonl
-{"id":"evt_01KRQD...","model_refine":"base","recording_id":"rec_two-speakers-alternating","ts":"2026-05-16T03:26:32Z","type":"refinement_started","version":1}
+{"id":"evt_01KRQD...","model_refine":"large-v3-turbo","recording_id":"rec_two-speakers-alternating","ts":"2026-05-16T03:26:32Z","type":"refinement_started","version":1}
 ```
 
 #### `refinement_completed` (version 1)
