@@ -130,13 +130,13 @@ exactly one model is now cached and trustworthy.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `model_name` | string | Short model name, e.g. `base`, `large-v3`. |
+| `model_name` | string | Short model name, e.g. `parakeet-v3`, `large-v3-turbo`. |
 | `size_bytes` | integer | Verified file size in bytes. |
-| `sha256` | string | Lowercase-hex SHA-256 the file was verified against. |
+| `sha256` | string | Lowercase-hex SHA-256 the file was verified against. For the CoreML model bundles (`parakeet-v3`, `large-v3-turbo`, `large-v3-whisperkit`) this is a computed directory digest — deterministic SHA-256 over relative paths + per-file hashes (see D39) — not a pinned hash, and `size_bytes` is the bundle's total size. |
 | `source_host` | string | Bare hostname the model came from, e.g. `huggingface.co`. Never a full URL — no query params, no path (privacy + no-telemetry). |
 
 ```jsonl
-{"id":"evt_01KR...","model_name":"base","sha256":"60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe","size_bytes":147951465,"source_host":"huggingface.co","ts":"2026-05-16T01:59:45Z","type":"model_downloaded","version":1}
+{"id":"evt_01KR...","model_name":"parakeet-v3","sha256":"60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe","size_bytes":147951465,"source_host":"huggingface.co","ts":"2026-05-16T01:59:45Z","type":"model_downloaded","version":1}
 ```
 
 ### Refinement lifecycle
@@ -412,10 +412,10 @@ reacting to this event knows audio is genuinely flowing. Category:
 | `output_dir_basename` | string | Basename of the recording's output folder — never a full path. |
 | `mic_device` | string | The microphone in use (its localized name), or `none`. |
 | `system_audio_enabled` | boolean | Whether system-audio capture is on for this session (R6). |
-| `model_live` | string | Whisper model name used for the live pass, e.g. `base`. |
+| `model_live` | string | Model name used for the live pass; fixed to `parakeet-v3` (the only live backend, D39). |
 
 ```jsonl
-{"id":"evt_01KR...","mic_device":"MacBook Air Microphone","model_live":"base","output_dir_basename":"meeting-2026-05-16","recording_id":"rec_4f2a","system_audio_enabled":true,"ts":"2026-05-16T14:30:05Z","type":"recording_started","version":1}
+{"id":"evt_01KR...","mic_device":"MacBook Air Microphone","model_live":"parakeet-v3","output_dir_basename":"meeting-2026-05-16","recording_id":"rec_4f2a","system_audio_enabled":true,"ts":"2026-05-16T14:30:05Z","type":"recording_started","version":1}
 ```
 
 #### `recording_paused` (version 1)

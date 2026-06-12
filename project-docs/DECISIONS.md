@@ -830,3 +830,84 @@ The load-bearing facts a future reader needs:
 - A per-decode `DecodeWatchdog` arms a deadline: at the deadline it flips an `AbortToken` wired to whisper's `abort_callback`, so a hung/runaway decode bails and the worker resumes live transcription. A per-window `max_tokens` cap (256) additionally bounds a runaway decode.
 - The abort only takes effect at encode/decode-**step** boundaries (not mid-graph) in this whisper build, so a hang *inside* a single step cannot be aborted — the watchdog's second stage only **monitors** that case, emitting an escalating "did not honor abort" warning so the unrecoverable hang is visible. It is not recoverable.
 - `metalLock` serializes every `whisper_full` call process-wide, so a hung decode holds it; the abort is what releases it.
+
+## D39 — Transcription moves to the Apple Neural Engine; whisper.cpp is removed
+
+**Decision:** The live pass runs **Parakeet TDT 0.6B v3** on the ANE via
+FluidAudio 0.15.2 (in-process, behind `WindowTranscribing`; one resident
+`ParakeetEngine` shared by both streams). It is the **only** live backend —
+there is no live model knob anywhere (no engine `--model`, no settings
+entry; `recording_started.model_live` is fixed to `parakeet-v3`). The
+refine pass runs **WhisperKit** (argmax-oss-swift 1.0.0) on the ANE, with
+exactly two models: `large-v3-turbo`
+(`openai_whisper-large-v3-v20240930_626MB`, the default) and
+`large-v3-whisperkit` (`openai_whisper-large-v3_947MB`) — the accuracy
+fallback if turbo hallucinates on real audio; switching is a Settings
+change, not code. whisper.cpp is **gone**: CWhisper, the vendored build,
+the `pulsartrace-whisper` subprocess, WhisperIPC, `WhisperTranscriber`,
+`ModelCatalog`/`ModelStore`, and the `base`/`large-v3` ggml knobs. The
+revert path, should ANE dogfooding disappoint, is `git revert` of the
+cutover branch.
+
+**Language selection** reuses the existing "Restrict to languages"
+selector across both passes, plus a new explicit override:
+- live: exactly one selected code becomes FluidAudio's script-aware
+  `language:` hint (stops wrong-script glitches, e.g. Cyrillic on Polish
+  audio); zero or several → auto (`ParakeetEngine.languageHint`).
+- refine, per region decode (`WhisperKitLanguagePolicy`): explicit
+  `refine --language CODE` pins outright; else one selected code pins;
+  else several → WhisperKit language detection on the region slice, pinned
+  to the best code **within** the selection; else auto.
+
+**Why:** whisper.cpp's Metal decode pinned the GPU: live transcription
+degraded Google Meet + screen-share fluency, and the large-v3 refine of a
+1 h recording ran at ~1× real time while monopolising the GPU. The ANE is
+idle during meetings; Parakeet v3 beats whisper base on Polish by ~4×
+FLEURS WER (7.3% vs 30.8%); turbo is ~2–5× faster than large-v3 at
+near-identical accuracy. CC-BY-4.0 (Parakeet) / Apache-2.0 (FluidAudio) /
+MIT (WhisperKit, Whisper weights) all permit commercial use.
+
+**Mechanics this changes:** refine wedge recovery is WhisperKit's
+per-token callback deadline (return `false` → decode stops) instead of
+SIGKILLing a subprocess; the queue's pause-release hook cancels the
+in-flight decode at the next token boundary, drops the WhisperKit actor
+(ARC frees the CoreML models), and requeues the job so it resumes from its
+checkpoint after the recording. The live Parakeet decode is bounded by a
+30 s semaphore deadline per window (skipped window, the post-pass
+recovers). Speech regions come from FluidAudio's Silero-CoreML VAD with
+the same 800 ms coalescing (`SpeechRegion.coalesced`); the D31
+hallucination double-gate is ported onto WhisperKit's per-segment
+`noSpeechProb`/`avgLogprob`. CoreML model bundles are SDK-managed
+directories under `~/Library/Caches/PulsarTrace/models/`
+(`AppPaths.modelsCacheDirectory`; D10 root preserved — the FluidAudio
+silero-vad bundle is pinned under the same root at `silero-vad-coreml/`,
+the SDK appending its own `Models/` subpath inside) with **no pinned
+SHA-256**: `model_downloaded` carries a computed `DirectoryDigest`
+(deterministic tree hash) instead, because upstream CoreML repos revise
+bundles and a pin would turn every upstream fix into a hard failure.
+`RefinementJob.modelSHA256` and `metadata.json`'s hash field record `""`
+for these models; the `whisper_model` metadata field name is frozen
+public schema and keeps its name. The shared option/error types are now
+`TranscriptionOptions`/`TranscriptionError` (whisper.cpp's `threadCount`/
+`temperature`/`vadModelURL` knobs deleted); `AbortToken` is gone — it
+existed for whisper's `abort_callback`, and CoreML decodes are bounded by
+the deadlines above.
+
+**Supersedes / reshapes earlier decisions:** D7 (vendored whisper build),
+D8 (Metal single-context discipline), D14's whisper-gate portion, D15
+(CPU-backend tests), D36 (per-job transcriber to avoid Metal re-init —
+the one-resident-model *shape* survives, the Metal rationale is moot),
+and D38's whisper-subprocess recovery mechanics (the drain/worker
+architecture itself survives unchanged). D24/D29's model knobs are
+reshaped: the live knob is removed entirely; the refine knob is the
+WhisperKit catalog (`record --refine-model`, `refine --model`, Settings).
+D25 (temperature-fallback decode posture) and D26 (VAD region-segmented
+decode) are re-expressed via WhisperKit's fallback ladder and FluidVAD
+regions — the contracts hold, the mechanisms moved. D4's pinned-model
+snapshot-test policy is superseded by fixture-keyword assertions (decoder
+wording drift no longer breaks tests; the retired snapshots live in git
+history).
+
+**Stale dev-machine leftovers** (safe to delete manually, no migration
+code): `~/Library/Caches/PulsarTrace/models/ggml-*.bin` and the repo's
+`vendor/` build tree.

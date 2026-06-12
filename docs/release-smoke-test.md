@@ -91,3 +91,33 @@ session — `MenuBarExtra` rendering, the global hotkey, audio playback.
       recordings list on the next refresh.
 - [ ] Empty speaker library shows the "Record a meeting to get started" state;
       empty recordings list shows its "No recordings yet" state.
+
+## ANE pipeline (D39)
+
+- [ ] **GPU stays free during live + Meet.** Start a Google Meet call with
+  screen-share, start a recording, then run
+  `sudo powermetrics --samplers gpu_power,ane_power -i 1000 -n 30`.
+  Expect: ANE power clearly active during speech; GPU residency/power stays
+  near the no-recording baseline (windowed live diarization adds a small
+  periodic GPU blip — that is pyannote/MPS, deferred in D39). Meet video and
+  screen-share stay fluent. (The old pipeline showed ~90% GPU here.)
+- [ ] **Refine beats the old baseline and leaves the GPU free.** Refine
+  a long (ideally ~1 h) recording with `large-v3-turbo` while watching
+  `sudo asitop`: wall-clock clearly under the audio duration (the old
+  GPU large-v3 ran at ~1× real time — that is the baseline to beat), ANE
+  busy, GPU near-idle, and foreground work (browser/IDE) stays responsive.
+- [ ] **Polish + English end-to-end.** One short Polish recording and one
+  English recording: live.md text is in the right language and readable;
+  final.md (auto-detect) is correct in both; `metadata.json.language`
+  matches.
+- [ ] **Language pre-selection.** (a) Settings ▸ "Restrict to languages" =
+  Polish only, relaunch, record a short Polish clip: live.md shows no
+  wrong-script (Cyrillic) glitches; the queued refine pins `pl`
+  (`metadata.json.language == "pl"`). (b) Re-refine the same folder with
+  `pulsartrace refine <folder> --language pl`: same result via the
+  explicit flag. (c) Restrict to English + Polish, re-refine: the
+  detect-among path picks the right one per recording.
+- [ ] **First-use downloads emit events.** On a clean
+  `~/Library/Caches/PulsarTrace/models/`, the first live + refine runs emit
+  `model_downloaded` events for `parakeet-v3` and `large-v3-turbo` with
+  non-empty digest `sha256` fields (`pulsartrace events tail`).

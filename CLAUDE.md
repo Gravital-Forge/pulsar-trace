@@ -70,7 +70,9 @@ reentrant across `await` suspensions and won't actually serialize).
 - `swift test --filter RecordOrchestrator`
 - `swift test --filter LiveRunner`
 - `swift test --filter Streaming`
-- `swift test --filter Transcription`
+- `swift test --filter Parakeet` — live ANE backend (one-time ~0.5 GB model download)
+- `swift test --filter WhisperKitRefine` — refine ANE backend (one-time ~626 MB download)
+- `swift test --filter FluidVAD` — Silero-CoreML region detection
 - `swift test --filter Speaker` — speaker library + reconciler
 - `swift test --filter DiarizationE2E`
 - `swift test --filter Source`
