@@ -85,9 +85,9 @@ final class LiveRunner: Sendable {
     /// Bounded wait on the decode worker at teardown. A wedged decode that
     /// would otherwise outlive the run cannot make the run hang past this —
     /// the recording is already safe on disk regardless. The in-process
-    /// transcriber bounds a hung decode earlier still
-    /// (`ParakeetWindowTranscriber`'s 30 s deadline skips the window), so the
-    /// teardown bound exists only as a defensive cap.
+    /// transcriber recovers a mid-run wedge on its own
+    /// (`ParakeetWindowTranscriber`'s 30 s decode deadline skips the window);
+    /// the teardown bound exists only as a defensive cap.
     private let workerDrainTimeout: Duration
 
     init(

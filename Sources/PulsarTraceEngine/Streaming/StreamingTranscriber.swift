@@ -263,7 +263,7 @@ public final class StreamingTranscriber {
                 options: configuration.options)
         } catch {
             // Interpolate the underlying error so log-greppers see the
-            // real cause (model_load_failed, subprocess wedge, etc.).
+            // real cause (model load failure, decode deadline, etc.).
             // Before 2026-05-27 this catch dropped the payload and any
             // diagnostic chain that ran into it dead-ended at "skipping
             // window" with no further context.

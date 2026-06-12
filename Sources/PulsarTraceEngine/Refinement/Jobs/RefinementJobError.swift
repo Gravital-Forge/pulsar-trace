@@ -56,20 +56,20 @@ public enum RefinementJobError: Error {
     /// Stable ASCII string stored in `RefinementJobState.failed.errorClass`.
     public var errorClass: String {
         switch self {
-        case .diarizeCrashed:   return "diarizeCrashed"
-        case .transcribeFailed: return "transcribeFailed"
+        case .diarizeCrashed:    return "diarizeCrashed"
+        case .transcribeFailed:  return "transcribeFailed"
         case .missingDependency: return "missingDependency"
-        case .io:               return "io"
+        case .io:                return "io"
         }
     }
 
     /// `true` for transient failures the user can retry; `false` for permanent ones.
     public var retryAvailable: Bool {
         switch self {
-        case .diarizeCrashed:   return true
-        case .transcribeFailed: return true
+        case .diarizeCrashed:    return true
+        case .transcribeFailed:  return true
         case .missingDependency: return false
-        case .io:               return true
+        case .io:                return true
         }
     }
 
