@@ -544,7 +544,7 @@ final class LiveRunner: Sendable {
 
         // Both streams ended: let the worker drain remaining frames + flush. We
         // *poll* the worker's published result rather than `await worker.value`:
-        // a wedged whisper decode is uncancellable, so structurally awaiting the
+        // a wedged decode is uncancellable, so structurally awaiting the
         // worker (e.g. via `withTaskGroup`) would block the run forever even
         // after `cancel()`. The bound is on *inactivity* — the run stops waiting
         // once the worker has made no progress for `workerDrainTimeout`. The
@@ -552,12 +552,13 @@ final class LiveRunner: Sendable {
         // measures inactivity since teardown began, not since run-start — a
         // short recording whose single final decode is slow but progressing
         // then gets the full `workerDrainTimeout` of grace. A
-        // slow-but-progressing decode (a fast-fed fixture, or CPU whisper
+        // slow-but-progressing decode (a fast-fed fixture, or the model
         // catching up on a backlog) therefore runs to completion, while a
         // genuinely wedged decode releases the run after the timeout. The poll
         // loop is cancellation-aware (mirrors `DiarGate.drain`) and falls back to
-        // "en" if the worker never finished. The recording is safe on disk
-        // regardless.
+        // "unknown" if the worker never reported a language — Parakeet has no
+        // language-ID head, so the language is "unknown" unless a backend
+        // surfaces one. The recording is safe on disk regardless.
         phase.set("await-worker")
         await workerResult.armDeadline()
         while !(await workerResult.isFinished), !Task.isCancelled,
@@ -574,8 +575,9 @@ final class LiveRunner: Sendable {
         await diarGate.drain(timeout: .seconds(2))
         phase.set("await-readers-value")
         _ = await readers.value
-        // Propagate the language whisper actually detected on the system
-        // stream so Output.language reflects reality.
+        // Propagate the language the backend reported for the system stream so
+        // Output.language reflects reality — "unknown" under Parakeet, which
+        // has no language-ID head, unless a backend surfaces a code.
         phase.set("await-sink-noteSystemLanguage")
         await sink.noteSystemLanguage(detectedLanguage)
 

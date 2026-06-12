@@ -103,9 +103,11 @@ struct StreamingPipelineTests {
         // were cross-checked against the retired whisper snapshot (git
         // history: __Snapshots__/StreamingPipelineTests/liveMDSnapshot.1.txt)
         // for distinctiveness, then narrowed to words Parakeet's
-        // LocalAgreement-2 reliably *commits* before end-of-stream — the
-        // fixture's final clause ("transformation layer") lands in the
-        // uncommitted tail under both decoders, so it is not asserted.
+        // LocalAgreement-2 reliably *commits* before end-of-stream. Under
+        // LocalAgreement-2 the fixture's final clause ("transformation layer")
+        // stays in the uncommitted tail at end-of-stream — there is no
+        // flush-commit step — so it is not asserted. (Whisper's flush used to
+        // commit that clause, which is why the retired snapshot contained it.)
         // Case-insensitive `contains`: robust to small wording drift between
         // decoders, loud on a real break.
         for keyword in ["coffee", "barista", "bookstore", "ingestion", "formats"] {
@@ -122,10 +124,12 @@ struct StreamingPipelineTests {
         #expect(utterances.count >= 3)
         for line in utterances {
             // "**[HH:MM:SS] label:** text" — text part must be non-empty.
-            if let textStart = line.range(of: ":** ") {
-                #expect(!line[textStart.upperBound...]
-                    .trimmingCharacters(in: .whitespaces).isEmpty)
-            }
+            // `#require` rather than `if let`: a malformed utterance line is a
+            // real break, not something to silently skip.
+            let textStart = try #require(
+                line.range(of: ":** "), "malformed utterance line: \(line)")
+            #expect(!line[textStart.upperBound...]
+                .trimmingCharacters(in: .whitespaces).isEmpty)
         }
         let stamps = utterances.compactMap { line -> String? in
             guard let close = line.firstIndex(of: "]") else { return nil }

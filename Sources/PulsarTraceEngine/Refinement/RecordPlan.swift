@@ -35,11 +35,12 @@ public struct RecordPlan: Sendable, Equatable {
     ///   - systemAudioEnabled: `false` for a mic-only recording (R6) — the
     ///     engine then reads a single stream from the mic socket and no system
     ///     socket is wired.
-    ///   - allowedLanguages: optional ISO-639-1 allow list for the live
-    ///     pass's per-window language detection. Empty (the default) →
-    ///     unrestricted auto-detect. When non-empty, the engine is launched
-    ///     with `--allowed-languages a,b,...` and pre-detects per window,
-    ///     forcing the highest-probability allowed code.
+    ///   - allowedLanguages: optional ISO-639-1 allow list. When non-empty,
+    ///     the engine is launched with `--allowed-languages a,b,...`. The live
+    ///     pass uses it as a *script hint*: exactly one code → that code hints
+    ///     Parakeet (which has no language-ID head); otherwise → auto. The
+    ///     refine pass reproduces the old pin / detect-among semantics over the
+    ///     allow list (tasks 13/14). Empty (the default) → auto.
     public static func make(
         outputFolder: URL,
         paths: AppPaths,

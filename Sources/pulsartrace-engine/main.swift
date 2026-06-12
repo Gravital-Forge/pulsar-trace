@@ -224,11 +224,11 @@ struct EngineMain {
             library = nil
         }
 
-        // Optional per-window language allow-list (e.g.
-        // `--allowed-languages en,pl`). Empty → unrestricted auto-detect
-        // (the legacy behaviour); non-empty → the engine pre-detects per
-        // window and forces the highest-probability allowed code, so a
-        // `nn` misfire on English audio cannot poison the committer.
+        // Optional language allow-list (e.g. `--allowed-languages en,pl`).
+        // Parakeet has no language-ID head, so this is a *hint*, not a
+        // detector: ParakeetEngine.languageHint maps exactly one allowed code
+        // to a script-aware hint; with zero or more than one allowed code it
+        // falls back to auto (no hint). Empty → auto.
         let allowedLanguages: [String] = value(
             after: "--allowed-languages", in: args)
             .map { $0.split(separator: ",").map {

@@ -280,13 +280,15 @@ struct RecordingViewModelTests {
         #expect(vm.liveMarkdownURL == nil)
     }
 
-    @Test("the live pass receives liveModelName, enqueue is called after stop (FIX 4)")
-    func liveAndRefineModelsAreSeparate() async throws {
+    @Test("live model is fixed to parakeet-v3; refine model comes from settings; enqueue after stop")
+    func liveModelIsFixedRefineComesFromSettings() async throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let settings = try settings(outputRoot: root)
-        settings.liveModelName = "base"
+        // The live pass has exactly one backend (D39) and ignores
+        // `liveModelName`; `refineModelName` is the only model the user
+        // still chooses, and it must never leak into the live argv.
         settings.refineModelName = "large-v3"
 
         // Capture the RecordPlan the live pass is launched with.
@@ -299,8 +301,9 @@ struct RecordingViewModelTests {
                 Task { await planBox.set(plan) }
                 return stub
             },
-            // Assert the VM hands the live pass `liveModelName` via the plan
-            // and that the enqueue path is taken after stop.
+            // Assert the live argv carries the fixed live model (not the
+            // refine model) and that the enqueue path is taken after stop —
+            // the refine model flows separately, resolved at enqueue time.
             enqueueAutoRefine: { url, recordingId in
                 await enqueued.record(url: url, recordingId: recordingId)
             },
@@ -308,11 +311,13 @@ struct RecordingViewModelTests {
 
         await vm.startRecording()
         let plan = try #require(await planBox.value())
-        // The live pass's argv carries `--model base` (liveModelName), not
-        // `large-v3` (which is the refine model).
-        #expect(plan.captureArguments.contains("base"))
+        // Capture argv carries the fixed live model `parakeet-v3` (the only
+        // live backend), never the refine model `large-v3` and never a
+        // legacy whisper name. The engine takes no `--model` flag at all.
+        #expect(plan.captureArguments.contains("parakeet-v3"))
         #expect(!plan.captureArguments.contains("large-v3"))
-        #expect(plan.engineArguments.contains("base"))
+        #expect(!plan.captureArguments.contains("base"))
+        #expect(!plan.engineArguments.contains("--model"))
 
         await vm.stopRecording()
         #expect(await enqueued.entries.count == 1)

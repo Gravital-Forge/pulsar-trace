@@ -81,7 +81,9 @@ struct RecordPlanTests {
             allowedLanguages: ["en", "pl"])
         #expect(value(after: "--allowed-languages", in: plan.engineArguments)
             == "en,pl")
-        // Not a capture-side concern — the allow-list only affects whisper.
+        // Not a capture-side concern — the allow-list is an engine flag that
+        // drives the live pass's script hint (and the refine pass's pin /
+        // detect-among semantics), so it lives on the engine argv only.
         #expect(!plan.captureArguments.contains("--allowed-languages"))
     }
 
