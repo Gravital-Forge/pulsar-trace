@@ -61,8 +61,8 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
-    /// Whisper model name for the post-recording refine pass (R43, D29) —
-    /// a higher-quality model is appropriate here (D4 documents `large-v3`).
+    /// Refine-pass model name (R43, D39) — a `WhisperKitModelCatalog` name;
+    /// unknown/retired names re-default on load.
     public var refineModelName: String {
         didSet { save() }
     }

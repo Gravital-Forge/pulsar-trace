@@ -75,8 +75,9 @@ struct SettingsView: View {
                     + "toward its script. Pick several and refinement "
                     + "detects the best match among them per turn (live "
                     + "stays auto). Leave empty for full auto-detect. "
-                    + "Changes apply to refinements queued after the next "
-                    + "app launch.")
+                    + "Live picks up changes at the next recording; "
+                    + "refinements run with the languages in effect at the "
+                    + "last app launch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

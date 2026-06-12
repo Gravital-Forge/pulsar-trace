@@ -93,7 +93,9 @@ struct MenuBarSettingsTests {
 
     @Test("legacy live-model keys are removed on load (D39)")
     func legacyLiveModelKeysRemoved() {
-        let suite = UserDefaults(suiteName: "test-\(UUID().uuidString)")!
+        let (suite, suiteName) = tempSuite()
+        defer { suite.removePersistentDomain(forName: suiteName) }
+
         suite.set("large-v3", forKey: "modelName")      // pre-D29 single knob
         suite.set("base", forKey: "liveModelName")      // pre-D39 live knob
         let settings = MenuBarSettings(defaults: suite)
@@ -104,7 +106,9 @@ struct MenuBarSettingsTests {
 
     @Test("a persisted pre-D39 refine model name re-defaults to the ANE catalog")
     func staleRefineModelNameRedefaults() {
-        let suite = UserDefaults(suiteName: "test-\(UUID().uuidString)")!
+        let (suite, suiteName) = tempSuite()
+        defer { suite.removePersistentDomain(forName: suiteName) }
+
         suite.set("large-v3", forKey: "refineModelName")   // retired ggml name
         let settings = MenuBarSettings(defaults: suite)
         #expect(settings.refineModelName == "large-v3-turbo")
