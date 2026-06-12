@@ -1,7 +1,7 @@
 import Foundation
 
 /// A bounded hand-off buffer from the recording-safe drain (producer) to the
-/// whisper worker (consumer), one instance per stream.
+/// decode worker (consumer), one instance per stream.
 ///
 /// `enqueue` never blocks the producer: when the buffer is full it drops the
 /// **oldest** frame so the live transcript tracks *now* rather than replaying

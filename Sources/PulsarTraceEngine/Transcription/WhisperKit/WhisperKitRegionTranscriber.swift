@@ -168,7 +168,7 @@ public actor WhisperKitRegionTranscriber {
     /// `pipe.transcribe` callback returns `false` (WhisperKit stops emitting
     /// tokens), and `decode` then throws `CancellationError` rather than a
     /// result — propagating straight out of the refiner (it is not a
-    /// `WhisperTranscribeError`, so the per-region retry loop does not catch it),
+    /// `TranscriptionError`, so the per-region retry loop does not catch it),
     /// which exits the refinement worker. This is the in-process analogue of
     /// SIGTERMing the old `pulsartrace-whisper` subprocess on a recording start.
     ///
@@ -187,9 +187,9 @@ public actor WhisperKitRegionTranscriber {
     public func transcribeRegion(
         _ samples: [Float],
         region: SpeechRegion,
-        options: WhisperOptions
+        options: TranscriptionOptions
     ) async throws -> TranscriptionResult {
-        guard !samples.isEmpty else { throw WhisperTranscribeError.emptyAudio }
+        guard !samples.isEmpty else { throw TranscriptionError.emptyAudio }
         let sampleCount = samples.count
         let lo = Self.sampleIndex(of: region.start, sampleCount: sampleCount)
         let hi = Self.sampleIndex(of: region.end, sampleCount: sampleCount)
@@ -209,9 +209,9 @@ public actor WhisperKitRegionTranscriber {
     public func transcribe(
         _ samples: [Float],
         regions: [SpeechRegion],
-        options: WhisperOptions
+        options: TranscriptionOptions
     ) async throws -> TranscriptionResult {
-        guard !samples.isEmpty else { throw WhisperTranscribeError.emptyAudio }
+        guard !samples.isEmpty else { throw TranscriptionError.emptyAudio }
         guard !regions.isEmpty else {
             return try await decode(samples, shiftedBy: .zero, options: options)
         }
@@ -238,7 +238,7 @@ public actor WhisperKitRegionTranscriber {
     private func decode(
         _ slice: [Float],
         shiftedBy offset: Duration,
-        options: WhisperOptions
+        options: TranscriptionOptions
     ) async throws -> TranscriptionResult {
         // Serialize the whole decode (ensureLoaded + detect + transcribe) as
         // one critical section. The actor alone can't: it's reentrant across
@@ -374,7 +374,7 @@ public actor WhisperKitRegionTranscriber {
             audioArray: slice, decodeOptions: decodeOptions, callback: callback)
         // Cancel takes precedence: a release fired mid-decode means the worker
         // is unwinding for a recording start. Throw `CancellationError` (NOT a
-        // `WhisperTranscribeError`) so `ResumableRefiner`'s per-region retry
+        // `TranscriptionError`) so `ResumableRefiner`'s per-region retry
         // loop does not catch it — it propagates out and exits the worker,
         // mirroring the old IPC-EOF propagation when the subprocess was killed.
         if cancelFlag.didFire { throw CancellationError() }
@@ -382,7 +382,7 @@ public actor WhisperKitRegionTranscriber {
             // Deviation A: a budget overrun is a deadline, not a
             // whisper_full(-2). Throw the truthful case.
             logger.error("whisperkit decode exceeded \(Int(budgetSeconds))s budget — treating as failed")
-            throw WhisperTranscribeError.decodeDeadlineExceeded
+            throw TranscriptionError.decodeDeadlineExceeded
         }
 
         let inputs = results.flatMap(\.segments).map {
@@ -484,7 +484,7 @@ public actor WhisperKitRegionTranscriber {
     /// it through the same policy a real decode would use so a single-entry
     /// allow-list reports its pinned code rather than an inconsistent
     /// "unknown".
-    private static func degenerateLanguage(_ options: WhisperOptions) -> String {
+    private static func degenerateLanguage(_ options: TranscriptionOptions) -> String {
         if case .pin(let code) = WhisperKitLanguagePolicy.resolve(
             explicit: options.language, allowed: options.allowedLanguages) {
             return code

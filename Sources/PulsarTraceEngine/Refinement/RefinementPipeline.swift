@@ -3,12 +3,12 @@ import Logging
 
 /// The full offline refinement pass behind `pulsartrace refine` (the
 /// v0.1 ship point): an audio file (or recording folder) →
-/// whisper transcription → pyannote diarization → reconciled, speaker-labelled
+/// transcription → pyannote diarization → reconciled, speaker-labelled
 /// `final.md` + `metadata.json`.
 ///
 /// Pipeline stages (R20, R21, R24, R38, R39):
 /// 1. Resolve the input into a `RecordingFolder` (bare-WAV vs folder dispatch).
-/// 2. Transcribe the system stream with whisper (R20).
+/// 2. Transcribe the system stream with the WhisperKit ANE backend (R20).
 /// 3. Diarize the system stream with pyannote (R21) — `Speaker_N` labels.
 /// 4. If a mic stream exists, transcribe it too; its utterances are `You`,
 ///    never diarized (R17). Merge the two streams by timestamp.
@@ -77,8 +77,8 @@ public struct RefinementPipeline: Sendable {
         /// A path-free message safe for the operational log (Hard Invariant #7:
         /// no full user file paths in `~/Library/Logs/PulsarTrace/`).
         ///
-        /// `description` (and the underlying `CocoaError` / whisper errors it
-        /// wraps) can embed full Foundation paths — `.io` and
+        /// `description` (and the underlying `CocoaError` / transcription errors
+        /// it wraps) can embed full Foundation paths — `.io` and
         /// `.transcription(.modelNotFound/.modelLoadFailed)` in particular.
         /// This collapses each case to its category plus, where available, a
         /// path-stripped error code/domain. The full detail still reaches
@@ -103,7 +103,7 @@ public struct RefinementPipeline: Sendable {
         /// may embed a path — is deliberately dropped.
         private static func safeCause(_ error: Error) -> String {
             switch error {
-            case let e as WhisperTranscribeError:
+            case let e as TranscriptionError:
                 switch e {
                 case .modelNotFound: return "modelNotFound"
                 case .modelLoadFailed: return "modelLoadFailed"
@@ -179,7 +179,7 @@ public struct RefinementPipeline: Sendable {
         whisperModelName: String,
         whisperModelSHA256: String,
         recordingStart: Date = Date(),
-        whisperOptions: WhisperOptions = .init(),
+        options: TranscriptionOptions = .init(),
         library: SpeakerLibrary? = nil,
         precomputedDiarization: DiarizationResult? = nil,
         progress: ProgressReporter? = nil
@@ -213,7 +213,7 @@ public struct RefinementPipeline: Sendable {
                 whisperModelName: whisperModelName,
                 whisperModelSHA256: whisperModelSHA256,
                 recordingStart: recordingStart,
-                whisperOptions: whisperOptions,
+                options: options,
                 library: library,
                 precomputedDiarization: precomputedDiarization,
                 startedAt: started,
@@ -241,7 +241,7 @@ public struct RefinementPipeline: Sendable {
         whisperModelName: String,
         whisperModelSHA256: String,
         recordingStart: Date,
-        whisperOptions: WhisperOptions,
+        options: TranscriptionOptions,
         library: SpeakerLibrary?,
         precomputedDiarization: DiarizationResult?,
         startedAt: Date,
@@ -254,10 +254,10 @@ public struct RefinementPipeline: Sendable {
         let systemTranscription = try await transcribe(
             wav: folder.systemStream.url,
             transcriber: transcriber,
-            options: whisperOptions)
+            options: options)
 
         // --- Stage 3: diarize the system stream -----------------------------
-        // Diarization only makes sense if whisper found speech. With no
+        // Diarization only makes sense if the decoder found speech. With no
         // utterances there is nothing to attribute, so skip pyannote entirely
         // (edge case: low-quality input / no usable speech).
         var diarization: DiarizationResult?
@@ -306,7 +306,7 @@ public struct RefinementPipeline: Sendable {
             micTranscription = try await transcribe(
                 wav: mic.url,
                 transcriber: transcriber,
-                options: whisperOptions)
+                options: options)
         }
 
         progress?(.merging)
@@ -427,7 +427,7 @@ public struct RefinementPipeline: Sendable {
     private func transcribe(
         wav: URL,
         transcriber: RefinementTranscriber,
-        options: WhisperOptions
+        options: TranscriptionOptions
     ) async throws -> StreamTranscription {
         do {
             let source = FixturePlaybackSource(file: wav, realtime: false)

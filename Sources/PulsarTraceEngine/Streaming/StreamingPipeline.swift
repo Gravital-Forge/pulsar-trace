@@ -10,7 +10,7 @@ import Logging
 ///
 /// ## What it wires together
 ///
-/// - `StreamingTranscriber` — sliding-window whisper + LocalAgreement-2,
+/// - `StreamingTranscriber` — sliding-window decode + LocalAgreement-2,
 ///   producing **committed** utterances ≤ 5 s behind real time (R10).
 /// - `LiveDiarizer` — windowed-pyannote provisional speaker IDs for the system
 ///   stream (R15, R16). Optional: when unavailable the system stream is still
@@ -90,7 +90,7 @@ public struct StreamingPipeline: Sendable {
         public let medianLagSeconds: Double
         /// Worst mid-stream lag observed.
         public let maxLagSeconds: Double
-        /// Whisper's detected language for the system stream.
+        /// The decoder's detected language for the system stream.
         public let language: String
     }
 

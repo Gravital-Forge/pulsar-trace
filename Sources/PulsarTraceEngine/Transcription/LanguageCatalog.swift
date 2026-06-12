@@ -7,13 +7,14 @@ import WhisperKit
 ///
 /// Built from WhisperKit's language table (verified public, v1.0.0
 /// `Models.swift:1327`: `@frozen public enum Constants { public static let
-/// languages: [String: String] }`, display name → ISO-639-1 code, 99
-/// entries) — the same fixed table whisper.cpp embedded, with no model
-/// load required. Replaces the CWhisper-backed `WhisperLanguageCatalog`.
+/// languages: [String: String] }`, display name → ISO-639-1 code, 112
+/// display names collapsing to 100 unique codes after the alias dedup
+/// below) — a fixed table requiring no model load. Replaces the
+/// CWhisper-backed `WhisperLanguageCatalog`.
 public enum LanguageCatalog {
 
     /// One known language. `code` is the ISO-639-1 short form the rest of
-    /// the engine speaks (`WhisperOptions.allowedLanguages`,
+    /// the engine speaks (`TranscriptionOptions.allowedLanguages`,
     /// `--allowed-languages`, `refine --language`); `displayName` is
     /// capitalised for the picker.
     public struct Language: Sendable, Equatable, Hashable, Identifiable {

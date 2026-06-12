@@ -166,8 +166,8 @@ public actor RecordOrchestrator {
         }
         self.engine = engine
         self.engineExit = Task { await engineWaiter.value() }
-        // Collect the engine's one-line summary; discard its stderr (whisper
-        // can be chatty — an undrained pipe would block the engine).
+        // Collect the engine's one-line summary; discard its stderr (the
+        // decode stack can be chatty — an undrained pipe would block the engine).
         self.engineStdout = Task { await Self.readAll(engineOut.fileHandleForReading) }
         drainToVoid(engineErr.fileHandleForReading)
     }

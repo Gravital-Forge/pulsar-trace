@@ -572,8 +572,7 @@ actor DoneFlag {
 }
 
 /// A `WindowTranscribing` whose every decode blocks forever — the live wedge.
-/// Will honor an abort token if one is passed, but the runner passes
-/// `abort: nil`, so in these tests this block is unbounded — exactly the wedge
+/// There is no cancellation seam, so this block is unbounded — exactly the wedge
 /// condition being stress-tested (recording-safety: WAV keeps growing through
 /// the wedge). The surrounding tests bound the wait themselves via
 /// `withTimeoutOrNil`.
@@ -581,13 +580,11 @@ final class BlockingWindowTranscriber: WindowTranscribing, @unchecked Sendable {
     func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: WhisperOptions,
-        abort: AbortToken?
+        options: TranscriptionOptions
     ) throws -> TranscriptionResult {
-        while abort?.isCancelled != true {
+        while true {
             Thread.sleep(forTimeInterval: 0.02)
         }
-        throw WhisperTranscribeError.transcriptionFailed(-999)
     }
 }
 

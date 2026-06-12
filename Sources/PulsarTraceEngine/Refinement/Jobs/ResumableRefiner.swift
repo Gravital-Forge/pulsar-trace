@@ -13,7 +13,7 @@ import Logging
 public actor ResumableRefiner {
 
     public typealias TranscribeRegion =
-        @Sendable ([Float], SpeechRegion, WhisperOptions) async throws
+        @Sendable ([Float], SpeechRegion, TranscriptionOptions) async throws
         -> TranscriptionResult
     public typealias DetectRegions =
         @Sendable ([Float]) async throws -> [SpeechRegion]
@@ -35,13 +35,9 @@ public actor ResumableRefiner {
     /// (R22, R23). `nil` keeps the raw `Speaker_N` labels — the queue's
     /// `makeStandard` opens a real library and passes it in for production.
     private let library: SpeakerLibrary?
-    /// Whisper tunables threaded into every region decode. The only field
-    /// the refine path currently depends on is `allowedLanguages`, but the
-    /// whole value flows through so future per-job tunables (e.g. a forced
-    /// `language`) inherit the same plumbing for free. Default `.init()`
-    /// preserves the legacy unrestricted auto-detect behaviour for tests
-    /// that don't care.
-    private let whisperOptions: WhisperOptions
+    /// Decode tunables threaded into every region decode (`allowedLanguages`
+    /// drives the language policy; a forced `language` pins it).
+    private let options: TranscriptionOptions
     private let reportState: StageReporter?
     private let logger: Logger
 
@@ -52,7 +48,7 @@ public actor ResumableRefiner {
         pauseGate: PauseGate,
         events: EventWriter?,
         library: SpeakerLibrary? = nil,
-        whisperOptions: WhisperOptions = .init(),
+        options: TranscriptionOptions = .init(),
         onStageUpdate: StageReporter? = nil,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
@@ -62,7 +58,7 @@ public actor ResumableRefiner {
         self.pauseGate = pauseGate
         self.events = events
         self.library = library
-        self.whisperOptions = whisperOptions
+        self.options = options
         self.reportState = onStageUpdate
         self.logger = logger
     }
@@ -233,7 +229,7 @@ public actor ResumableRefiner {
 
     /// Wrap one `transcribe` call in a bounded retry loop.
     ///
-    /// `WhisperTranscribeError` covers the in-process decode-failure shape
+    /// `TranscriptionError` covers the in-process decode-failure shape
     /// (`transcriptionFailed`, `modelLoadFailed`, `decodeDeadlineExceeded`,
     /// etc.) — those can resolve on a retry (the load slot is rebuilt) so we
     /// retry up to `regionMaxAttempts`. Any other error propagates immediately:
@@ -242,13 +238,13 @@ public actor ResumableRefiner {
     /// straight out so the worker exits promptly rather than retrying a decode
     /// the pause just cancelled.
     private func transcribeRegionWithRetry(
-        samples: [Float], region: SpeechRegion, options: WhisperOptions
+        samples: [Float], region: SpeechRegion, options: TranscriptionOptions
     ) async throws -> TranscriptionResult {
-        var lastError: WhisperTranscribeError?
+        var lastError: TranscriptionError?
         for attempt in 1...Self.regionMaxAttempts {
             do {
                 return try await transcribe(samples, region, options)
-            } catch let e as WhisperTranscribeError {
+            } catch let e as TranscriptionError {
                 lastError = e
                 logger.warning(
                     "region transcribe attempt \(attempt)/\(Self.regionMaxAttempts) failed: \(e)")
@@ -257,9 +253,9 @@ public actor ResumableRefiner {
                 }
             }
         }
-        // Surface the most recent WhisperTranscribeError. The classifier
+        // Surface the most recent TranscriptionError. The classifier
         // bucket is `.transcribeFailed` (see RefinementJobError.classify).
-        throw lastError ?? WhisperTranscribeError.transcriptionFailed(-1)
+        throw lastError ?? TranscriptionError.transcriptionFailed(-1)
     }
 
     private func iterateRegions(
@@ -275,7 +271,7 @@ public actor ResumableRefiner {
             await pauseGate.waitOpen()
             let region = allRegions[i]
             let result = try await transcribeRegionWithRetry(
-                samples: samples, region: region, options: whisperOptions)
+                samples: samples, region: region, options: options)
             for seg in result.segments {
                 let partial = RefinementProgress.PartialSegment(
                     startMillis: Int(seg.start.seconds * 1000),

@@ -212,7 +212,7 @@ public actor RefinementJobQueue {
     ///    models.
     /// 2. Waits (bounded, 5 s) for the worker task to exit. The cancelled
     ///    decode throws `CancellationError`; `ResumableRefiner.run` propagates
-    ///    it (the per-region retry loop catches only `WhisperTranscribeError`);
+    ///    it (the per-region retry loop catches only `TranscriptionError`);
     ///    the worker finishes `runNext` and clears itself.
     ///
     /// **Recovery contract — the cancelled job requeues, it does not fail.**
@@ -271,7 +271,7 @@ public actor RefinementJobQueue {
         // happens-before with "the resident refine model is gone" before the
         // live pass loads its own. The release above cancels the in-flight
         // decode: the per-token callback returns `false`, `decode` throws
-        // `CancellationError` (not a `WhisperTranscribeError`, so the per-region
+        // `CancellationError` (not a `TranscriptionError`, so the per-region
         // retry loop doesn't swallow it), `ResumableRefiner.run` propagates it,
         // and `runNext` runs to completion — clearing `worker` to nil. With the
         // cancel flag this normally settles in well under a second.
@@ -371,7 +371,7 @@ public actor RefinementJobQueue {
             // start fires the transcriber-release hook mid-decode,
             // `WhisperKitRegionTranscriber.decode` throws `CancellationError`,
             // which propagates out of the refiner (the per-region retry loop
-            // catches only `WhisperTranscribeError`). The on-disk
+            // catches only `TranscriptionError`). The on-disk
             // `refine-progress.json` still holds every region completed before
             // the cancel, keyed by THIS job's id. Requeue the SAME job (same id,
             // `.queued`) at the HEAD of the queue so `resumeAfterRecording` →
@@ -455,7 +455,7 @@ extension RefinementJobQueue {
     public static func makeStandard(
         events: EventWriter,
         paths: AppPaths = .standard,
-        whisperOptions: WhisperOptions = .init()
+        options: TranscriptionOptions = .init()
     ) async -> RefinementJobQueue {
         let store = RefinementJobStore.standard(paths: paths)
         let gate = PauseGate(initiallyOpen: true)
@@ -549,7 +549,7 @@ extension RefinementJobQueue {
                 pauseGate: gate,
                 events: events,
                 library: library,
-                whisperOptions: whisperOptions,
+                options: options,
                 onStageUpdate: { [weak queue] state in
                     guard let queue else { return }
                     await queue.reportStage(state)

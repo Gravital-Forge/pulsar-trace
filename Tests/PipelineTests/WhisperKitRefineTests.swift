@@ -31,7 +31,7 @@ struct WhisperKitRefineTests {
         let samples = try Self.fixtureSamples("single-speaker-30s.wav")
         let region = SpeechRegion(start: .seconds(2), end: .seconds(12))
         let result = try await Self.transcriber.transcribe(
-            samples, regions: [region], options: WhisperOptions())
+            samples, regions: [region], options: TranscriptionOptions())
         #expect(!result.segments.isEmpty)
         for seg in result.segments {
             #expect(seg.start >= .seconds(1))    // slack: whisper pads edges
@@ -43,7 +43,7 @@ struct WhisperKitRefineTests {
     @Test func languagePinningIsHonored() async throws {
         let samples = try Self.fixtureSamples("single-speaker-30s.wav")
         let region = SpeechRegion(start: .zero, end: .seconds(10))
-        var options = WhisperOptions()
+        var options = TranscriptionOptions()
         options.language = "en"
         let result = try await Self.transcriber.transcribe(
             samples, regions: [region], options: options)
@@ -57,7 +57,7 @@ struct WhisperKitRefineTests {
         // ["en", "pl"] must resolve to "en" and decode non-empty.
         let samples = try Self.fixtureSamples("single-speaker-30s.wav")
         let region = SpeechRegion(start: .zero, end: .seconds(10))
-        var options = WhisperOptions()
+        var options = TranscriptionOptions()
         options.allowedLanguages = ["en", "pl"]
         let result = try await Self.transcriber.transcribe(
             samples, regions: [region], options: options)
@@ -69,7 +69,7 @@ struct WhisperKitRefineTests {
         // The `regions: []` contract = whole-buffer fallback.
         let samples = try Self.fixtureSamples("single-speaker-30s.wav")
         let result = try await Self.transcriber.transcribe(
-            samples, regions: [], options: WhisperOptions())
+            samples, regions: [], options: TranscriptionOptions())
         #expect(!result.segments.isEmpty)
     }
 
@@ -93,13 +93,13 @@ struct WhisperKitRefineTests {
         await #expect(throws: CancellationError.self) {
             _ = try await fresh.transcribeRegion(
                 samples, region: SpeechRegion(start: .zero, end: .seconds(1)),
-                options: WhisperOptions())
+                options: TranscriptionOptions())
         }
         // Sticky: a second decode on the poisoned instance also throws.
         await #expect(throws: CancellationError.self) {
             _ = try await fresh.transcribeRegion(
                 samples, region: SpeechRegion(start: .zero, end: .seconds(1)),
-                options: WhisperOptions())
+                options: TranscriptionOptions())
         }
     }
 
@@ -109,7 +109,7 @@ struct WhisperKitRefineTests {
         let silence = [Float](repeating: 0, count: AudioFormat.sampleRate * 8)
         let result = try await Self.transcriber.transcribe(
             silence, regions: [SpeechRegion(start: .zero, end: .seconds(8))],
-            options: WhisperOptions())
+            options: TranscriptionOptions())
         // The digital-silence guard skips the decode entirely, so the region
         // yields no segments at all — the strongest statement of the fix.
         #expect(result.segments.isEmpty)

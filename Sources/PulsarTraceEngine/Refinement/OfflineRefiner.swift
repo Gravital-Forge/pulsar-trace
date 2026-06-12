@@ -87,7 +87,7 @@ public struct OfflineRefiner: Sendable {
             events: events)
         let transcriber: RefinementTranscriber = .whisperKit(
             whisperKit, vad: FluidVADRegionDetector())
-        let whisperOptions = WhisperOptions(language: language)
+        let options = TranscriptionOptions(language: language)
 
         let diarizer = try Self.makeDiarizer()
 
@@ -111,7 +111,7 @@ public struct OfflineRefiner: Sendable {
             whisperModelName: model.name,
             whisperModelSHA256: "",   // SDK-managed CoreML bundle (D39)
             recordingStart: Date(),
-            whisperOptions: whisperOptions,
+            options: options,
             library: library,
             progress: stageProgress)
     }

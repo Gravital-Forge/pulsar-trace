@@ -148,12 +148,12 @@ public final class AppEnvironment {
         // with unrestricted auto-detect, so a quiet/ambiguous stretch in a
         // Polish meeting could drift to Spanish or Russian even when the
         // user had restricted the language set in Settings.
-        let refineWhisperOptions = WhisperOptions(
+        let refineOptions = TranscriptionOptions(
             allowedLanguages: settings.allowedLanguages)
         let q = await RefinementJobQueue.makeStandard(
             events: events,
             paths: paths,
-            whisperOptions: refineWhisperOptions)
+            options: refineOptions)
         await queueVM.setQueue(q)
         queueVM.onJobsTerminated = { [weak self] jobs in
             self?.detailModel.noteJobsTerminated(jobs)

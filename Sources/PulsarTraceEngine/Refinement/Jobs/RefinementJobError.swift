@@ -9,7 +9,7 @@ import Foundation
 /// - `OfflineRefiner.makeDiarizer` → `Diarizer.DiarizeError` (.pythonNotFound,
 ///   .launchFailed)
 /// - `ResumableRefiner.run` → `Diarizer.DiarizeError` (non-.cancelled variants),
-///   `WhisperTranscribeError` from `WhisperKitRegionTranscriber` (incl.
+///   `TranscriptionError` from `WhisperKitRegionTranscriber` (incl.
 ///   `.decodeDeadlineExceeded`), `CancellationError` from a recording-start
 ///   decode cancel, I/O errors from `WAVReader` / `AtomicFile`.
 /// - `FluidVADRegionDetector.detectRegions` → VAD load/run failures (the queue
@@ -24,7 +24,7 @@ import Foundation
 /// it never surfaces here. (2) A recording-start decode cancel
 /// (`WhisperKitRegionTranscriber.cancelPending` → `decode` throws
 /// `CancellationError`) DOES propagate out of the refiner — the per-region
-/// retry loop catches only `WhisperTranscribeError`. In the normal pause flow
+/// retry loop catches only `TranscriptionError`. In the normal pause flow
 /// that cancel never reaches `classify`: `RefinementJobQueue.runNext` intercepts
 /// it while `pausedForRecording` and *requeues the same job* with its checkpoint
 /// intact rather than failing it (see the queue's pause doc). The
@@ -34,14 +34,6 @@ import Foundation
 public enum RefinementJobError: Error {
 
     // MARK: - Stable error identifiers
-
-    /// The whisper model file is not on disk and could not be downloaded.
-    /// Permanent until the user re-initiates a download. `retryAvailable: false`.
-    case modelMissing
-
-    /// The model file's SHA-256 digest did not match the pinned hash.
-    /// Indicates a corrupt or replaced file. `retryAvailable: false`.
-    case modelChecksum
 
     /// The diarization subprocess crashed or exited non-zero.
     /// Transient — the Python layer may succeed on a retry. `retryAvailable: true`.
@@ -64,8 +56,6 @@ public enum RefinementJobError: Error {
     /// Stable ASCII string stored in `RefinementJobState.failed.errorClass`.
     public var errorClass: String {
         switch self {
-        case .modelMissing:      return "modelMissing"
-        case .modelChecksum:     return "modelChecksum"
         case .diarizeCrashed:   return "diarizeCrashed"
         case .transcribeFailed: return "transcribeFailed"
         case .missingDependency: return "missingDependency"
@@ -76,8 +66,6 @@ public enum RefinementJobError: Error {
     /// `true` for transient failures the user can retry; `false` for permanent ones.
     public var retryAvailable: Bool {
         switch self {
-        case .modelMissing:      return false
-        case .modelChecksum:     return false
         case .diarizeCrashed:   return true
         case .transcribeFailed: return true
         case .missingDependency: return false
@@ -125,15 +113,15 @@ public enum RefinementJobError: Error {
 
         // The queue's `ResumableRefiner.run` calls the in-process
         // `WhisperKitRegionTranscriber` directly and rethrows
-        // `WhisperTranscribeError` un-wrapped — i.e. it does not pass through
+        // `TranscriptionError` un-wrapped — i.e. it does not pass through
         // `RefinementPipeline.RefineError.transcription`. Without this
         // arm those failures collapsed to `.io`, hiding their true cause
         // in the `refinement_failed` event log. Every variant of
-        // `WhisperTranscribeError` is a transcription failure; the model-
+        // `TranscriptionError` is a transcription failure; the model-
         // load and not-found variants are still transient at the queue level
         // because a fresh `ensureLoaded` (the load slot is cleared on failure)
         // or re-fetch can recover them.
-        if error is WhisperTranscribeError {
+        if error is TranscriptionError {
             return .transcribeFailed
         }
 

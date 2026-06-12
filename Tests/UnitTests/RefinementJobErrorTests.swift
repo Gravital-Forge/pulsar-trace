@@ -74,34 +74,34 @@ struct RefinementJobErrorTests {
         #expect(classified.retryAvailable == true)
     }
 
-    @Test("WhisperTranscribeError.transcriptionFailed → transcribeFailed, retryable")
+    @Test("TranscriptionError.transcriptionFailed → transcribeFailed, retryable")
     func classifiesWhisperTranscriptionFailed() {
         let classified = RefinementJobError.classify(
-            WhisperTranscribeError.transcriptionFailed(-1))
+            TranscriptionError.transcriptionFailed(-1))
         #expect(classified.errorClass == "transcribeFailed")
         #expect(classified.retryAvailable == true)
     }
 
-    @Test("WhisperTranscribeError.modelLoadFailed → transcribeFailed, retryable")
+    @Test("TranscriptionError.modelLoadFailed → transcribeFailed, retryable")
     func classifiesWhisperModelLoadFailed() {
         let classified = RefinementJobError.classify(
-            WhisperTranscribeError.modelLoadFailed("oom"))
+            TranscriptionError.modelLoadFailed("oom"))
         #expect(classified.errorClass == "transcribeFailed")
         #expect(classified.retryAvailable == true)
     }
 
-    @Test("WhisperTranscribeError.modelNotFound → transcribeFailed, retryable")
+    @Test("TranscriptionError.modelNotFound → transcribeFailed, retryable")
     func classifiesWhisperModelNotFound() {
         let classified = RefinementJobError.classify(
-            WhisperTranscribeError.modelNotFound("/no/model"))
+            TranscriptionError.modelNotFound("/no/model"))
         #expect(classified.errorClass == "transcribeFailed")
         #expect(classified.retryAvailable == true)
     }
 
-    @Test("WhisperTranscribeError.emptyAudio → transcribeFailed, retryable")
+    @Test("TranscriptionError.emptyAudio → transcribeFailed, retryable")
     func classifiesWhisperEmptyAudio() {
         let classified = RefinementJobError.classify(
-            WhisperTranscribeError.emptyAudio)
+            TranscriptionError.emptyAudio)
         #expect(classified.errorClass == "transcribeFailed")
         #expect(classified.retryAvailable == true)
     }
@@ -156,7 +156,7 @@ struct RefinementJobErrorTests {
     @Test("queue: transcribeFailed error produces .failed(errorClass: transcribeFailed, retryAvailable: true)")
     func queueProducesTranscribeFailed() async throws {
         let queue = try await makeQueue(
-            throwing: WhisperTranscribeError.transcriptionFailed(-1))
+            throwing: TranscriptionError.transcriptionFailed(-1))
         let state = try await runAndWaitForFailure(queue)
         if case .failed(let cls, let retry) = state {
             #expect(cls == "transcribeFailed")

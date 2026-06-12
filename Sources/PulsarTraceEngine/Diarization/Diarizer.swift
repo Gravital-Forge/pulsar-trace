@@ -5,8 +5,8 @@ import Logging
 ///
 /// Architecture (PRD §17, `pulsartrace-execution` skill):
 /// - pyannote runs in the embedded Python layer (`python/pulsartrace-ai/`),
-///   never mixed into Swift. whisper.cpp stays in Swift; pyannote stays in
-///   Python.
+///   never mixed into Swift. Transcription stays in-process Swift (CoreML
+///   SDKs — Parakeet live, WhisperKit refine); pyannote stays in Python.
 /// - For offline refinement the `Diarizer` spawns the Python diarization as a
 ///   **one-shot subprocess** per refine: it is handed a WAV path and gets back
 ///   JSON (speaker spans + per-speaker embeddings) on stdout. The long-lived

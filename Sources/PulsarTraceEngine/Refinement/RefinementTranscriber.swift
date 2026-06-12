@@ -15,7 +15,7 @@ public struct RefinementTranscriber: Sendable {
     public typealias DetectRegions =
         @Sendable ([Float]) async throws -> [SpeechRegion]
     public typealias TranscribeRegions =
-        @Sendable ([Float], [SpeechRegion], WhisperOptions) async throws
+        @Sendable ([Float], [SpeechRegion], TranscriptionOptions) async throws
         -> TranscriptionResult
 
     public let detectRegions: DetectRegions

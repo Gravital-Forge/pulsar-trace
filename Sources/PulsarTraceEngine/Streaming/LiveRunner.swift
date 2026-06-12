@@ -78,15 +78,15 @@ final class LiveRunner: Sendable {
     private let phaseHeartbeatInterval: Duration
     /// Phase-tracker threshold. Defaults to `defaultPhaseHeartbeatThreshold`.
     private let phaseHeartbeatThreshold: Duration
-    /// Per-stream whisper hand-off queue capacity, in audio duration. The drain
+    /// Per-stream decode hand-off queue capacity, in audio duration. The drain
     /// drops the oldest frame from the live view (recording unaffected) once a
     /// queue holds more than this much un-decoded audio (Phase 1).
     private let queueCapacity: Duration
-    /// Bounded wait on the whisper worker at teardown. A wedged decode that
+    /// Bounded wait on the decode worker at teardown. A wedged decode that
     /// would otherwise outlive the run cannot make the run hang past this —
-    /// the recording is already safe on disk regardless. With the Phase 4
-    /// subprocess transcriber, a hung decode is recovered earlier still
-    /// (`RemoteWindowTranscriber` SIGKILLs + respawns its subprocess), so the
+    /// the recording is already safe on disk regardless. The in-process
+    /// transcriber bounds a hung decode earlier still
+    /// (`ParakeetWindowTranscriber`'s 30 s deadline skips the window), so the
     /// teardown bound exists only as a defensive cap.
     private let workerDrainTimeout: Duration
 
@@ -258,12 +258,12 @@ final class LiveRunner: Sendable {
         }
         defer { heartbeatTask.cancel() }
 
-        // --- per-stream whisper hand-off queues + worker --------------------
+        // --- per-stream decode hand-off queues + worker ---------------------
         // Phase 1: the recording-safe drain (the `for await item in merged`
         // loop below) writes the WAV, feeds diarization, and *enqueues* frames
-        // onto bounded per-stream queues — it never calls whisper. A single
+        // onto bounded per-stream queues — it never runs a decode. A single
         // worker Task owns the (non-Sendable) streamers, drains both queues,
-        // and writes committed utterances to the sink. A hung/slow whisper can
+        // and writes committed utterances to the sink. A hung/slow decode can
         // therefore never block the WAV write — the recording is always safe.
         // Wakeup signal: each queue posts on enqueue/finish so the single worker
         // re-checks both queues. AsyncStream's buffering makes lost wakeups
@@ -297,27 +297,24 @@ final class LiveRunner: Sendable {
         // The per-decode watchdog is gone. Wedge recovery now lives **inside**
         // the `WindowTranscribing` conformer: `ParakeetWindowTranscriber`
         // bounds a wedged window decode with a 30 s deadline and skips it —
-        // the post-pass recovers the audio (D39). The `abort: nil` here is
-        // intentional: there is nothing useful for the in-process transcriber
-        // to do with it (it ignores the token per its doc-comment) and nothing
-        // arming it any more.
+        // the post-pass recovers the audio (D39).
 
         // The decode worker: owns the streamers, drains both queues, writes
         // committed utterances to the sink. Never blocks the drain — the queues
         // drop-oldest under backpressure. Publishes the system stream's detected
         // language to `workerResult` at end of stream (teardown polls it).
         //
-        // The synchronous whisper decode (`ingest` / `finish`) is offloaded to a
+        // The synchronous decode (`ingest` / `finish`) is offloaded to a
         // background DispatchQueue via `Self.offload` rather than called directly
-        // on the worker Task. A whisper decode can block for an unbounded time
-        // (and, until Task 5's abort lands, a wedged one blocks *forever*).
-        // Calling it directly would pin a Swift cooperative-pool thread, which
-        // can starve the bounded teardown timeout's own `Task.sleep` (the timer
-        // continuation needs a free pool thread). Offloading keeps the worker
-        // Task suspended (pool thread free) while the blocking call runs on a
-        // dispatch thread — so the teardown timeout always fires and the run
-        // always returns. The streamer is only ever touched here (the worker is
-        // suspended awaiting the offload), so no concurrent access occurs.
+        // on the worker Task. A decode can block for the transcriber's deadline
+        // (`ParakeetWindowTranscriber`'s 30 s window bound). Calling it directly
+        // would pin a Swift cooperative-pool thread, which can starve the bounded
+        // teardown timeout's own `Task.sleep` (the timer continuation needs a
+        // free pool thread). Offloading keeps the worker Task suspended (pool
+        // thread free) while the blocking call runs on a dispatch thread — so the
+        // teardown timeout always fires and the run always returns. The streamer
+        // is only ever touched here (the worker is suspended awaiting the
+        // offload), so no concurrent access occurs.
         let worker = Task { [streamerBox] () -> Void in
             var wakeIterator = wake.makeAsyncIterator()
             var systemEnded = false
@@ -330,14 +327,13 @@ final class LiveRunner: Sendable {
                 guard let queue, let streamer else { return true }
                 while let frame = queue.tryDequeueNonSuspending() {
                     let elapsed = ContinuousClock.now - startWall
-                    // Phase 4: no per-decode in-process arming. The system
-                    // stream's `RemoteWindowTranscriber` recovers a wedge by
-                    // killing its subprocess; the mic stream is in-process
-                    // for now (Option A) and runs without an abort token —
-                    // pending the shared-host proxy.
+                    // Both streams decode in-process via `ParakeetWindowTranscriber`,
+                    // which bounds a wedged window with its own 30 s deadline and
+                    // skips it — the post-pass recovers the audio. No per-decode
+                    // cancellation token is threaded through.
                     let utterances = await Self.offload {
                         streamer.ingest(
-                            frame: frame, realTimeElapsed: elapsed, abort: nil)
+                            frame: frame, realTimeElapsed: elapsed)
                     }
                     await workerResult.noteProgress()
                     for utt in utterances {
@@ -396,7 +392,7 @@ final class LiveRunner: Sendable {
 
         // --- the run loop ---------------------------------------------------
         // The drain owns the WAV write, diarization, and the per-stream silence
-        // watchdog; it never calls whisper. Each `.frame` case is WAV-first,
+        // watchdog; it never runs a decode. Each `.frame` case is WAV-first,
         // then enqueues onto the worker's queue. Real-time elapsed is computed
         // per-case where needed (the worker computes its own at decode time).
         for await item in merged {
@@ -445,7 +441,7 @@ final class LiveRunner: Sendable {
                     _ = diarBuffers.append(frame.samples)   // trim behavior unchanged without a diarizer
                 }
                 diarBufferProbe?(diarBuffers.bufferedSampleCount)
-                // Hand off to whisper — never blocks; drops oldest if behind.
+                // Hand off to the decode worker — never blocks; drops oldest if behind.
                 phase.set("enqueue-system")
                 systemQueue.enqueue(frame)
                 await noteDropEdges(systemQueue, stream: "system", sink: sink)
@@ -688,7 +684,7 @@ final class LiveRunner: Sendable {
 
     /// Run a blocking synchronous body on a background dispatch thread and await
     /// its result, suspending the caller (and freeing its Swift cooperative-pool
-    /// thread) while the body runs. Used by the whisper worker so an unbounded /
+    /// thread) while the body runs. Used by the decode worker so an unbounded /
     /// wedged decode never pins a pool thread (which would starve the bounded
     /// teardown timeout). The body is only ever invoked from the single worker
     /// task while it is otherwise suspended, so the unchecked-Sendable wrapper is
@@ -771,7 +767,7 @@ private struct UncheckedSendableBox<T>: @unchecked Sendable {
 }
 
 /// A `Sendable` wrapper that lets the non-`Sendable` `StreamingTranscriber`s be
-/// captured into the single whisper worker `Task` (Swift 6 concurrency). Its
+/// captured into the single decode worker `Task` (Swift 6 concurrency). Its
 /// contents are ONLY ever touched on the serialized offload path driven by the
 /// single worker (the blocking decode runs on a DispatchQueue thread while the
 /// worker is suspended), so the unchecked conformance is safe — the streamers

@@ -197,7 +197,7 @@ struct EngineMain {
                 $0.trimmingCharacters(in: .whitespaces).lowercased()
             }.filter { !$0.isEmpty } } ?? []
         let transcriberConfig = StreamingTranscriber.Configuration(
-            whisperOptions: WhisperOptions(allowedLanguages: allowedLanguages))
+            options: TranscriptionOptions(allowedLanguages: allowedLanguages))
 
         let pipeline = StreamingPipeline(events: lifecycle.events)
         let output = try await pipeline.run(

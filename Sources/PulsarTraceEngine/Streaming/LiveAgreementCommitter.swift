@@ -2,9 +2,10 @@ import Foundation
 
 /// LocalAgreement-2 commit logic for streaming transcription (R10).
 ///
-/// The streaming path runs whisper repeatedly on overlapping windows of recent
-/// audio. Each run produces a *hypothesis* — the best transcript whisper can
-/// give for that window — but the tail of any single hypothesis is unstable: a
+/// The streaming path runs the transcriber repeatedly on overlapping windows of
+/// recent audio. Each run produces a *hypothesis* — the best transcript the
+/// decoder can give for that window — but the tail of any single hypothesis is
+/// unstable: a
 /// word near the window edge often changes once more audio arrives. Emitting it
 /// immediately would mean `live.md` had to be rewritten, which the append-only
 /// invariant forbids.
@@ -19,12 +20,12 @@ import Foundation
 /// `live.md` only ever grows (R36) and never has to take a word back.
 ///
 /// This type is the pure, deterministic core of that algorithm — token-level,
-/// no audio, no whisper. `StreamingTranscriber` feeds it whisper hypotheses;
+/// no audio, no decode. `StreamingTranscriber` feeds it decoder hypotheses;
 /// the unit suite exercises it directly.
 public struct LiveAgreementCommitter {
 
     /// One token as seen by the committer: the word plus the recording-absolute
-    /// time span whisper attributed to the segment it came from.
+    /// time span the decoder attributed to the segment it came from.
     public struct Token: Sendable, Equatable {
         /// Normalized comparison key (lowercased, punctuation-stripped). Two
         /// tokens "agree" when their `key`s are equal — so trailing-comma vs
@@ -54,9 +55,9 @@ public struct LiveAgreementCommitter {
 
     public init() {}
 
-    /// Feed a fresh whisper hypothesis for the current window.
+    /// Feed a fresh decoder hypothesis for the current window.
     ///
-    /// `hypothesis` is the full token list whisper produced for the window,
+    /// `hypothesis` is the full token list the decoder produced for the window,
     /// already shifted to recording-absolute time. The committer:
     ///  1. trims the leading tokens that re-transcribe already-committed words
     ///     — found by **key-matching** against the committed tail, so it is
@@ -93,7 +94,7 @@ public struct LiveAgreementCommitter {
     ///
     /// Finds the largest `k` such that the last `k` committed keys equal the
     /// first `k` hypothesis keys, and drops those `k`. When the committed tail
-    /// and the hypothesis prefix do not align at all (a gap, or whisper
+    /// and the hypothesis prefix do not align at all (a gap, or the decoder
     /// re-segmented heavily) it falls back to a time cutoff so a window that
     /// genuinely overlaps committed audio still cannot re-commit it.
     private func trimCommittedPrefix(from hypothesis: [Token]) -> [Token] {
@@ -146,8 +147,8 @@ public struct LiveAgreementCommitter {
             in: CharacterSet(charactersIn: " \t\n.,!?;:\"'()[]"))
     }
 
-    /// Split a whisper segment's text into committer `Token`s, distributing the
-    /// segment's time span evenly across its words (whisper gives per-segment,
+    /// Split a decoded segment's text into committer `Token`s, distributing the
+    /// segment's time span evenly across its words (the decoder gives per-segment,
     /// not per-word, timestamps — even distribution is a stable approximation).
     public static func tokens(
         from text: String,

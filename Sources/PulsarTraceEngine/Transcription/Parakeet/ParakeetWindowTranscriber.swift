@@ -4,20 +4,18 @@ import Logging
 /// `WindowTranscribing` over the resident `ParakeetEngine` (live pass).
 ///
 /// `transcribeWindow` is a synchronous protocol requirement invoked from
-/// `LiveRunner`'s GCD offload queue (blocking there is by design — the old
-/// whisper path blocked in `whisper_full` the same way). The engine is an
-/// actor with an async API, so this bridges with a semaphore: spawn the
+/// `LiveRunner`'s GCD offload queue (blocking there is by design). The engine
+/// is an actor with an async API, so this bridges with a semaphore: spawn the
 /// decode as a `Task`, block the GCD thread until it signals. No deadlock
 /// risk — the cooperative pool is never the waiting thread.
 ///
-/// `abort` is ignored, like the old `RemoteWindowTranscriber`: a CoreML
-/// predict can't be interrupted mid-graph. Instead a 30 s semaphore deadline
-/// bounds a wedged decode — the window is skipped (`StreamingTranscriber`
-/// logs and carries on; the post-pass recovers the audio) and the orphaned
-/// Task's eventual result is discarded. A 10 s window decodes in well under
-/// 1 s on an M2 ANE, so the deadline only fires on genuine wedges. Unlike the
-/// old whisper IPC path (kill + respawn), a truly wedged engine is not
-/// respawned — every later window of the session will also deadline.
+/// A CoreML predict can't be interrupted mid-graph, so a 30 s semaphore
+/// deadline is the only bound on a wedged decode — the window is skipped
+/// (`StreamingTranscriber` logs and carries on; the post-pass recovers the
+/// audio) and the orphaned Task's eventual result is discarded. A 10 s window
+/// decodes in well under 1 s on an M2 ANE, so the deadline only fires on
+/// genuine wedges. A truly wedged engine is not respawned — every later
+/// window of the session will also deadline.
 ///
 /// Language: when the "Restrict to languages" selector holds exactly one
 /// code (`options.allowedLanguages`), it flows to FluidAudio as the
@@ -67,8 +65,7 @@ public final class ParakeetWindowTranscriber: WindowTranscribing {
     public func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: WhisperOptions,
-        abort: AbortToken?
+        options: TranscriptionOptions
     ) throws -> TranscriptionResult {
         guard samples.count >= Self.minimumSamples else {
             return TranscriptionResult(segments: [], language: "unknown")
@@ -90,7 +87,7 @@ public final class ParakeetWindowTranscriber: WindowTranscribing {
         guard semaphore.wait(timeout: .now() + Self.decodeDeadline) == .success,
               let outcome = box.take() else {
             logger.error("parakeet window decode exceeded deadline — skipping window")
-            throw WhisperTranscribeError.decodeDeadlineExceeded
+            throw TranscriptionError.decodeDeadlineExceeded
         }
 
         let decode = try outcome.get()

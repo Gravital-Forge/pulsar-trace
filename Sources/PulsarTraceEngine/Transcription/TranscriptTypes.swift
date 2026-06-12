@@ -20,7 +20,7 @@ public struct TranscriptSegment: Sendable, Equatable {
 public struct TranscriptionResult: Sendable, Equatable {
     /// The non-blank utterances, in time order.
     public let segments: [TranscriptSegment]
-    /// The language whisper detected/used (ISO-639-1, e.g. `en`).
+    /// The language the decoder detected/used (ISO-639-1, e.g. `en`).
     public let language: String
 
     public init(segments: [TranscriptSegment], language: String) {

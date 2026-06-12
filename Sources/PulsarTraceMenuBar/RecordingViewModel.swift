@@ -250,6 +250,9 @@ public final class RecordingViewModel {
         // Remaining gap (future work, R46 first-run wizard): a user revoking
         // a grant *mid-recording* is only surfaced as an engine exit, and
         // there is no guided first-run permissions walkthrough yet.
+
+        // Yield the ANE/memory to the live pass: the refine queue cancels its
+        // in-flight decode and requeues the job with its checkpoint intact.
         await pauseRefinement()
 
         do {
