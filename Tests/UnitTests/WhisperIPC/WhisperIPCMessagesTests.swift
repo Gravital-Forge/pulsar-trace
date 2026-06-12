@@ -132,6 +132,7 @@ struct WhisperIPCMessagesTests {
             (.modelLoadFailed("/x"), "model_load_failed"),
             (.transcriptionFailed(-1), "transcription_failed"),
             (.emptyAudio, "empty_audio"),
+            (.decodeDeadlineExceeded, "decode_deadline_exceeded"),
         ]
         for (input, expectedKind) in cases {
             let err = WhisperIPCError(from: input)

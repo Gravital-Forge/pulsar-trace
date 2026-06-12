@@ -15,7 +15,9 @@ import Logging
 /// bounds a wedged decode — the window is skipped (`StreamingTranscriber`
 /// logs and carries on; the post-pass recovers the audio) and the orphaned
 /// Task's eventual result is discarded. A 10 s window decodes in well under
-/// 1 s on an M2 ANE, so the deadline only fires on genuine wedges.
+/// 1 s on an M2 ANE, so the deadline only fires on genuine wedges. Unlike the
+/// old whisper IPC path (kill + respawn), a truly wedged engine is not
+/// respawned — every later window of the session will also deadline.
 ///
 /// Language: when the "Restrict to languages" selector holds exactly one
 /// code (`options.allowedLanguages`), it flows to FluidAudio as the
@@ -46,6 +48,7 @@ public final class ParakeetWindowTranscriber: WindowTranscribing {
         }
         func take() -> Result<ParakeetEngine.WindowDecode, Error>? {
             lock.lock(); defer { lock.unlock() }
+            defer { value = nil }
             return value
         }
     }
@@ -87,7 +90,7 @@ public final class ParakeetWindowTranscriber: WindowTranscribing {
         guard semaphore.wait(timeout: .now() + Self.decodeDeadline) == .success,
               let outcome = box.take() else {
             logger.error("parakeet window decode exceeded deadline — skipping window")
-            throw WhisperTranscribeError.transcriptionFailed(-2)
+            throw WhisperTranscribeError.decodeDeadlineExceeded
         }
 
         let decode = try outcome.get()

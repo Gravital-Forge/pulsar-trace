@@ -109,6 +109,7 @@ public struct RefinementPipeline: Sendable {
                 case .modelLoadFailed: return "modelLoadFailed"
                 case .transcriptionFailed(let c): return "whisperCode \(c)"
                 case .emptyAudio: return "emptyAudio"
+                case .decodeDeadlineExceeded: return "decodeDeadlineExceeded"
                 }
             default:
                 let ns = error as NSError

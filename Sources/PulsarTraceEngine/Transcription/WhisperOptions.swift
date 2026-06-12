@@ -92,6 +92,9 @@ public enum WhisperTranscribeError: Error, CustomStringConvertible, Equatable {
     case modelLoadFailed(String)
     case transcriptionFailed(Int)
     case emptyAudio
+    /// A window decode exceeded its wall-clock deadline and was abandoned
+    /// (ANE/CoreML decodes cannot be cancelled mid-predict).
+    case decodeDeadlineExceeded
 
     public var description: String {
         switch self {
@@ -99,6 +102,8 @@ public enum WhisperTranscribeError: Error, CustomStringConvertible, Equatable {
         case .modelLoadFailed(let p): return "whisper model failed to load: \(p)"
         case .transcriptionFailed(let c): return "whisper_full failed with code \(c)"
         case .emptyAudio: return "no audio samples to transcribe"
+        case .decodeDeadlineExceeded:
+            return "window decode exceeded its deadline — decoder abandoned"
         }
     }
 }

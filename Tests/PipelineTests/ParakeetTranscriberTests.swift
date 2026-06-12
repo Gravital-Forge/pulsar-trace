@@ -20,6 +20,19 @@ struct ParakeetTranscriberTests {
             logger: Logger(label: "test.parakeet"))
     }
 
+    /// Run the blocking sync transcribe call on a GCD thread — the
+    /// production calling context (`LiveRunner.offload`) — never on the
+    /// cooperative pool, which the transcriber's semaphore bridge forbids.
+    private static func onGCDThread<T: Sendable>(
+        _ body: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try body() })
+            }
+        }
+    }
+
     private static func fixtureSamples(seconds: Int) throws -> [Float] {
         let fixture = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()    // Tests/PipelineTests
@@ -68,10 +81,12 @@ struct ParakeetTranscriberTests {
 
     @Test func conformsToWindowTranscribingWithAbsoluteTimestamps() async throws {
         let engine = try await Self.engineTask.value
-        let transcriber: any WindowTranscribing = ParakeetWindowTranscriber(engine: engine)
         let window = try Self.fixtureSamples(seconds: 10)
-        let result = try transcriber.transcribeWindow(
-            window, windowStart: .seconds(60), options: WhisperOptions(), abort: nil)
+        let result = try await Self.onGCDThread {
+            let transcriber: any WindowTranscribing = ParakeetWindowTranscriber(engine: engine)
+            return try transcriber.transcribeWindow(
+                window, windowStart: .seconds(60), options: WhisperOptions(), abort: nil)
+        }
         #expect(!result.segments.isEmpty)
         for seg in result.segments {
             // Shifted onto the recording timeline: window starts at 60 s.
@@ -85,10 +100,12 @@ struct ParakeetTranscriberTests {
         // Parakeet rejects audio under 300 ms; the end-of-stream flush can
         // produce such a tail. Contract: empty result, not an error.
         let engine = try await Self.engineTask.value
-        let transcriber = ParakeetWindowTranscriber(engine: engine)
-        let result = try transcriber.transcribeWindow(
-            [Float](repeating: 0.1, count: 1600),   // 100 ms
-            windowStart: .zero, options: WhisperOptions(), abort: nil)
+        let result = try await Self.onGCDThread {
+            let transcriber = ParakeetWindowTranscriber(engine: engine)
+            return try transcriber.transcribeWindow(
+                [Float](repeating: 0.1, count: 1600),   // 100 ms
+                windowStart: .zero, options: WhisperOptions(), abort: nil)
+        }
         #expect(result.segments.isEmpty)
     }
 
@@ -97,12 +114,14 @@ struct ParakeetTranscriberTests {
         // non-empty English decode (the hint steers token scripts, it does
         // not gate output).
         let engine = try await Self.engineTask.value
-        let transcriber = ParakeetWindowTranscriber(engine: engine)
-        var options = WhisperOptions()
-        options.allowedLanguages = ["en"]
         let window = try Self.fixtureSamples(seconds: 8)
-        let result = try transcriber.transcribeWindow(
-            window, windowStart: .zero, options: options, abort: nil)
+        let result = try await Self.onGCDThread {
+            let transcriber = ParakeetWindowTranscriber(engine: engine)
+            var options = WhisperOptions()
+            options.allowedLanguages = ["en"]
+            return try transcriber.transcribeWindow(
+                window, windowStart: .zero, options: options, abort: nil)
+        }
         #expect(!result.segments.isEmpty)
     }
 }

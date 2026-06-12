@@ -371,10 +371,11 @@ public struct WhisperIPCSegment: Sendable, Codable, Equatable {
 /// that failed so a parent client can correlate.
 ///
 /// `kind` is a stable string ("model_not_found" | "model_load_failed" |
-/// "transcription_failed" | "empty_audio" | "decode_internal" |
-/// "init_twice") so callers can branch on a typo-resistant key without
-/// parsing `message`. The subprocess emits "decode_internal" for any
-/// non-`WhisperTranscribeError` thrown from the decode call.
+/// "transcription_failed" | "empty_audio" | "decode_deadline_exceeded" |
+/// "decode_internal" | "init_twice") so callers can branch on a
+/// typo-resistant key without parsing `message`. The subprocess emits
+/// "decode_internal" for any non-`WhisperTranscribeError` thrown from the
+/// decode call.
 public struct WhisperIPCError: Sendable, Codable, Equatable {
     public let requestId: UUID?
     public let kind: String
@@ -399,6 +400,8 @@ public struct WhisperIPCError: Sendable, Codable, Equatable {
             self.kind = "transcription_failed"
         case .emptyAudio:
             self.kind = "empty_audio"
+        case .decodeDeadlineExceeded:
+            self.kind = "decode_deadline_exceeded"
         }
         self.message = error.description
     }
