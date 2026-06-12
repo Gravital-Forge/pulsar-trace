@@ -507,7 +507,7 @@ extension RefinementJobQueue {
                 WhisperKitRegionTranscriber(
                     configuration: .init(
                         model: model,
-                        downloadBase: ModelStore.defaultCacheDirectory()
+                        downloadBase: paths.modelsCacheDirectory
                             .appendingPathComponent("whisperkit", isDirectory: true)),
                     events: events)
             }

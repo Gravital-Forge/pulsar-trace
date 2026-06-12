@@ -26,7 +26,7 @@ public actor FluidVADRegionDetector {
 
     public init(
         minTurnGap: Duration = .milliseconds(800),
-        cacheRoot: URL = ModelStore.defaultCacheDirectory(),
+        cacheRoot: URL = AppPaths.standard.modelsCacheDirectory,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
         self.minTurnGap = minTurnGap

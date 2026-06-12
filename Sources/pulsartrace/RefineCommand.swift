@@ -129,12 +129,9 @@ enum RefineCommand {
         guard WhisperKitModelCatalog.model(named: model) != nil else {
             throw ArgError.unknownModel(model)
         }
-        // Validated against the language catalog. NOTE: until task 17
-        // replaces it, the catalog type is still the CWhisper-backed
-        // `WhisperLanguageCatalog`; task 16/17 swap this line to
-        // `LanguageCatalog.language(forCode:)` mechanically.
+        // Validated against the language catalog.
         if let language,
-           WhisperLanguageCatalog.language(forCode: language) == nil {
+           LanguageCatalog.language(forCode: language) == nil {
             throw ArgError.unknownLanguage(language)
         }
         return Options(

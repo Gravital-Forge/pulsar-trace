@@ -28,6 +28,14 @@ public struct AppPaths: Sendable {
         home.appendingPathComponent("Library/Application Support/PulsarTrace", isDirectory: true)
     }
 
+    /// Model cache root: `~/Library/Caches/PulsarTrace/models/` (D10). The
+    /// CoreML bundles (Parakeet `parakeet-tdt-0.6b-v3-coreml/`, WhisperKit
+    /// `whisperkit/`) live in SDK-managed subdirectories beneath it (D39).
+    public var modelsCacheDirectory: URL {
+        home.appendingPathComponent(
+            "Library/Caches/PulsarTrace/models", isDirectory: true)
+    }
+
     /// Events log directory: `…/PulsarTrace/events/` (R78).
     public var eventsDirectory: URL {
         applicationSupport.appendingPathComponent("events", isDirectory: true)
@@ -47,11 +55,10 @@ public struct AppPaths: Sendable {
     /// username length. `$TMPDIR` resolves to `/var/folders/<2>/<28>/T/`
     /// on macOS (~47 bytes, constant regardless of username), leaving
     /// ~50 bytes of headroom for the longest filenames the code uses
-    /// (capture's `<recordingId>-system.sock` ≈ 33 bytes; whisper's
-    /// `w-<8hex>.sock` = 15 bytes).
+    /// (capture's `<recordingId>-system.sock` ≈ 33 bytes).
     ///
     /// `home` is left in place because everything else under
-    /// `applicationSupport` (events, speakers DB, whisper.lock, etc.)
+    /// `applicationSupport` (events, speakers DB, etc.)
     /// is persistent state that genuinely belongs in Application Support.
     /// Only the sockets need short paths.
     public var socketDirectory: URL {

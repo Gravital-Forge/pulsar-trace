@@ -172,12 +172,12 @@ struct SettingsView: View {
     /// Languages that pass the current `languageFilter`. The match is a
     /// case-insensitive substring on the display name **or** the
     /// short code, so typing "pol" or "pl" both surface Polish.
-    private var filteredLanguages: [WhisperLanguageCatalog.Language] {
+    private var filteredLanguages: [LanguageCatalog.Language] {
         let needle = languageFilter
             .trimmingCharacters(in: .whitespaces)
             .lowercased()
-        if needle.isEmpty { return WhisperLanguageCatalog.all }
-        return WhisperLanguageCatalog.all.filter {
+        if needle.isEmpty { return LanguageCatalog.all }
+        return LanguageCatalog.all.filter {
             $0.displayName.lowercased().contains(needle)
                 || $0.code.contains(needle)
         }
@@ -193,7 +193,7 @@ struct SettingsView: View {
             set: { isOn in
                 var selected = Set(settings.allowedLanguages)
                 if isOn { selected.insert(code) } else { selected.remove(code) }
-                settings.allowedLanguages = WhisperLanguageCatalog.all
+                settings.allowedLanguages = LanguageCatalog.all
                     .map(\.code)
                     .filter { selected.contains($0) }
             })
@@ -204,7 +204,7 @@ struct SettingsView: View {
     private var allowedLanguagesSummary: String {
         let selected = Set(settings.allowedLanguages)
         if selected.isEmpty { return "any (auto-detect)" }
-        let names = WhisperLanguageCatalog.all
+        let names = LanguageCatalog.all
             .filter { selected.contains($0.code) }
             .map(\.displayName)
         return names.joined(separator: ", ")

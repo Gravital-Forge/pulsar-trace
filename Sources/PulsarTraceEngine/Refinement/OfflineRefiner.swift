@@ -82,7 +82,7 @@ public struct OfflineRefiner: Sendable {
         let whisperKit = WhisperKitRegionTranscriber(
             configuration: .init(
                 model: model,
-                downloadBase: ModelStore.defaultCacheDirectory()
+                downloadBase: paths.modelsCacheDirectory
                     .appendingPathComponent("whisperkit", isDirectory: true)),
             events: events)
         let transcriber: RefinementTranscriber = .whisperKit(

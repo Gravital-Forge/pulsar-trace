@@ -185,12 +185,8 @@ struct EngineMain {
         // ~0.5 GB from huggingface.co. A wedged window decode is bounded by
         // ParakeetWindowTranscriber's 30 s deadline — the window is skipped
         // and the post-pass recovers the audio.
-        //
-        // Cache root: ModelStore.defaultCacheDirectory() until task 16 of
-        // docs/specs/2026-06-12-ane-transcription-pipeline/ replaces it with
-        // AppPaths.modelsCacheDirectory and deletes ModelStore.
         let parakeet = try await ParakeetEngine.load(
-            cacheRoot: ModelStore.defaultCacheDirectory(),
+            cacheRoot: AppPaths.standard.modelsCacheDirectory,
             events: lifecycle.events,
             logger: Logger(label: LogSubsystem.engine))
         let transcriber: any WindowTranscribing =

@@ -15,7 +15,7 @@ struct WhisperKitRefineTests {
     private static let transcriber = WhisperKitRegionTranscriber(
         configuration: .init(
             model: WhisperKitModelCatalog.largeV3Turbo,
-            downloadBase: ModelStore.defaultCacheDirectory()
+            downloadBase: AppPaths.standard.modelsCacheDirectory
                 .appendingPathComponent("whisperkit", isDirectory: true)),
         events: nil)
 
@@ -84,7 +84,7 @@ struct WhisperKitRefineTests {
         let fresh = WhisperKitRegionTranscriber(
             configuration: .init(
                 model: WhisperKitModelCatalog.largeV3Turbo,
-                downloadBase: ModelStore.defaultCacheDirectory()
+                downloadBase: AppPaths.standard.modelsCacheDirectory
                     .appendingPathComponent("whisperkit-nonexistent-\(UUID().uuidString)",
                                             isDirectory: true)),
             events: nil)
