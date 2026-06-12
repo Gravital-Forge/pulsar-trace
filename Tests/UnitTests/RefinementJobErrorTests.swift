@@ -137,6 +137,18 @@ struct RefinementJobErrorTests {
         #expect(classified.retryAvailable == true)
     }
 
+    /// A recording-start decode cancel (`WhisperKitRegionTranscriber.decode`
+    /// throws `CancellationError` after `cancelPending()`) propagates out of the
+    /// refiner. It MUST classify as a transient `transcribeFailed` so the job
+    /// resumes after the recording from its last checkpoint — the "killed region
+    /// is not lost" contract.
+    @Test("CancellationError → transcribeFailed, retryable")
+    func classifiesCancellationError() {
+        let classified = RefinementJobError.classify(CancellationError())
+        #expect(classified.errorClass == "transcribeFailed")
+        #expect(classified.retryAvailable == true)
+    }
+
     // MARK: - Queue integration: stub runJob produces correct .failed state
 
     private func tempDir() -> URL {

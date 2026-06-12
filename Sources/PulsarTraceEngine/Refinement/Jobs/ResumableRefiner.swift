@@ -209,27 +209,28 @@ public actor ResumableRefiner {
     }
 
     /// Maximum number of attempts per region before the failure is
-    /// allowed to bubble up and fail the whole job. Set to 3 so the
-    /// 2026-05-27 incident shape (subprocess died on attempt 1, parent
-    /// respawned cleanly, attempt 2 would succeed on the fresh host)
-    /// is recovered, while still bounding total work.
+    /// allowed to bubble up and fail the whole job. Set to 3 so a
+    /// transient WhisperKit decode failure (e.g. a CoreML load hiccup that
+    /// clears on the memoized-load slot's next rebuild) is recovered, while
+    /// still bounding total work.
     private static let regionMaxAttempts = 3
 
-    /// Backoff between region-transcribe attempts. The remote
-    /// transcriber's own `respawnWithBackoffLog` already waits on the
-    /// subprocess being healthy; this brief sleep is just to avoid
-    /// busy-spinning the loop if the failure mode is something the
-    /// in-process closure can't recover from on its own.
+    /// Backoff between region-transcribe attempts. A brief sleep so the loop
+    /// does not busy-spin if the failure mode is something the in-process
+    /// decode can't recover from immediately (a fresh `ensureLoaded` on the
+    /// next attempt picks up a cleared load slot).
     private static let regionRetryBackoff: Duration = .milliseconds(500)
 
     /// Wrap one `transcribe` call in a bounded retry loop.
     ///
-    /// `WhisperTranscribeError` covers the subprocess-decode-failed
-    /// shape (`transcriptionFailed`, `modelLoadFailed`, etc.) — those
-    /// can resolve on a respawn so we retry up to `regionMaxAttempts`.
-    /// Any other error (programmer bug, I/O fault inside the closure)
-    /// propagates immediately — these are not transient and a retry
-    /// would just hide them.
+    /// `WhisperTranscribeError` covers the in-process decode-failure shape
+    /// (`transcriptionFailed`, `modelLoadFailed`, `decodeDeadlineExceeded`,
+    /// etc.) — those can resolve on a retry (the load slot is rebuilt) so we
+    /// retry up to `regionMaxAttempts`. Any other error propagates immediately:
+    /// a programmer bug or I/O fault is not transient, and — critically — a
+    /// recording-start `CancellationError` (from `cancelPending()`) MUST flow
+    /// straight out so the worker exits promptly rather than retrying a decode
+    /// the pause just cancelled.
     private func transcribeRegionWithRetry(
         samples: [Float], region: SpeechRegion, options: WhisperOptions
     ) async throws -> TranscriptionResult {

@@ -123,6 +123,26 @@ public actor WhisperKitRegionTranscriber {
         var didFire: Bool { lock.lock(); defer { lock.unlock() }; return fired }
     }
 
+    /// A one-way "stop this decode" flag the per-token callback observes. Set
+    /// from outside the actor's isolation (`cancelPending()`), so it is an
+    /// NSLock-guarded class — the same shape as `DeadlineFlag` — rather than
+    /// actor-isolated state a non-isolated caller couldn't reach. Sticky: once
+    /// fired it stays fired, so the *instance* is dead after a cancel (every
+    /// later `decode` on it throws). The queue's pause/release path builds a
+    /// fresh transcriber for the next job, so a poisoned instance is never reused.
+    private final class CancelFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var fired = false
+        func markFired() { lock.lock(); fired = true; lock.unlock() }
+        var didFire: Bool { lock.lock(); defer { lock.unlock() }; return fired }
+    }
+
+    /// `nonisolated` so the queue's release hook can flip it without hopping
+    /// onto the actor — which is the whole point: a cancel must land even while
+    /// the actor is parked inside an in-flight `pipe.transcribe`. The decode
+    /// observes it at the next token boundary and unwinds.
+    private nonisolated let cancelFlag = CancelFlag()
+
     public init(
         configuration: Configuration,
         events: EventWriter?,
@@ -143,6 +163,24 @@ public actor WhisperKitRegionTranscriber {
     }
 
     // MARK: - Decode API (the refine seam)
+
+    /// Stop the in-flight decode at the next token boundary. The current
+    /// `pipe.transcribe` callback returns `false` (WhisperKit stops emitting
+    /// tokens), and `decode` then throws `CancellationError` rather than a
+    /// result — propagating straight out of the refiner (it is not a
+    /// `WhisperTranscribeError`, so the per-region retry loop does not catch it),
+    /// which exits the refinement worker. This is the in-process analogue of
+    /// SIGTERMing the old `pulsartrace-whisper` subprocess on a recording start.
+    ///
+    /// `nonisolated`: callable while the actor is parked inside a decode (an
+    /// actor-isolated hop would deadlock behind the very decode we want to stop).
+    /// Sticky: this instance is *dead* after a cancel — every later `decode` on
+    /// it throws at entry. The queue builds a fresh transcriber per job, so a
+    /// cancelled instance is never reused (pause releases the box; the next job
+    /// rebuilds it).
+    public nonisolated func cancelPending() {
+        cancelFlag.markFired()
+    }
 
     /// Decode one VAD region; segment timestamps come back recording-absolute
     /// — the same contract as the old `WhisperTranscriber.transcribeRegion`.
@@ -209,6 +247,14 @@ public actor WhisperKitRegionTranscriber {
         // first; the immediate `defer` releases on every throw path.
         await acquireDecodeLock()
         defer { releaseDecodeLock() }
+
+        // Cancel gate (entry). If the queue's release hook already fired
+        // `cancelPending()` — recording start while this job was mid-decode —
+        // bail before touching the model. This also covers the detect pre-pass
+        // below: it sits after this check, so a cancel observed here never
+        // reaches `pipe.detectLangauge`. The instance is now poisoned; every
+        // later decode on it throws here too (the queue rebuilds a fresh one).
+        if cancelFlag.didFire { throw CancellationError() }
 
         // Pre-decode digital-silence guard (D31). The legacy whisper.cpp path
         // dropped silent regions *inside* `whisper_full` via its built-in
@@ -299,7 +345,12 @@ public actor WhisperKitRegionTranscriber {
         // can fail a decode that finished naturally just inside budget if the
         // clock crosses the line between the last token and the check.
         let flag = DeadlineFlag()
+        let cancelFlag = self.cancelFlag
         let callback: TranscriptionCallback = { _ in
+            // Cancel wins over the deadline: a recording-start release must stop
+            // the decode promptly, and the post-decode check below distinguishes
+            // the two outcomes (CancellationError vs decodeDeadlineExceeded).
+            if cancelFlag.didFire { return false }
             if Date() < deadline { return nil }
             flag.markFired()
             return false   // stop decoding
@@ -307,6 +358,12 @@ public actor WhisperKitRegionTranscriber {
 
         let results = try await pipe.transcribe(
             audioArray: slice, decodeOptions: decodeOptions, callback: callback)
+        // Cancel takes precedence: a release fired mid-decode means the worker
+        // is unwinding for a recording start. Throw `CancellationError` (NOT a
+        // `WhisperTranscribeError`) so `ResumableRefiner`'s per-region retry
+        // loop does not catch it — it propagates out and exits the worker,
+        // mirroring the old IPC-EOF propagation when the subprocess was killed.
+        if cancelFlag.didFire { throw CancellationError() }
         if flag.didFire {
             // Deviation A: a budget overrun is a deadline, not a
             // whisper_full(-2). Throw the truthful case.

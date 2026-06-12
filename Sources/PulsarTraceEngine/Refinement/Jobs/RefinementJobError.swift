@@ -6,23 +6,26 @@ import Foundation
 /// `RefinementJobState.failed`.
 ///
 /// Error sources surveyed (via `makeStandard`'s `runJob` closure):
-/// - `ModelStore.ensureAvailable` → `ModelStore.ModelStoreError`
 /// - `OfflineRefiner.makeDiarizer` → `Diarizer.DiarizeError` (.pythonNotFound,
 ///   .launchFailed)
 /// - `ResumableRefiner.run` → `Diarizer.DiarizeError` (non-.cancelled variants),
-///   raw `WhisperTranscribeError`, I/O errors from `WAVReader` /
-///   `AtomicFile`.
+///   `WhisperTranscribeError` from `WhisperKitRegionTranscriber` (incl.
+///   `.decodeDeadlineExceeded`), `CancellationError` from a recording-start
+///   decode cancel, I/O errors from `WAVReader` / `AtomicFile`.
+/// - `FluidVADRegionDetector.detectRegions` → VAD load/run failures (the queue
+///   closure falls back to a whole-stream region rather than failing the job).
 /// - `TranscriptAssembly.assembleAndWrite` → `RefinementPipeline.RefineError`
 ///   (when the assemble step's reconciler / file writes wrap into the typed
 ///   RefineError). Each `RefineError` branch maps to a queue bucket.
 ///
-/// CancellationError note: `ResumableRefiner.run` does NOT propagate
-/// `CancellationError` through Swift structured concurrency. The pause gate
-/// (`PauseGate.waitOpen`) is a custom actor-based waiter, not `Task.sleep` or
-/// `withTaskCancellationHandler`, so Swift task cancellation cannot interrupt it.
-/// The diarizer's `.cancelled` case is caught internally and retried when the
-/// gate reopens — it never surfaces to the queue's catch block as a throw.
-/// Therefore no special `CancellationError` handling is needed here.
+/// CancellationError note: there are TWO cancellation shapes, handled
+/// differently. (1) The diarizer's `.cancelled` case is caught *inside*
+/// `ResumableRefiner.runDiarization` and retried when the pause gate reopens —
+/// it never surfaces here. (2) A recording-start decode cancel
+/// (`WhisperKitRegionTranscriber.cancelPending` → `decode` throws
+/// `CancellationError`) DOES propagate out of the refiner — the per-region
+/// retry loop catches only `WhisperTranscribeError` — and is classified below
+/// as a transient `.transcribeFailed` so the job resumes after the recording.
 public enum RefinementJobError: Error {
 
     // MARK: - Stable error identifiers
@@ -125,16 +128,31 @@ public enum RefinementJobError: Error {
             }
         }
 
-        // The queue's `ResumableRefiner.run` (Phase 5) calls the remote
-        // transcriber directly and rethrows `WhisperTranscribeError`
-        // un-wrapped — i.e. it does not pass through
+        // The queue's `ResumableRefiner.run` calls the in-process
+        // `WhisperKitRegionTranscriber` directly and rethrows
+        // `WhisperTranscribeError` un-wrapped — i.e. it does not pass through
         // `RefinementPipeline.RefineError.transcription`. Without this
         // arm those failures collapsed to `.io`, hiding their true cause
         // in the `refinement_failed` event log. Every variant of
         // `WhisperTranscribeError` is a transcription failure; the model-
-        // load and not-found variants are still transient at the queue
-        // level because a respawn / re-fetch can recover them.
+        // load and not-found variants are still transient at the queue level
+        // because a fresh `ensureLoaded` (the load slot is cleared on failure)
+        // or re-fetch can recover them.
         if error is WhisperTranscribeError {
+            return .transcribeFailed
+        }
+
+        // Recording-start decode cancel (D39 in-process). When
+        // `pauseForRecording` fires the transcriber-release hook,
+        // `WhisperKitRegionTranscriber.decode` throws `CancellationError`; the
+        // per-region retry loop deliberately does NOT catch it (it catches only
+        // `WhisperTranscribeError`), so it propagates here. Classify as a
+        // transient transcription failure — `retryAvailable: true` — so the job
+        // resumes after the recording from its last checkpoint, repeating only
+        // the cancelled region. This mirrors the old subprocess-kill path, where
+        // the IPC EOF surfaced as `WhisperTranscribeError.transcriptionFailed`
+        // and likewise classified to `.transcribeFailed`.
+        if error is CancellationError {
             return .transcribeFailed
         }
 

@@ -74,6 +74,36 @@ struct WhisperKitRefineTests {
         #expect(!result.segments.isEmpty)
     }
 
+    @Test func cancelPendingMakesDecodeThrowCancellationBeforeLoadingTheModel() async throws {
+        // The pauseForRecording cancel path: `cancelPending()` flips a sticky
+        // flag that `decode` observes at entry — *before* `ensureLoaded()` — so
+        // it throws `CancellationError` without touching the model. A fresh
+        // instance (not the shared warm one) so the poison doesn't leak; and
+        // because the throw is at the entry gate, this case needs no model on
+        // disk and stays fast even on a cold machine.
+        let fresh = WhisperKitRegionTranscriber(
+            configuration: .init(
+                model: WhisperKitModelCatalog.largeV3Turbo,
+                downloadBase: ModelStore.defaultCacheDirectory()
+                    .appendingPathComponent("whisperkit-nonexistent-\(UUID().uuidString)",
+                                            isDirectory: true)),
+            events: nil)
+        fresh.cancelPending()
+        // Non-silent so the digital-silence guard isn't what short-circuits.
+        let samples = [Float](repeating: 0.2, count: AudioFormat.sampleRate)
+        await #expect(throws: CancellationError.self) {
+            _ = try await fresh.transcribeRegion(
+                samples, region: SpeechRegion(start: .zero, end: .seconds(1)),
+                options: WhisperOptions())
+        }
+        // Sticky: a second decode on the poisoned instance also throws.
+        await #expect(throws: CancellationError.self) {
+            _ = try await fresh.transcribeRegion(
+                samples, region: SpeechRegion(start: .zero, end: .seconds(1)),
+                options: WhisperOptions())
+        }
+    }
+
     @Test func silentRegionProducesNoStockPhraseLines() async throws {
         // The D31 regression shape: digital silence must not yield
         // "Thank you."-style hallucinations on the new backend.

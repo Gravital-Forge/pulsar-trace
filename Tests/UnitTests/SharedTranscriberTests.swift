@@ -43,6 +43,46 @@ struct SharedTranscriberTests {
         #expect(counter.value == 2, "first get threw, second get re-ran the factory")
     }
 
+    @Test("release is terminal: get() throws CancellationError and does not rebuild")
+    func releaseIsTerminal() throws {
+        let counter = Counter()
+        let shared = SharedTranscriberBox<Sentinel> {
+            counter.bump()
+            return Sentinel()
+        }
+        _ = try shared.get()
+        #expect(counter.value == 1)
+
+        shared.release()
+
+        // A post-release get() must throw rather than rebuild — a paused job
+        // silently reloading the model mid-recording is the bug this prevents.
+        #expect(throws: CancellationError.self) { _ = try shared.get() }
+        #expect(counter.value == 1, "release must NOT re-run the factory")
+    }
+
+    @Test("peek() returns the built instance without building; nil before build / after release")
+    func peekDoesNotBuild() throws {
+        let counter = Counter()
+        let shared = SharedTranscriberBox<Sentinel> {
+            counter.bump()
+            return Sentinel()
+        }
+
+        // Before any get(): peek() must not trigger the factory.
+        #expect(shared.peek() == nil)
+        #expect(counter.value == 0, "peek must not build")
+
+        let built = try shared.get()
+        let peeked = shared.peek()
+        #expect(peeked?.id == built.id, "peek returns the same instance get built")
+        #expect(counter.value == 1, "peek after get must not re-run the factory")
+
+        // After release(): peek() returns nil (the box is drained + terminal).
+        shared.release()
+        #expect(shared.peek() == nil)
+    }
+
     private final class Counter: @unchecked Sendable {
         private let lock = NSLock()
         private var n = 0
