@@ -33,6 +33,9 @@ struct LiveTranscriptView: View {
             autoScroll: autoScroll,
             findActivator: find)
         .frame(minWidth: 360, minHeight: 320)
+        // Same launch-quiet rule as the main window (see
+        // `WindowRestorationOptOut`): never re-presented by restoration.
+        .background(WindowRestorationOptOut())
         .navigationTitle("Live Transcript")
         .toolbar {
             // Conditionally PRESENT, not a conditionally-empty item: an empty

@@ -68,9 +68,30 @@ struct PulsarTraceMacApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        // The unified app window — Recordings / Speakers / Settings sidebar
-        // (#6). Replaces the inline panel pages and the standalone `Settings`
-        // scene; "Settings…" in the menu opens this window's Settings pane.
+        // Both windows opt OUT of macOS state restoration (the
+        // `WindowRestorationOptOut` background inside each content view), so
+        // the app launches quietly with just its menubar item. Restoration
+        // orders a saved window frontmost while launching, but an accessory
+        // app is not activated at launch, and cooperative activation
+        // (macOS 14+) declines a self-issued `NSApp.activate()` that no
+        // user interaction backs — Apple DTS documents this "incomplete
+        // activation" state with no app-side workaround (FB21087054
+        // family). The restored window therefore drew in the greyed
+        // inactive appearance (QA rounds 4–7). With restoration off, every
+        // window-open goes through a user action (dropdown click), which
+        // carries the intent that makes activation succeed.
+        // (`restorationBehavior(.disabled)` is this exact switch as a scene
+        // modifier, but it needs macOS 15 and `SceneBuilder` cannot branch
+        // on `#available` — the PRD floor is macOS 14, so the opt-out is
+        // applied at the AppKit level instead.)
+        mainWindow
+        liveTranscriptWindow
+    }
+
+    // The unified app window — Recordings / Speakers / Settings sidebar
+    // (#6). Replaces the inline panel pages and the standalone `Settings`
+    // scene; "Settings…" in the menu opens this window's Settings pane.
+    private var mainWindow: some Scene {
         Window("PulsarTrace", id: WindowID.main) {
             MainWindowView(events: environment.events)
                 .environment(environment.settings)
@@ -94,9 +115,11 @@ struct PulsarTraceMacApp: App {
                 }
         }
         .defaultSize(width: 1104, height: 736)
+    }
 
-        // The detached live-transcript window (#5) — stays visible
-        // independently of the menubar panel.
+    // The detached live-transcript window (#5) — stays visible
+    // independently of the menubar panel.
+    private var liveTranscriptWindow: some Scene {
         Window("Live Transcript", id: WindowID.liveTranscript) {
             LiveTranscriptView()
                 .environment(environment.liveWatcher)

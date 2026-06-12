@@ -27,12 +27,15 @@ from before this branch works — note its `live.md` will still show the old
       window open but behind it: menubar → **Recordings**. The window comes
       to the FRONT and is active (full-color controls) — it must not stay
       buried behind the other app (QA round 6 regression).
-- [ ] Quit with the window open, relaunch the app: the restored window is
-      active immediately — toolbar buttons and list selection draw in full
-      color (QA round 4 regression). Acceptable fallback: if macOS declines
-      the launch activation, the window may come up inactive — but a single
-      click anywhere on it MUST activate it (in round 6 it stayed greyed
-      even when clicked).
+- [ ] Quit with the window open, relaunch the app: PulsarTrace launches
+      QUIETLY — menubar icon only, no window auto-reopens. (Deliberate:
+      macOS presents a restored accessory-app window in a permanently
+      greyed inactive state — QA rounds 4–7; window restoration is
+      disabled instead.) Open it from the menubar: it comes up front,
+      active, full-color, at its last size and position. NOTE: the very
+      first relaunch after updating to this build may still restore the
+      window once (stale saved state from the previous build) — quit and
+      relaunch once more before judging.
 - [ ] Resize the window down: it stops at 800 pt wide. Neither the recordings
       list (≥240) nor the transcript detail (≥320) collapses; no Auto Layout
       complaints in Console.
@@ -169,8 +172,10 @@ from before this branch works — note its `live.md` will still show the old
 
 ## 8. Divider, persistence & polish
 
-- [ ] Drag the list/detail divider; quit (⌘Q) and relaunch: the divider
-      position is restored. Window size/position restore too.
+- [ ] Drag the list/detail divider; quit (⌘Q), relaunch, and reopen the
+      window from the menubar: the divider position is restored. Window
+      size/position restore too (frame persistence is separate from the
+      disabled launch restoration).
 - [ ] System Settings → Appearance → set the accent color to e.g. orange:
       the menubar dropdown's hover highlight follows it (no hardcoded blue),
       with legible text. Check dark mode too.

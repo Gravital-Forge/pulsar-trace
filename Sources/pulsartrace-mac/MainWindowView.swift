@@ -41,30 +41,13 @@ struct MainWindowView: View {
                 .navigationTitle(navigation.section.title)
         }
         .frame(minWidth: 800, minHeight: 420)
-        .onAppear { activateOnLaunchRestore() }
-    }
-
-    /// Accessory-policy apps (no Dock icon, D27) are not activated by macOS
-    /// when a window opens, so the window SwiftUI restores at launch came up
-    /// with the app inactive — every control drawn in its greyed
-    /// window-background appearance until the user bounced focus away and
-    /// back (QA round 4). A bare `NSApp.activate()` in `onAppear` did NOT
-    /// fix it (QA round 5): at launch-restore `onAppear` runs while the app
-    /// is still finishing its launch, and the accessory launch path leaves
-    /// the app deactivated *after* that early request. Deferring one
-    /// run-loop turn lands the request after launch completes.
-    ///
-    /// Deliberately NO `makeKeyAndOrderFront` here: if the system declines
-    /// the activation (it may — there is no user interaction to back it at
-    /// launch), forcing the window key anyway produces a key window in an
-    /// inactive app. That zombie receives clicks directly, so AppKit's
-    /// click-to-activate never fires — the window stays greyed yet its
-    /// controls respond (QA round 6). Worst case without it: the restored
-    /// window comes up inactive and the user's first click activates it.
-    private func activateOnLaunchRestore() {
-        DispatchQueue.main.async {
-            NSApp.activate()
-        }
+        // Never re-presented by the system at launch — see the type's doc.
+        // Deliberately NO activation code here: this window only opens from
+        // user actions, whose activation the dropdown's open() handles. A
+        // launch-time `NSApp.activate()` from here is declined by
+        // cooperative activation anyway — no user intent backs it (QA
+        // rounds 4–7).
+        .background(WindowRestorationOptOut())
     }
 
     /// The sidebar: the section list. Deliberately brandless in-content (§3) —
