@@ -67,9 +67,15 @@ public struct AppStoppedEvent: EventPayload {
 
 // MARK: - Model-download events
 
-/// `model_downloaded` — emitted once after a whisper model is downloaded *and*
-/// its SHA-256 verified (R54d). A failed/corrupt download emits nothing — the
-/// file is deleted and the download retried; only a verified model is an event.
+/// `model_downloaded` — emitted once after a model is downloaded. The `sha256`
+/// field carries one of two identities depending on the download path:
+/// - a single-file model (e.g. a whisper `.bin`) is downloaded *and* its
+///   SHA-256 pin-verified (R54d); the field is that pin hash. A failed/corrupt
+///   download emits nothing — the file is deleted and the download retried;
+///   only a verified model is an event.
+/// - an SDK-managed CoreML bundle (Parakeet/WhisperKit) is a directory tree the
+///   SDK fetches, so there is no single-file pin to verify; the field instead
+///   carries a computed `DirectoryDigest` of the bundle tree (DECISIONS D39).
 ///
 /// `source_host` is the bare hostname (`huggingface.co`), never a full URL with
 /// query params — invariant 7 (no full paths in logs) and the no-telemetry
@@ -79,9 +85,11 @@ public struct ModelDownloadedEvent: EventPayload {
 
     /// Short model name, e.g. `base` / `large-v3`.
     public let modelName: String
-    /// Verified file size in bytes.
+    /// File size in bytes (single-file model), or total bundle-tree size
+    /// (`DirectoryDigest.totalBytes`) for an SDK-managed CoreML bundle.
     public let sizeBytes: Int
-    /// The lowercase-hex SHA-256 the file was verified against.
+    /// The lowercase-hex SHA-256: a single-file pin hash, or the bundle-tree
+    /// `DirectoryDigest` (D39) for an SDK-managed CoreML bundle.
     public let sha256: String
     /// Bare hostname the model came from (e.g. `huggingface.co`).
     public let sourceHost: String

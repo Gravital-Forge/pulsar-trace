@@ -26,6 +26,9 @@ struct ParakeetTranscriberTests {
             .deletingLastPathComponent()    // Tests
             .appendingPathComponent("Fixtures/audio/single-speaker-30s.wav")
         let samples = try WAVReader(contentsOf: fixture).samples
+        precondition(
+            samples.count >= AudioFormat.sampleRate * seconds,
+            "fixture shorter than requested window")
         return Array(samples.prefix(AudioFormat.sampleRate * seconds))
     }
 

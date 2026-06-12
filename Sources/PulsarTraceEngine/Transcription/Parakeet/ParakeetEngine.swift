@@ -54,6 +54,9 @@ public actor ParakeetEngine {
     /// `<cacheRoot>/parakeet-tdt-0.6b-v3-coreml`, keeping every PulsarTrace
     /// model under one cache root (D10). Emits `model_downloaded` with a
     /// `DirectoryDigest` after a fresh download (D39).
+    ///
+    /// Call once per process and share the returned engine; concurrent `load`
+    /// calls race the same download directory.
     public static func load(
         cacheRoot: URL,
         events: EventWriter?,
@@ -68,12 +71,15 @@ public actor ParakeetEngine {
 
         if !existedBefore, let events {
             // Best-effort: a digest failure must never fail a live session.
-            if let digest = try? DirectoryDigest.compute(at: modelDir) {
-                _ = try? await events.append(ModelDownloadedEvent(
+            do {
+                let digest = try DirectoryDigest.compute(at: modelDir)
+                _ = try await events.append(ModelDownloadedEvent(
                     modelName: modelName,
                     sizeBytes: digest.totalBytes,
                     sha256: digest.sha256,
                     sourceHost: "huggingface.co"))
+            } catch {
+                logger.warning("parakeet: model_downloaded not emitted: \(error)")
             }
         }
 
