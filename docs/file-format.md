@@ -124,7 +124,7 @@ a torn line or a partial UTF-8 character. Concretely:
   already in `live.md`.
 - A line is only appended once its words are *committed* — the streaming
   transcriber holds back unstable tail words (LocalAgreement-2: a word is
-  committed only once two consecutive whisper hypotheses agree on it), so a
+  committed only once two consecutive transcriber hypotheses agree on it), so a
   committed line never has to be revised.
 - When the post-pass runs, `final.md` **atomically replaces** `live.md`; the
   original `live.md` is preserved as `.live.md.bak`.
@@ -190,8 +190,8 @@ parsing `final.md` prose. It is a public API surface; it is written atomically
     { "label": "Unknown #1", "is_microphone": false, "speaker_id": "spk_01HW2L…" }
   ],
   "whisper_model": {
-    "name": "base",
-    "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+    "name": "large-v3-turbo",
+    "sha256": ""
   },
   "pyannote_model": {
     "id": "pyannote/speaker-diarization-community-1",
@@ -208,14 +208,14 @@ parsing `final.md` prose. It is a public API surface; it is written atomically
 | `recording_start` | string | Wall-clock recording start, ISO-8601 UTC. Mirrors the `final.md` heading. |
 | `refined_at` | string | Wall-clock start of the refine pass that produced this file, ISO-8601 UTC. |
 | `duration_seconds` | number | Audio duration (the longer of the streams). |
-| `language` | string | Transcription language whisper detected/used (ISO-639-1). |
+| `language` | string | Transcription language the refine pass detected/used (ISO-639-1). |
 | `source_basename` | string | Basename of the user-supplied `refine` input — never a full path. |
 | `speakers` | array | One entry per distinct speaker in `final.md`. |
 | `speakers[].label` | string | Transcript-facing label — the persistent library name (`Steve`, `Unknown #1`) for a system speaker; `You` for the mic stream. (Pre-Epic-5 files carry `Speaker_N`.) |
 | `speakers[].is_microphone` | boolean | `true` for the `You` (mic) speaker — never diarized (R17). |
 | `speakers[].speaker_id` | string\|null | Stable speaker-library id (`spk_<ulid>`, R83) for a reconciled system speaker. `null` for `You`, and for a speaker not reconciled (diarization skipped, or the library was unavailable). An agent keys off this id for stable identity across renames. |
-| `whisper_model.name` | string | Whisper model name (`base`, `large-v3`). |
-| `whisper_model.sha256` | string | Pinned SHA-256 of the ggml model file (its version identity). |
+| `whisper_model.name` | string | Refine-pass model name (`large-v3-turbo`, `large-v3-whisperkit`). The field name is frozen public schema (it predates the ANE move — see DECISIONS.md D39). |
+| `whisper_model.sha256` | string | Pinned SHA-256 of the model file, when the model has a pinned hash. Empty (`""`) for the SDK-managed CoreML bundles, whose identity is tracked by a directory digest instead (D39). |
 | `pyannote_model` | object\|null | pyannote model identity. `null` when diarization was skipped (e.g. no speech detected). |
 | `pyannote_model.id` | string | Model id, e.g. `pyannote/speaker-diarization-community-1`. |
 | `pyannote_model.revision` | string | Hugging Face hub commit SHA of the model checkpoint. |

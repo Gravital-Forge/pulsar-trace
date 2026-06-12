@@ -2,7 +2,7 @@
 
 **Local-only meeting transcription with speaker labels. Plug your AI agent into the file. Open source.**
 
-PulsarTrace turns a meeting recording into a clean, speaker-labeled Markdown transcript — and it never sends your audio anywhere. Transcription (whisper.cpp) and speaker diarization (pyannote) run entirely on your Mac. The output is plain Markdown and JSONL on disk, designed to be read by your AI agent of choice (Claude Code, Cursor, opencode, …) during or after the call.
+PulsarTrace turns a meeting recording into a clean, speaker-labeled Markdown transcript — and it never sends your audio anywhere. Transcription (on the Apple Neural Engine — Parakeet live, WhisperKit refine) and speaker diarization (pyannote) run entirely on your Mac. The output is plain Markdown and JSONL on disk, designed to be read by your AI agent of choice (Claude Code, Cursor, opencode, …) during or after the call.
 
 Part of the Gravital Forge product family (sibling to OrbitNote).
 
@@ -42,14 +42,14 @@ Every dominant meeting-transcription tool (Otter, Fireflies, Granola, Fathom, Zo
 
 - **macOS 14 (Sonoma) or later**, Apple Silicon strongly recommended (Metal acceleration). Intel works but is slow.
 - **Xcode 16+ / Swift 6** toolchain (`swift --version` should report 6.x).
-- **Homebrew** with `cmake`, `ffmpeg`, and `python@3.12`:
+- **Homebrew** with `ffmpeg` and `python@3.12`:
   ```bash
-  brew install cmake ffmpeg python@3.12
+  brew install ffmpeg python@3.12
   ```
 - **A free Hugging Face account + access token.** The diarization model (`pyannote/speaker-diarization-community-1`) is gated:
   1. Visit https://huggingface.co/pyannote/speaker-diarization-community-1 and accept the terms.
   2. Create a token at https://huggingface.co/settings/tokens.
-- ~4 GB free disk for models (whisper `base` ~150 MB, `large-v3` ~3 GB; pyannote ~1 GB).
+- ~3 GB free disk for models (Parakeet live ~500 MB, WhisperKit refine `large-v3-turbo` ~626 MB / `large-v3-whisperkit` ~947 MB; pyannote ~1 GB). CoreML model bundles download automatically on first use.
 
 ---
 
@@ -59,18 +59,20 @@ Every dominant meeting-transcription tool (Otter, Fireflies, Granola, Fathom, Zo
 git clone <repo-url> gravital-pulsar-trace
 cd gravital-pulsar-trace
 
-# 1. Build whisper.cpp with Metal (vendored, commit-pinned — see project-docs/DECISIONS.md D7)
-./scripts/build-whisper.sh
-
-# 2. Build the embedded Python diarization environment (pyannote, torch)
+# 1. Build the embedded Python diarization environment (pyannote, torch)
 ./python/build-venv.sh
 
-# 3. Provide your Hugging Face token
+# 2. Provide your Hugging Face token
 echo 'HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx' > .env
 
-# 4. Build the Swift binaries
+# 3. Build the Swift binaries
 swift build            # add -c release for production speed
 ```
+
+Transcription runs on the Apple Neural Engine — Parakeet (FluidAudio) for the
+live pass, WhisperKit for the refine pass. There is no native build step: the
+CoreML model bundles download automatically on first use (see
+project-docs/DECISIONS.md D39).
 
 This produces four binaries under `.build/debug/` (or `.build/release/`):
 
@@ -79,7 +81,7 @@ This produces four binaries under `.build/debug/` (or `.build/release/`):
 - **`pulsartrace-capture`** — the device-capture daemon (microphone + system audio)
 - **`pulsartrace-mac`** — the menubar app; run it as a dev `.app` via `scripts/make-dev-app.sh` (a bare `swift run` shows no menu-bar item)
 
-Whisper models download automatically on first use into `~/Library/Caches/PulsarTrace/models/`.
+Transcription models (Parakeet + WhisperKit CoreML bundles) download automatically on first use into `~/Library/Caches/PulsarTrace/models/`.
 
 ---
 
@@ -114,7 +116,7 @@ the environment is ready:
 # Convert any audio to the canonical format first if it isn't already a WAV:
 ffmpeg -i meeting.mp3 -ar 16000 -ac 1 -c:a pcm_s16le meeting.wav
 
-.build/debug/pulsartrace refine meeting.wav --model base
+.build/debug/pulsartrace refine meeting.wav
 ```
 
 This transcribes, diarizes, reconciles speakers against the library, and writes a recording folder next to the input:
@@ -125,7 +127,7 @@ meeting/
   metadata.json    ← speakers, durations, model identity
 ```
 
-Use `--model large-v3` for production-quality transcription (slower, larger download).
+Refine uses WhisperKit's `large-v3-turbo` model by default. Pass `--model large-v3-whisperkit` for the slower, larger accuracy-fallback model.
 
 ### 3. Watch a live transcript being written
 
@@ -221,7 +223,7 @@ No plugin, no API key, no SDK — just files your tools already know how to read
 |---|---|
 | `~/Library/Application Support/PulsarTrace/speakers.sqlite` | Speaker library (SQLite, WAL; `.bak` is the last-good backup) |
 | `~/Library/Application Support/PulsarTrace/events/` | Events log, JSONL, 30-day retention |
-| `~/Library/Caches/PulsarTrace/models/` | Downloaded whisper models |
+| `~/Library/Caches/PulsarTrace/models/` | Downloaded transcription models (Parakeet + WhisperKit CoreML bundles) |
 | `~/Library/Logs/PulsarTrace/` | Operational logs, daily-rotated, 7-day retention |
 | *(recording folder)* | `final.md`, `live.md`, `metadata.json`, `audio-*.wav` — written next to the input |
 
@@ -240,7 +242,7 @@ The operational log is for debugging and is safe to attach to a bug report — i
                             ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Engine (Swift)                                          │
-│   whisper.cpp (Metal)  ──▶ transcript + timestamps       │
+│   ANE ASR (Parakeet/WhisperKit) ──▶ transcript + times   │
 │   pyannote (Python)    ──▶ speaker spans + embeddings    │
 │   speaker library      ──▶ known names                   │
 │        live pass ──▶ live.md     refine pass ──▶ final.md │
@@ -249,7 +251,7 @@ The operational log is for debugging and is safe to attach to a bug report — i
 
 The engine consumes an abstract `AudioFrameSource` — it cannot tell whether frames came from a microphone, a WAV file, a Unix socket, or a pipe. This is why the whole pipeline is buildable and testable without audio hardware, and why "bring your own audio" works: pipe PCM in and you get transcripts out.
 
-- **Transcription** — whisper.cpp built with Metal, called via Swift FFI; the model stays resident.
+- **Transcription** — runs on the Apple Neural Engine: Parakeet TDT (FluidAudio) for the live pass, WhisperKit for the refine pass; the model stays resident. See [`DECISIONS.md`](project-docs/DECISIONS.md) D39.
 - **Diarization** — `pyannote.audio` 4.x (`speaker-diarization-community-1`) in an embedded Python subprocess.
 - **Speaker library** — SQLite with WAL journaling; voices matched by cosine similarity of pyannote embeddings, centroids refined by a running mean across appearances.
 
@@ -269,12 +271,10 @@ Sources/pulsartrace/         The `pulsartrace` CLI
 Sources/pulsartrace-engine/  The streaming engine binary
 Sources/pulsartrace-capture/ The device-capture daemon binary
 Sources/pulsartrace-mac/     The menubar app (SwiftUI MenuBarExtra)
-Sources/CWhisper/            whisper.cpp C-API system-library wrapper
 python/pulsartrace-ai/       Embedded Python — pyannote diarization
 python/build-venv.sh         Builds the embedded Python environment
 Tests/                       Unit / Pipeline / Capture / MenuBar test targets
                              + fixtures
-scripts/build-whisper.sh     Vendors + builds whisper.cpp
 scripts/make-dev-app.sh      Wraps `pulsartrace-mac` in a launchable dev `.app`
 docs/                        file-format.md, events-schema.md, release-smoke-test.md
 project-docs/                PRD.md, PLAN.md, DECISIONS.md — requirements,
@@ -287,13 +287,13 @@ project-docs/                PRD.md, PLAN.md, DECISIONS.md — requirements,
 
 ```bash
 swift test --filter Unit       # pure logic — fast, deterministic, no devices
-swift test --filter Pipeline   # end-to-end on fixture audio (real whisper + pyannote)
+swift test --filter Pipeline   # end-to-end on fixture audio (real ANE ASR + pyannote)
 swift test --filter Capture    # real-device tests; skip cleanly when no audio hardware
 swift test --filter MenuBar    # menubar ViewModels — settings, scanner, speaker editor
 ( cd python/pulsartrace-ai && .venv/bin/pytest )   # Python diarization layer
 ```
 
-Pipeline tests run the real models against committed audio fixtures and snapshot the generated transcripts, so a regression in output format shows up as a text diff. Tests are deterministic (whisper temperature 0, seeded RNG, pinned model hashes). See [`docs/release-smoke-test.md`](docs/release-smoke-test.md) for the manual pre-release checklist.
+Pipeline tests run the real models (Parakeet / WhisperKit on the ANE, pyannote) against committed audio fixtures and assert on distinctive fixture keywords, so a regression in output shows up as a failed assertion. See [`docs/release-smoke-test.md`](docs/release-smoke-test.md) for the manual pre-release checklist.
 
 ---
 
@@ -310,7 +310,7 @@ v0.1 (offline pipeline + streaming), real device capture, the full CLI, and the 
 
 ## Privacy
 
-Your audio never leaves your Mac. There is no telemetry, no analytics, no crash reporting that phones home, and no auto-update version checks. The **only** outbound network calls are first-launch model downloads — whisper models and the pyannote model, both from Hugging Face. After that, PulsarTrace works fully offline.
+Your audio never leaves your Mac. There is no telemetry, no analytics, no crash reporting that phones home, and no auto-update version checks. The **only** outbound network calls are first-launch model downloads — the transcription models (Parakeet + WhisperKit CoreML bundles) and the pyannote model, all from Hugging Face. After that, PulsarTrace works fully offline.
 
 The same posture holds on disk: transcripts, recordings, `metadata.json`, the events log, and the speaker library are written readable by your user account only (`0600` files, `0700` for the directories PulsarTrace creates), and looser permissions left behind by older versions are repaired. The Unix sockets PulsarTrace's own processes use to move audio between them verify that the connecting peer is the same user and reject anyone else.
 
@@ -320,4 +320,4 @@ The same posture holds on disk: transcripts, recordings, `metadata.json`, the ev
 
 MIT — see [`LICENSE`](LICENSE).
 
-PulsarTrace builds on excellent open-source work: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT), [pyannote.audio](https://github.com/pyannote/pyannote-audio) (MIT), [PyTorch](https://github.com/pytorch/pytorch) (BSD), and [swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing) (MIT). The `speaker-diarization-community-1` model is distributed by pyannote under its own terms.
+PulsarTrace builds on excellent open-source work: [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0, runs Parakeet TDT on the ANE), [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift) (MIT), [pyannote.audio](https://github.com/pyannote/pyannote-audio) (MIT), [PyTorch](https://github.com/pytorch/pytorch) (BSD), and [swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing) (MIT). The `parakeet-tdt-0.6b-v3` model is distributed under CC-BY-4.0; the `speaker-diarization-community-1` model is distributed by pyannote under its own terms.
