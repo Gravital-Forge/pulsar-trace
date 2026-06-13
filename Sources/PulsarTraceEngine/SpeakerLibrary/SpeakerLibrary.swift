@@ -204,24 +204,54 @@ public actor SpeakerLibrary {
     /// - v1: initial `speakers` + `appearances` schema.
     /// - v2: adds `speakers.delisted_at` ("Don't recognize this speaker"
     ///   tombstone) and its index. The base CREATE on a fresh DB already
-    ///   includes the column; the migration runs `ALTER TABLE` for an
+    ///   includes the column; the migration ran `ALTER TABLE` for an
     ///   existing v1 database.
-    private static let schemaVersion: Int32 = 2
+    /// - v3: D40 — diarization moved to FluidAudio/WeSpeaker embeddings.
+    ///   `pyannote_model_revision` → `model_revision`, and a pre-v3 database
+    ///   is archived to `speakers.sqlite.pre-v3.bak` and reset: pyannote-space
+    ///   centroids can never match WeSpeaker embeddings, so carrying the rows
+    ///   forward would only accumulate permanently-dead entries.
+    private static let schemaVersion: Int32 = 3
 
     private static func migrate(_ db: SQLiteDatabase) throws {
+        // v2 → v3 (D40): the embedding space changed (pyannote → WeSpeaker), so
+        // every stored centroid is permanently unmatchable. Archive the whole
+        // database file and start fresh rather than carrying dead rows.
+        //
+        // `VACUUM INTO` cannot run inside a transaction, so this archive-and-
+        // reset step lives BEFORE the DDL transaction below. `PRAGMA
+        // table_info` on a missing table returns no rows, so a fresh database
+        // (no `speakers` table yet) skips this entirely. The old
+        // `pyannote_model_revision` column is the marker for any pre-v3 schema
+        // (it existed in both v1 and v2), so a v1 database is archived and
+        // reset here too.
+        let preV3Columns = try db.query("PRAGMA table_info(speakers);")
+            .compactMap { $0.string(1) }
+        if preV3Columns.contains("pyannote_model_revision") {
+            let archiveURL = db.url.deletingLastPathComponent()
+                .appendingPathComponent("speakers.sqlite.pre-v3.bak")
+            try? FileManager.default.removeItem(at: archiveURL)
+            let escapedPath = archiveURL.path
+                .replacingOccurrences(of: "'", with: "''")
+            try db.exec("VACUUM INTO '\(escapedPath)';")
+            try db.exec("""
+                DROP TABLE IF EXISTS appearances;
+                DROP TABLE IF EXISTS speakers;
+                """)
+        }
+
         // Schema creation runs inside one transaction so it is atomic — a
         // crash mid-`migrate` leaves the database fully unmigrated rather
         // than half-built (S1).
         try db.transaction {
-            // `pyannote_model_revision` is per-row so a model upgrade
-            // (Open Q #3) can coexist with old centroids without
-            // cross-matching them.
+            // `model_revision` is per-row so a model upgrade (Open Q #3 / D40)
+            // can coexist with old centroids without cross-matching them.
             try db.exec("""
                 CREATE TABLE IF NOT EXISTS speakers (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     centroid BLOB NOT NULL,
-                    pyannote_model_revision TEXT NOT NULL,
+                    model_revision TEXT NOT NULL,
                     appearance_count INTEGER NOT NULL DEFAULT 0,
                     last_seen TEXT NOT NULL,
                     sample_audio_path TEXT,
@@ -251,26 +281,9 @@ public actor SpeakerLibrary {
                     ON appearances(speaker_id);
                 CREATE INDEX IF NOT EXISTS idx_speakers_live
                     ON speakers(deleted_at);
+                CREATE INDEX IF NOT EXISTS idx_speakers_delisted_at
+                    ON speakers(delisted_at);
                 """)
-
-            // v1 → v2: add `delisted_at` if a pre-v2 database is missing it.
-            // SQLite has no `ADD COLUMN IF NOT EXISTS`, so probe via
-            // `PRAGMA table_info` and ALTER conditionally. The CREATE TABLE
-            // above is a no-op on existing v1 databases (IF NOT EXISTS), so
-            // the column is genuinely absent there until this ALTER runs.
-            // The `delisted_at` index MUST come after the ALTER — on a v1
-            // database the column does not yet exist and `CREATE INDEX ...
-            // ON speakers(delisted_at)` would error before the conditional
-            // ALTER below could run.
-            let columns = try db.query("PRAGMA table_info(speakers);")
-                .compactMap { $0.string(1) }
-            if !columns.contains("delisted_at") {
-                try db.exec(
-                    "ALTER TABLE speakers ADD COLUMN delisted_at TEXT;")
-            }
-            try db.exec(
-                "CREATE INDEX IF NOT EXISTS idx_speakers_delisted_at "
-                    + "ON speakers(delisted_at);")
         }
         // Record the applied schema version (S3) so a future schema migration
         // knows what is in place. `user_version` is a connection-level pragma, not
@@ -369,8 +382,8 @@ public actor SpeakerLibrary {
     ///
     /// Cosine similarity in memory over every live speaker — fast even at
     /// ~10k speakers (256-d dot product × N). A centroid from a *different*
-    /// `pyannote_model_revision` is not comparable and is skipped entirely
-    /// (Open Question #3): a returning speaker recorded under a new model
+    /// `model_revision` is not comparable and is skipped entirely
+    /// (Open Question #3 / D40): a returning speaker recorded under a new model
     /// checkpoint becomes a fresh `Unknown #N` rather than a false match.
     ///
     /// - Returns: the best match at or above `threshold`, else `nil`.
@@ -381,7 +394,7 @@ public actor SpeakerLibrary {
     ) throws -> SpeakerMatch? {
         var best: SpeakerMatch?
         for speaker in try liveSpeakers() {
-            guard speaker.pyannoteModelRevision == modelRevision else { continue }
+            guard speaker.modelRevision == modelRevision else { continue }
             let similarity = Centroid.cosineSimilarity(speaker.centroid, centroid)
             if similarity >= threshold,
                similarity > (best?.similarity ?? -1) {
@@ -412,7 +425,7 @@ public actor SpeakerLibrary {
         let id = "spk_\(ulidFactory(now).value)"
         let speaker = Speaker(
             id: id, name: name, centroid: centroid,
-            pyannoteModelRevision: modelRevision,
+            modelRevision: modelRevision,
             appearanceCount: 1, lastSeen: nowStamp,
             sampleAudioPath: sampleAudioPath,
             createdAt: nowStamp, deletedAt: nil)
@@ -453,9 +466,9 @@ public actor SpeakerLibrary {
         }
         // Open Question #3: refuse to average a cross-revision embedding into a
         // centroid — the vectors are not comparable.
-        guard speaker.pyannoteModelRevision == modelRevision else {
+        guard speaker.modelRevision == modelRevision else {
             throw LibraryError.modelRevisionMismatch(
-                stored: speaker.pyannoteModelRevision, incoming: modelRevision)
+                stored: speaker.modelRevision, incoming: modelRevision)
         }
         // Idempotency on a re-refine of the same recording (SW1): if this
         // recording's appearance is already recorded for this speaker, the
@@ -700,9 +713,9 @@ public actor SpeakerLibrary {
         guard let other = try speaker(id: otherId), !other.isDeleted else {
             throw LibraryError.speakerNotFound(otherId)
         }
-        guard primary.pyannoteModelRevision == other.pyannoteModelRevision else {
+        guard primary.modelRevision == other.modelRevision else {
             throw LibraryError.notMergeable(
-                "speakers have different pyannote model revisions")
+                "speakers have different model revisions")
         }
         // Equal model revision does not guarantee equal centroid dimensions;
         // guard explicitly so the weighted-sum loop can never read out of
@@ -863,7 +876,7 @@ public actor SpeakerLibrary {
         // appearance refines it via the running mean.
         let newSpeaker = Speaker(
             id: newId, name: newName, centroid: original.centroid,
-            pyannoteModelRevision: original.pyannoteModelRevision,
+            modelRevision: original.modelRevision,
             appearanceCount: 0, lastSeen: nowStamp,
             sampleAudioPath: nil, createdAt: nowStamp, deletedAt: nil)
         do {
@@ -955,7 +968,7 @@ public actor SpeakerLibrary {
         let rows: [SQLiteDatabase.Row]
         do {
             rows = try database.query(
-                "SELECT id, name, centroid, pyannote_model_revision, "
+                "SELECT id, name, centroid, model_revision, "
                     + "appearance_count, last_seen, sample_audio_path, "
                     + "created_at, deleted_at, delisted_at FROM speakers "
                     + clause,
@@ -972,7 +985,7 @@ public actor SpeakerLibrary {
                   let createdAt = row.string(7) else { return nil }
             return Speaker(
                 id: id, name: name, centroid: centroid,
-                pyannoteModelRevision: revision,
+                modelRevision: revision,
                 appearanceCount: Int(count), lastSeen: lastSeen,
                 sampleAudioPath: row.string(6),
                 createdAt: createdAt,
@@ -983,14 +996,14 @@ public actor SpeakerLibrary {
 
     private func insert(_ speaker: Speaker) throws {
         try database.run(
-            "INSERT INTO speakers (id, name, centroid, pyannote_model_revision, "
+            "INSERT INTO speakers (id, name, centroid, model_revision, "
                 + "appearance_count, last_seen, sample_audio_path, created_at, "
                 + "deleted_at, delisted_at) "
                 + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 .text(speaker.id), .text(speaker.name),
                 .blob(Centroid.encodeBlob(speaker.centroid)),
-                .text(speaker.pyannoteModelRevision),
+                .text(speaker.modelRevision),
                 .int(Int64(speaker.appearanceCount)),
                 .text(speaker.lastSeen),
                 speaker.sampleAudioPath.map { .text($0) } ?? .null,

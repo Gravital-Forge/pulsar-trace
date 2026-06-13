@@ -7,11 +7,11 @@ import Foundation
 /// not the generic `Them?`.
 ///
 /// This exercises the exact wiring fixed in review item SW-B: `LiveRunner`
-/// must pass the live diarizer's *real* pyannote model revision to
+/// must pass the live diarizer's *real* model revision to
 /// `SpeakerLibrary.bestMatch`. `bestMatch` skips any library speaker whose
-/// `pyannoteModelRevision` does not equal the one passed in (Open Question
-/// #3) — so with the old hardcoded `""` the lookup matched nothing and R18
-/// was dead. These tests prove the lookup now fires, and that the revision
+/// `modelRevision` does not equal the one passed in (Open Question
+/// #3 / D40) — so with the old hardcoded `""` the lookup matched nothing and
+/// R18 was dead. These tests prove the lookup now fires, and that the revision
 /// scoping is real (a mismatched revision still falls back to `Them`).
 ///
 /// No Python subprocess: `LiveDiarizer._seedForTesting` pre-seeds the running

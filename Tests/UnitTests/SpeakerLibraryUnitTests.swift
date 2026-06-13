@@ -668,7 +668,7 @@ struct SpeakerLibraryUnitTests {
             Speaker(
                 id: "spk_seed\(i)", name: "Unknown #\(i + 1)",
                 centroid: syntheticEmbedding(axis: i),
-                pyannoteModelRevision: "r", appearanceCount: 1,
+                modelRevision: "r", appearanceCount: 1,
                 lastSeen: now, sampleAudioPath: nil, createdAt: now)
         }
         try await library.bulkInsertForTesting(seeded)
@@ -700,20 +700,21 @@ struct SpeakerLibraryUnitTests {
 
     // MARK: - Schema migration
 
-    @Test("v1 → v2: adds `delisted_at` column + index to a pre-existing v1 database")
-    func v1ToV2MigrationAddsDelistedAt() async throws {
+    /// v2 → v3 (D40): the embedding space changed from pyannote to WeSpeaker,
+    /// so every stored centroid is permanently unmatchable. Opening a pre-v3
+    /// database must archive the whole file to `speakers.sqlite.pre-v3.bak`
+    /// and start fresh rather than carry dead rows forward.
+    @Test func preV3DatabaseIsArchivedAndReset() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let dbURL = dir.appendingPathComponent("speakers.sqlite")
 
-        // Hand-build a v1-shaped DB (no `delisted_at` column, no
-        // `idx_speakers_delisted_at` index). Pre-fix this exact shape made
-        // SpeakerLibrary init fail: the CREATE INDEX on `delisted_at` ran
-        // inside the migration's multi-statement exec BEFORE the conditional
-        // ALTER could add the column.
+        // Build a v2-shaped database by hand: the CURRENT (v2) CREATE TABLE
+        // statements verbatim, but with the old `pyannote_model_revision`
+        // column name. user_version 2, one speaker row.
         do {
-            let db = try SQLiteDatabase(url: dbURL)
-            try db.exec("""
+            let old = try SQLiteDatabase(url: dbURL)
+            try old.exec("""
                 CREATE TABLE speakers (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -723,42 +724,67 @@ struct SpeakerLibraryUnitTests {
                     last_seen TEXT NOT NULL,
                     sample_audio_path TEXT,
                     created_at TEXT NOT NULL,
-                    deleted_at TEXT
+                    deleted_at TEXT,
+                    delisted_at TEXT
                 );
                 CREATE TABLE appearances (
-                    speaker_id TEXT NOT NULL REFERENCES speakers(id) ON DELETE RESTRICT,
+                    speaker_id TEXT NOT NULL
+                        REFERENCES speakers(id) ON DELETE RESTRICT,
                     recording_id TEXT NOT NULL,
                     recording_folder_name TEXT NOT NULL,
                     observed_at TEXT NOT NULL,
                     origin_speaker_id TEXT,
                     PRIMARY KEY (speaker_id, recording_id)
                 );
-                CREATE INDEX idx_appearances_speaker ON appearances(speaker_id);
-                CREATE INDEX idx_speakers_live ON speakers(deleted_at);
+                INSERT INTO speakers VALUES ('spk_OLD', 'Steve', x'00000000',
+                    'deadbeef', 1, '2026-01-01T00:00:00Z', NULL,
+                    '2026-01-01T00:00:00Z', NULL, NULL);
                 """)
-            try db.setUserVersion(1)
+            try old.setUserVersion(2)
+            old.close()
         }
 
-        // Open through SpeakerLibrary — the v1 → v2 migration should run and
-        // succeed. Before the fix the multi-statement DDL exec ran
-        // `CREATE INDEX ... ON speakers(delisted_at)` against a v1 table
-        // that did not yet have the column, throwing.
         let factory = DeterministicULIDFactory(seed: 0xC0DE)
-        _ = try await SpeakerLibrary(
-            databaseURL: dbURL,
+        let library = try await SpeakerLibrary(
+            databaseURL: dbURL, events: nil,
             clock: { Date(timeIntervalSince1970: 1_777_000_000) },
             ulidFactory: { factory.make($0) })
 
-        // Verify post-migration shape against the same DB file.
+        // Fresh library: the pyannote-space speaker is gone…
+        #expect(try await library.liveSpeakers().isEmpty)
+        // …and the old data is archived next to the database.
+        let archive = dbURL.deletingLastPathComponent()
+            .appendingPathComponent("speakers.sqlite.pre-v3.bak")
+        #expect(FileManager.default.fileExists(atPath: archive.path))
+
+        // Post-reset shape: the renamed column is present, the old one is gone,
+        // and the schema version advanced to 3.
         let probe = try SQLiteDatabase(url: dbURL)
         let columns = try probe.query("PRAGMA table_info(speakers);")
             .compactMap { $0.string(1) }
-        #expect(columns.contains("delisted_at"))
-        let indexes = try probe.query(
-            "SELECT name FROM sqlite_master "
-                + "WHERE type='index' AND tbl_name='speakers';")
-            .compactMap { $0.string(0) }
-        #expect(indexes.contains("idx_speakers_delisted_at"))
-        #expect(probe.userVersion == 2)
+        #expect(columns.contains("model_revision"))
+        #expect(!columns.contains("pyannote_model_revision"))
+        #expect(probe.userVersion == 3)
+    }
+
+    /// Re-opening an already-v3 database must not re-archive — the migration
+    /// runs exactly once. (A fresh library is v3 after its first open.)
+    @Test func v3DatabaseReopenDoesNotReArchive() async throws {
+        let (library, dir) = try await makeLibrary()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbURL = dir.appendingPathComponent("speakers.sqlite")
+        let archive = dir.appendingPathComponent("speakers.sqlite.pre-v3.bak")
+
+        // A brand-new library starts at v3 — no pre-v3 archive should exist.
+        #expect(!FileManager.default.fileExists(atPath: archive.path))
+        _ = library
+
+        // Re-open the same v3 database: still no archive.
+        let factory = DeterministicULIDFactory(seed: 0x1234)
+        _ = try await SpeakerLibrary(
+            databaseURL: dbURL, events: nil,
+            clock: { Date(timeIntervalSince1970: 1_777_000_000) },
+            ulidFactory: { factory.make($0) })
+        #expect(!FileManager.default.fileExists(atPath: archive.path))
     }
 }

@@ -43,10 +43,16 @@ final class SQLiteDatabase {
 
     private var handle: OpaquePointer?
 
+    /// The on-disk path this connection was opened against. Exposed so the
+    /// schema migration can locate sibling files (e.g. the pre-v3 archive
+    /// written next to the database).
+    let url: URL
+
     /// Open (creating if absent) the database at `url` in WAL journal mode
     /// (R32a). Throws `SQLiteError.open` on a connection failure — the caller
     /// (`SpeakerLibrary`) treats that as corruption and restores from backup.
     init(url: URL) throws {
+        self.url = url
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
         let rc = sqlite3_open_v2(url.path, &handle, flags, nil)
         guard rc == SQLITE_OK, handle != nil else {
@@ -83,6 +89,14 @@ final class SQLiteDatabase {
 
     deinit {
         if let handle { sqlite3_close_v2(handle) }
+    }
+
+    /// Eagerly close the connection (releasing the WAL/SHM locks) rather than
+    /// waiting for `deinit`. Idempotent — safe to call more than once, and the
+    /// `deinit` becomes a no-op afterwards.
+    func close() {
+        if let handle { sqlite3_close_v2(handle) }
+        handle = nil
     }
 
     /// Run one or more statements with no result rows / no bindings.

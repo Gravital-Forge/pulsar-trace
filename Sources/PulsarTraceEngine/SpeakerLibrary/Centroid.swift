@@ -2,12 +2,12 @@ import Foundation
 
 /// Centroid vector math for the speaker library (R30, R22).
 ///
-/// A speaker's *centroid* is the running mean of every pyannote embedding ever
+/// A speaker's *centroid* is the running mean of every embedding ever
 /// attributed to them. Matching a new recording's cluster to the library is a
 /// cosine-similarity lookup; refining a returning speaker is a
-/// count-weighted running-mean update. All vectors are pyannote community-1
-/// 256-d embeddings and are only comparable within one `pyannote_model_revision`
-/// (Open Question #3 — `SpeakerLibrary` refuses cross-revision matches).
+/// count-weighted running-mean update. All vectors are WeSpeaker
+/// 256-d embeddings and are only comparable within one `model_revision`
+/// (Open Question #3 / D40 — `SpeakerLibrary` refuses cross-revision matches).
 public enum Centroid {
 
     /// Cosine similarity of two equal-length vectors, in `[-1, 1]`.
