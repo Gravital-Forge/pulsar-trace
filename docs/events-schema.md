@@ -129,9 +129,9 @@ exactly one model is now cached and ready.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `model_name` | string | Short model name, e.g. `parakeet-v3`, `large-v3-turbo`. |
+| `model_name` | string | Short model name, e.g. `parakeet-v3`, `large-v3-turbo`, `speaker-diarization-coreml`. |
 | `size_bytes` | integer | Total size of the model bundle in bytes. |
-| `sha256` | string | Lowercase-hex SHA-256 — a computed directory digest of the model bundle (deterministic hash over relative paths + per-file hashes, D39). |
+| `sha256` | string | Lowercase-hex SHA-256 — a computed directory digest of the model bundle (deterministic hash over relative paths + per-file hashes, D39/D40). |
 | `source_host` | string | Bare hostname the model came from, e.g. `huggingface.co`. Never a full URL — no query params, no path (privacy + no-telemetry). |
 
 ```jsonl
