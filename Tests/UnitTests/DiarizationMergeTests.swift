@@ -20,7 +20,6 @@ struct DiarizationMergeTests {
     ) -> DiarizationResult {
         DiarizationResult(
             model: "pyannote/speaker-diarization-community-1",
-            modelVersion: "4.0.4",
             audioDuration: .seconds(60),
             speakers: speakers,
             spans: spans.map {
@@ -29,7 +28,6 @@ struct DiarizationMergeTests {
                     start: .milliseconds(Int($0.1 * 1000)),
                     end: .milliseconds(Int($0.2 * 1000)))
             },
-            exclusiveSpans: [],
             embeddings: []
         )
     }

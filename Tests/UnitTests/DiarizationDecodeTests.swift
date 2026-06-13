@@ -17,10 +17,8 @@ struct DiarizationDecodeTests {
         let result = try DiarizationDecoder.decode(data)
 
         #expect(result.model == "pyannote/speaker-diarization-community-1")
-        #expect(!result.modelVersion.isEmpty)
         #expect(result.speakers == ["SPEAKER_00", "SPEAKER_01"])
         #expect(result.spans.count >= 2)
-        #expect(result.exclusiveSpans.count >= 1)
 
         // R29: per-speaker embeddings, 256-d, one per speaker.
         #expect(result.embeddings.count == 2)

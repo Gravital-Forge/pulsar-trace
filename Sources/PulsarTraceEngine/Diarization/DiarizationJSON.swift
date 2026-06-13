@@ -97,11 +97,9 @@ enum DiarizationDecoder {
         return DiarizationResult(
             model: payload.model,
             modelRevision: payload.modelRevision ?? "",
-            modelVersion: payload.modelVersion,
             audioDuration: durationFromSeconds(payload.audioDuration),
             speakers: payload.speakers,
             spans: payload.spans.map(span(from:)),
-            exclusiveSpans: payload.exclusiveSpans.map(span(from:)),
             embeddings: payload.embeddings
                 .map { SpeakerEmbedding(speaker: $0.key, vector: $0.value.map(Float.init)) }
                 .sorted { $0.speaker < $1.speaker }

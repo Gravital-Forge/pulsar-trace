@@ -188,11 +188,10 @@ enum TranscriptAssembly {
                 isMicrophone: label == "You",
                 speakerId: speakerIdByLabel[label])
         }
-        let pyannote = diarization.map {
-            RefinementMetadata.PyannoteModelInfo(
+        let diarizationModel = diarization.map {
+            RefinementMetadata.DiarizationModelInfo(
                 id: $0.model,
-                revision: $0.modelRevision,
-                libraryVersion: $0.modelVersion)
+                revision: $0.modelRevision)
         }
         return RefinementMetadata(
             recordingId: folder.recordingId,
@@ -201,7 +200,7 @@ enum TranscriptAssembly {
             durationSeconds: audioDurationSeconds,
             speakers: speakerEntries,
             whisperModel: .init(name: whisperModelName, sha256: whisperModelSHA256),
-            pyannoteModel: pyannote,
+            diarizationModel: diarizationModel,
             language: language,
             sourceBasename: sourceBasename)
     }

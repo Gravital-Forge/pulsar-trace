@@ -55,7 +55,7 @@ struct FinalMarkdownRewriterTests {
                 .init(label: "You", isMicrophone: true, speakerId: nil),
             ],
             whisperModel: .init(name: "base", sha256: "deadbeef"),
-            pyannoteModel: nil,
+            diarizationModel: nil,
             language: "en",
             sourceBasename: "meeting.wav").encoded()
     }
@@ -388,7 +388,7 @@ struct FinalMarkdownRewriterTests {
                 .init(label: "Steve", isMicrophone: false, speakerId: "spk_y"),
             ],
             whisperModel: .init(name: "base", sha256: "deadbeef"),
-            pyannoteModel: nil,
+            diarizationModel: nil,
             language: "en",
             sourceBasename: "meeting.wav").encoded()
         try stale.write(to: folder.appendingPathComponent(
@@ -638,7 +638,7 @@ struct FinalMarkdownRewriterTests {
             speakers: [.init(label: "Unknown #6", isMicrophone: false,
                              speakerId: "spk_aaa")],
             whisperModel: .init(name: "base", sha256: "deadbeef"),
-            pyannoteModel: nil, language: "en",
+            diarizationModel: nil, language: "en",
             sourceBasename: "solo.wav").encoded()
         try solo.write(
             to: folder.appendingPathComponent(RecordingFolder.FileName.metadata))

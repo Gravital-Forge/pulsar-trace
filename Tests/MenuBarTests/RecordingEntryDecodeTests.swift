@@ -42,7 +42,7 @@ struct RecordingEntryDecodeTests {
                 .init(label: "You", isMicrophone: true, speakerId: nil),
             ],
             whisperModel: .init(name: "base", sha256: "deadbeef"),
-            pyannoteModel: nil,
+            diarizationModel: nil,
             language: "en",
             sourceBasename: "standup.wav")
         try metadata.encoded().write(

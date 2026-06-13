@@ -101,7 +101,7 @@ struct DiarizationE2ETests {
 
         // The JSON contract the Swift Diarizer decodes.
         #expect(result.model == "pyannote/speaker-diarization-community-1")
-        #expect(!result.modelVersion.isEmpty)
+        #expect(!result.modelRevision.isEmpty)
         #expect(result.speakers.count == 2)
         #expect(!result.spans.isEmpty)
         #expect(result.embeddings.count == 2)

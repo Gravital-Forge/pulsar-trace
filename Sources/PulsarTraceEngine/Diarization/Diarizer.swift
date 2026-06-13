@@ -204,9 +204,8 @@ public actor Diarizer {
             let result = try DiarizationDecoder.decode(captured.stdout)
             let speakerCount = result.speakers.count
             let spanCount = result.spans.count
-            let version = result.modelVersion
             logger.notice(
-                "offline diarization complete: \(speakerCount) speaker(s), \(spanCount) span(s), model \(version)")
+                "offline diarization complete: \(speakerCount) speaker(s), \(spanCount) span(s)")
             return result
         } catch {
             throw DiarizeError.decodeFailed(String(describing: error))

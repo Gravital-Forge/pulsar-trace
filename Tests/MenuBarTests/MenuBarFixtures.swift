@@ -79,7 +79,7 @@ enum MenuBarFixtures {
                 .init(label: $0, isMicrophone: $0 == "You", speakerId: nil)
             },
             whisperModel: .init(name: "base", sha256: "deadbeef"),
-            pyannoteModel: nil,
+            diarizationModel: nil,
             language: "en",
             sourceBasename: "\(name).wav")
         try metadata.encoded().write(

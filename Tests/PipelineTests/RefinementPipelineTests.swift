@@ -147,7 +147,7 @@ struct RefinementPipelineTests {
             from: Data(contentsOf: output.metadataURL))
         #expect(metadata.recordingId == "rec_two-speakers-alternating")
         #expect(metadata.whisperModel.name == "large-v3-turbo")
-        #expect(metadata.pyannoteModel?.id
+        #expect(metadata.diarizationModel?.id
             == "pyannote/speaker-diarization-community-1")
         #expect(metadata.speakers.count == 2)
         #expect(metadata.language == "en")
@@ -294,11 +294,11 @@ struct RefinementPipelineTests {
         #expect(output.speakers.isEmpty)
 
         // metadata.json is still written; diarization was skipped so the
-        // pyannote model field is absent.
+        // diarization model field is absent.
         let metadata = try JSONDecoder().decode(
             RefinementMetadata.self,
             from: Data(contentsOf: output.metadataURL))
-        #expect(metadata.pyannoteModel == nil)
+        #expect(metadata.diarizationModel == nil)
         #expect(metadata.speakers.isEmpty)
     }
 
@@ -328,11 +328,9 @@ struct RefinementPipelineTests {
             speaker: "SPEAKER_00", start: .seconds(14), end: .seconds(24))
         let diarization = DiarizationResult(
             model: "test-precomputed",
-            modelVersion: "test",
             audioDuration: .seconds(26),
             speakers: ["SPEAKER_00"],
             spans: [systemSpan],
-            exclusiveSpans: [systemSpan],
             embeddings: [])
 
         let pipeline = RefinementPipeline()
