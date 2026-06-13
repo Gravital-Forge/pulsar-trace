@@ -123,3 +123,28 @@ struct DiarizationE2ETests {
         }
     }
 }
+
+/// Coverage of the resident `DiarizerEngine` (D40): it loads the FluidAudio
+/// community-1 CoreML stack once per process and reports a stable content
+/// digest as its `modelRevision`. First run downloads the
+/// `speaker-diarization` bundles (~21 MB) into the standard cache root;
+/// subsequent runs are offline.
+@Suite("DiarizationE2E engine load", .serialized)
+struct DiarizationE2EEngineTests {
+
+    @Test func loadsAndReportsContentRevision() async throws {
+        let engine = try await DiarizerTestEngine.shared()
+        let revision = engine.modelRevision
+        #expect(revision.count == 64)   // SHA-256 hex
+        let allHex = revision.allSatisfy { $0.isHexDigit }
+        #expect(allHex)
+    }
+
+    @Test func revisionIsStableAcrossLoads() async throws {
+        let first = try await DiarizerTestEngine.shared()
+        let second = try await DiarizerEngine.load(
+            cacheRoot: AppPaths.standard.modelsCacheDirectory,
+            events: nil)
+        #expect(first.modelRevision == second.modelRevision)
+    }
+}
