@@ -82,13 +82,10 @@ struct RefinementPipelineTests {
         // R38: the final-pass marker is the first line.
         #expect(markdown.hasPrefix("<!-- pulsartrace:final -->\n"))
         #expect(markdown.contains("## Transcript — "))
-        // R13 utterance lines carry diarized Speaker_N labels. Exact speaker
-        // *count* (2-speaker separation on this clip) is gated on Task 7
-        // threshold calibration — see `DiarizationE2ETests.twoSpeakersSeparate`;
-        // with the default config the FluidAudio clustering collapses this
-        // synthetic clip to a single speaker, so the transcript carries
-        // `Speaker_0` only. We assert the label flows through, not the count.
+        // R13 utterance lines carry diarized Speaker_N labels — both voices
+        // of the alternating clip (separation tuned in DiarizerEngine, D40).
         #expect(markdown.contains("] Speaker_0:**"))
+        #expect(markdown.contains("] Speaker_1:**"))
         // A bare WAV has no mic stream — no "You" label.
         #expect(!markdown.contains("] You:**"))
 

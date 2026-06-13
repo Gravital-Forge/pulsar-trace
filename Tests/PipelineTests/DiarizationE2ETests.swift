@@ -20,10 +20,10 @@ struct DiarizationE2ETests {
     }
 
     /// Structural shape of a real diarization on the two-speaker clip — the
-    /// invariants that hold regardless of how the (still-uncalibrated, D40)
-    /// clustering partitions speakers: non-empty 256-d per-speaker embeddings,
-    /// a 64-hex content-digest revision, and spans covering a meaningful share
-    /// of the clip.
+    /// invariants that hold regardless of how the clustering partitions
+    /// speakers: non-empty 256-d per-speaker embeddings, a 64-hex
+    /// content-digest revision, and spans covering a meaningful share of the
+    /// clip. (Speaker count is `twoSpeakersSeparate`'s job.)
     @Test func twoSpeakersAlternatingShape() async throws {
         let engine = try await DiarizerTestEngine.shared()
         let result = try await engine.diarize(
@@ -41,14 +41,11 @@ struct DiarizationE2ETests {
     }
 
     /// The two synthetic ElevenLabs voices in `two-speakers-alternating.wav`
-    /// MUST separate into 2 speakers. With the default `OfflineDiarizerConfig`
-    /// thresholds the WeSpeaker/VBx clustering collapses them into 1 centroid
-    /// (observed: warm-start 3 clusters → 1, mixture weights min≈9.7e-18) —
-    /// the WeSpeaker embedding space is not the pyannote space the defaults
-    /// were tuned for. Re-enabled by Task 7 (threshold calibration), which
-    /// owns picking the clustering threshold that makes this clip resolve.
-    @Test(.disabled("speaker separation pending Task 7 threshold calibration for the WeSpeaker space"))
-    func twoSpeakersSeparate() async throws {
+    /// MUST separate into 2 speakers. FluidAudio's default VBx evidence
+    /// weight (Fa 0.07) collapses them on clips this short; `DiarizerEngine`
+    /// raises it to 0.2 (D40) — see the engine's config comment for the
+    /// measured separability numbers.
+    @Test func twoSpeakersSeparate() async throws {
         let engine = try await DiarizerTestEngine.shared()
         let result = try await engine.diarize(
             wavPath: fixtureURL("two-speakers-alternating"))
@@ -75,12 +72,11 @@ struct DiarizationE2ETests {
     @Test func diarizerActorEndToEnd() async throws {
         // Through the production `Diarizer` actor (lazy engine load path):
         // proves the in-process actor reaches the engine and returns a
-        // well-formed result. Speaker *count* is not asserted here — the
-        // two-speaker separation is gated on Task 7 (see `twoSpeakersSeparate`).
+        // well-formed result.
         let diarizer = Diarizer(configuration: .init())
         let result = try await diarizer.diarizeSystemStream(
             wavPath: fixtureURL("two-speakers-alternating"))
-        #expect(!result.speakers.isEmpty)
+        #expect(result.speakers.count == 2)
         #expect(result.modelRevision.count == 64)
     }
 }

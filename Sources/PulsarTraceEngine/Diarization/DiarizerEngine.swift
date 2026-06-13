@@ -73,6 +73,17 @@ public actor DiarizerEngine {
         // Keep overlap-preserving spans: the transcript merge's 30 %
         // co-attribution rule (D11) needs overlapping speaker spans.
         config.postProcessing.exclusiveSegments = false
+        // VBx evidence weight, raised from FluidAudio's 0.07 default (D40).
+        // At 0.07 the clusterer collapses two clearly-distinct voices
+        // (cross-speaker cosine 0.38, same-speaker 0.93) into one cluster on
+        // recordings shorter than ~1 minute — VBx's prior dominates until
+        // enough audio accumulates (the same 24 s clip separates at 72 s).
+        // Measured on the committed fixtures: every Fa in 0.08…0.3 separates
+        // the two-speaker clip and none splits a 2-minute single-speaker
+        // clip; 0.2 sits well clear of the 0.07/0.08 boundary. Under-
+        // separation is the worse failure (two people fused under one label,
+        // unfixable post-hoc); over-split has a user remedy (speaker merge).
+        config.clustering.warmStartFa = 0.2
         let manager = OfflineDiarizerManager(config: config)
         try await manager.prepareModels(directory: cacheRoot)
 
