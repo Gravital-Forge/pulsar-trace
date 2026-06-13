@@ -85,6 +85,8 @@ A file begins with a marker comment and a heading:
     `metadata.json`. When an utterance is talked over by two speakers, both
     names are surfaced joined with `+` (e.g. `Steve+Unknown #1`); an utterance
     that overlaps no diarized span keeps the fallback label `Unrecognized`.
+    `Unrecognized` is a per-line fallback, not a speaker: it never earns a row
+    in `metadata.json`'s `speakers` array (nor in any speaker-summary UI).
     - *Historical note:* Epic 2 emitted a single placeholder label `Speaker`;
       Epic 3 replaced it with diarized `Speaker_0`, `Speaker_1`, … labels;
       Epic 5 replaced those positional labels with persistent library names.
@@ -210,7 +212,7 @@ parsing `final.md` prose. It is a public API surface; it is written atomically
 | `duration_seconds` | number | Audio duration (the longer of the streams). |
 | `language` | string | Transcription language the refine pass detected/used (ISO-639-1). |
 | `source_basename` | string | Basename of the user-supplied `refine` input — never a full path. |
-| `speakers` | array | One entry per distinct speaker in `final.md`. |
+| `speakers` | array | One entry per distinct speaker in `final.md`. The `Unrecognized` fallback label (a no-overlap or delisted line) is not a speaker and never appears here. |
 | `speakers[].label` | string | Transcript-facing label — the persistent library name (`Steve`, `Unknown #1`) for a system speaker; `You` for the mic stream. (Pre-Epic-5 files carry `Speaker_N`.) |
 | `speakers[].is_microphone` | boolean | `true` for the `You` (mic) speaker — never diarized (R17). |
 | `speakers[].speaker_id` | string\|null | Stable speaker-library id (`spk_<ulid>`, R83) for a reconciled system speaker. `null` for `You`, and for a speaker not reconciled (diarization skipped, or the library was unavailable). An agent keys off this id for stable identity across renames. |
