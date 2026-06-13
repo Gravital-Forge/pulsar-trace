@@ -126,7 +126,7 @@ struct SpeakerLibraryUnitTests {
         #expect(created.id.hasPrefix("spk_"))
         #expect(created.appearanceCount == 1)
 
-        // A near-identical centroid matches above the 0.7 default threshold.
+        // A near-identical centroid matches above the 0.45 default threshold.
         let match = try await library.bestMatch(
             for: embedding, modelRevision: "rev-a")
         #expect(match?.speaker.id == created.id)
@@ -142,7 +142,7 @@ struct SpeakerLibraryUnitTests {
             name: "Unknown #1", centroid: syntheticEmbedding(axis: 0),
             modelRevision: "rev-a",
             recordingId: "rec_a", recordingFolderName: "a")
-        // An orthogonal embedding — cosine ≈ 0, well below 0.7.
+        // An orthogonal embedding — cosine ≈ 0, well below 0.45.
         let match = try await library.bestMatch(
             for: syntheticEmbedding(axis: 128), modelRevision: "rev-a")
         #expect(match == nil)

@@ -90,7 +90,8 @@ public actor LiveDiarizer: LiveDiarizing {
     /// Cosine-similarity threshold for stitching a window-speaker to an
     /// existing live speaker. Above → same speaker; below → a new `Them #N`.
     /// Calibrated for the WeSpeaker embedding space (D40): on the committed
-    /// fixtures, same-speaker cosine measured ~0.93, cross-speaker ~0.38.
+    /// fixtures, same-speaker cosine measured ~0.93, cross-speaker ~0.35
+    /// (see the DiarizationE2E calibration suite).
     public static let stitchThreshold = 0.45
 
     /// Test-only: a diarizer with no engine — `diarizeWindow` returns `[]`;

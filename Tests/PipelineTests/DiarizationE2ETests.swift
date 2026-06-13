@@ -154,3 +154,49 @@ struct DiarizationE2ELiveTests {
         #expect(await live.modelRevision().count == 64)
     }
 }
+
+/// Pins the WeSpeaker-space similarity thresholds (D40). If this fails after
+/// a model bump, read the printed similarities and re-pin the constants:
+/// both thresholds must sit between the worst same-speaker similarity and the
+/// best cross-speaker similarity, with margin on both sides.
+@Suite("DiarizationE2E threshold calibration", .serialized)
+struct DiarizationE2ECalibrationTests {
+
+    private func fixtureSamples(_ name: String) async throws -> [Float] {
+        try await OfflineTranscriptionPipeline().accumulate(
+            FixturePlaybackSource(
+                file: FixtureLocator.audio(name), realtime: false))
+    }
+
+    @Test func thresholdsSeparateSameFromCross() async throws {
+        let engine = try await DiarizerTestEngine.shared()
+
+        // Same speaker: the two halves of a 30 s single-speaker clip must
+        // produce embeddings that match.
+        let solo = try await fixtureSamples("single-speaker-30s.wav")
+        let firstHalf = try await engine.diarize(
+            samples: Array(solo[..<(solo.count / 2)]))
+        let secondHalf = try await engine.diarize(
+            samples: Array(solo[(solo.count / 2)...]))
+        let a = try #require(firstHalf.embeddings.first?.vector)
+        let b = try #require(secondHalf.embeddings.first?.vector)
+        let same = Centroid.cosineSimilarity(a, b)
+
+        // Different speakers: the two clusters of the alternating clip.
+        let duo = try await engine.diarize(
+            samples: try await fixtureSamples("two-speakers-alternating.wav"))
+        try #require(duo.embeddings.count == 2)
+        let cross = Centroid.cosineSimilarity(
+            duo.embeddings[0].vector, duo.embeddings[1].vector)
+
+        print("calibration: same-speaker=\(same) cross-speaker=\(cross) "
+            + "library-threshold=\(SpeakerLibrary.defaultMatchThreshold) "
+            + "stitch-threshold=\(LiveDiarizer.stitchThreshold)")
+
+        #expect(same - cross > 0.15)   // the space separates at all
+        #expect(same > SpeakerLibrary.defaultMatchThreshold)
+        #expect(cross < SpeakerLibrary.defaultMatchThreshold)
+        #expect(same > LiveDiarizer.stitchThreshold)
+        #expect(cross < LiveDiarizer.stitchThreshold)
+    }
+}

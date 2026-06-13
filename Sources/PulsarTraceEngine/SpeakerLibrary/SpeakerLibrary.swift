@@ -21,8 +21,13 @@ import Logging
 /// connection / integrity check restores from that `.bak`.
 public actor SpeakerLibrary {
 
-    /// Default cosine-similarity match threshold (R18/R22 — 0.7, configurable).
-    public static let defaultMatchThreshold = 0.7
+    /// Default cosine-similarity match threshold (R18/R22, configurable).
+    /// Calibrated for the WeSpeaker embedding space (D40): on the committed
+    /// fixtures, same-speaker similarity measured ~0.93, cross-speaker ~0.35
+    /// (see the DiarizationE2E calibration suite). Pinned below the midpoint to
+    /// favour recall of returning speakers — cross-session same-speaker
+    /// similarity runs lower than the in-clip measurement.
+    public static let defaultMatchThreshold = 0.45
 
     /// Soft-delete recovery window (R32b — 30 days).
     public static let recoveryWindow: TimeInterval = 30 * 86_400
