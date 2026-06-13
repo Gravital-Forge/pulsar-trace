@@ -12,9 +12,9 @@ import Logging
 ///
 /// - `StreamingTranscriber` — sliding-window decode + LocalAgreement-2,
 ///   producing **committed** utterances ≤ 5 s behind real time (R10).
-/// - `LiveDiarizer` — windowed-pyannote provisional speaker IDs for the system
-///   stream (R15, R16). Optional: when unavailable the system stream is still
-///   transcribed, labelled `Them?`.
+/// - `LiveDiarizer` — windowed in-process (ANE) provisional speaker IDs for the
+///   system stream (R15, R16). Optional: when unavailable the system stream is
+///   still transcribed, labelled `Them?`.
 /// - `SpeakerLibrary` — opened **read-only** (R18, R32): a provisional speaker
 ///   whose centroid matches a known library speaker is shown by name. The live
 ///   pass **never writes** to the library — invariant #5.
@@ -42,9 +42,10 @@ public struct StreamingPipeline: Sendable {
         public let recordingId: String
         /// Streaming-transcription tunables.
         public let transcriberConfig: StreamingTranscriber.Configuration
-        /// Live-diarization subprocess config. `nil` → no live diarization
-        /// (system speakers stay the generic `Them?`).
-        public let liveDiarizerConfig: LiveDiarizer.Configuration?
+        /// Resident in-process diarization engine for the live windowed pass
+        /// (D40). `nil` → no live diarization (system speakers stay the
+        /// generic `Them?`).
+        public let liveDiarizerEngine: DiarizerEngine?
         /// How often the system stream is handed to the live diarizer, and the
         /// window length it sees.
         public let diarizationStep: Duration
@@ -55,7 +56,7 @@ public struct StreamingPipeline: Sendable {
             recordingStart: Date,
             recordingId: String,
             transcriberConfig: StreamingTranscriber.Configuration = .init(),
-            liveDiarizerConfig: LiveDiarizer.Configuration? = nil,
+            liveDiarizerEngine: DiarizerEngine? = nil,
             diarizationStep: Duration = .seconds(5),
             diarizationWindow: Duration = .seconds(10)
         ) {
@@ -63,7 +64,7 @@ public struct StreamingPipeline: Sendable {
             self.recordingStart = recordingStart
             self.recordingId = recordingId
             self.transcriberConfig = transcriberConfig
-            self.liveDiarizerConfig = liveDiarizerConfig
+            self.liveDiarizerEngine = liveDiarizerEngine
             self.diarizationStep = diarizationStep
             self.diarizationWindow = diarizationWindow
         }
@@ -139,24 +140,10 @@ public struct StreamingPipeline: Sendable {
             pathBasename: RecordingFolder.FileName.live))
         logger.notice("live.md created — live pass started")
 
-        // --- live diarization subprocess (optional) -------------------------
+        // --- live diarization (in-process, optional) -------------------------
         var liveDiarizer: LiveDiarizer?
-        if let diarConfig = configuration.liveDiarizerConfig {
-            let scratch = configuration.recordingFolder
-                .appendingPathComponent(".live-diar-scratch", isDirectory: true)
-            let diar = LiveDiarizer(
-                configuration: diarConfig,
-                scratchDirectory: scratch,
-                logger: logger)
-            do {
-                try await diar.start()
-                liveDiarizer = diar
-            } catch {
-                // A live-diarization failure must not lose the live pass:
-                // transcription continues with generic `Them` labels.
-                logger.error(
-                    "live diarization unavailable — continuing with generic Them labels")
-            }
+        if let engine = configuration.liveDiarizerEngine {
+            liveDiarizer = LiveDiarizer(engine: engine, logger: logger)
         }
         // --- run the streams ------------------------------------------------
         let runner = LiveRunner(
@@ -173,14 +160,13 @@ public struct StreamingPipeline: Sendable {
                 micSource: micSource,
                 liveDiarizer: liveDiarizer)
         } catch {
-            // Always release the subprocess + close the file, even on a throw.
+            // Always close the file, even on a throw. The in-process diarizer
+            // holds no resources to release — no subprocess, no scratch WAVs.
             await writer.finish()
-            await liveDiarizer?.stop()
             throw error
         }
 
         await writer.finish()
-        await liveDiarizer?.stop()
         let lines = output.utteranceLines
         let echoes = output.micEchoesDropped
         logger.notice(

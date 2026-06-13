@@ -105,3 +105,52 @@ struct DiarizationE2EEngineTests {
         #expect(first.modelRevision == second.modelRevision)
     }
 }
+
+/// The live windowed pass driven through the production window geometry
+/// (10 s window / 5 s step — `StreamingPipeline` defaults) against the real
+/// FluidAudio engine (D40). Proves `LiveDiarizer` stitches the per-window
+/// raw labels into stable provisional keys, emits recording-absolute spans,
+/// and exposes the live centroids + a 64-hex model revision for the R18
+/// library lookup. Per the measured behaviour, a single 10 s window does NOT
+/// separate the two voices — differentiation comes from stitching across the
+/// alternating windows, so this asserts stable `Them*` keys, not a per-window
+/// 2-speaker split.
+@Suite("DiarizationE2E live windowed", .serialized)
+struct DiarizationE2ELiveTests {
+
+    private func fixtureSamples(_ name: String) async throws -> [Float] {
+        try await OfflineTranscriptionPipeline().accumulate(
+            FixturePlaybackSource(
+                file: FixtureLocator.audio(name), realtime: false))
+    }
+
+    @Test func windowedPassYieldsStableProvisionalKeys() async throws {
+        let engine = try await DiarizerTestEngine.shared()
+        let live = LiveDiarizer(engine: engine)
+
+        // Drive the fixture through the production window geometry
+        // (10 s window / 5 s step — StreamingPipeline defaults).
+        let samples = try await fixtureSamples("two-speakers-alternating.wav")
+
+        let window = AudioFormat.sampleRate * 10
+        let step = AudioFormat.sampleRate * 5
+        var spans: [LiveSpeakerSpan] = []
+        var start = 0
+        while start + window <= samples.count {
+            let result = await live.diarizeWindow(
+                samples: Array(samples[start..<(start + window)]),
+                windowStart: .milliseconds(start * 1000 / AudioFormat.sampleRate))
+            spans.append(contentsOf: result)
+            start += step
+        }
+
+        #expect(!spans.isEmpty)
+        #expect(spans.allSatisfy { $0.provisionalKey.hasPrefix("Them") })
+        // Spans are recording-absolute: a window starting at 10 s must not
+        // emit spans inside [0, 10).
+        #expect(spans.filter { $0.start >= .seconds(10) }.count > 0)
+        let centroids = await live.centroids()
+        #expect(!centroids.isEmpty)
+        #expect(await live.modelRevision().count == 64)
+    }
+}

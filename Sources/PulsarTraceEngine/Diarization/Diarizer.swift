@@ -207,31 +207,3 @@ public actor Diarizer {
 extension Diarizer: RefinementCancellable {}
 // `cancel()` is sync on `Diarizer`; async protocol methods accept sync
 // implementations, so no wrapper is needed.
-
-// MARK: - Transitional
-
-extension Diarizer {
-    /// Transitional — only `LiveDiarizer` (rewritten in the next task) still
-    /// calls this. Deleted with it.
-    ///
-    /// Replace any absolute-path-looking token (a whitespace-delimited run
-    /// starting with `/`) with just its last path component, so a full user
-    /// file path can never reach the operational log (PRD §11 / R59, Hard
-    /// Invariant #7). A bare `/` or a token with no `/` after the first is
-    /// left untouched.
-    static func redactingPaths(in line: String) -> String {
-        line
-            .split(separator: " ", omittingEmptySubsequences: false)
-            .map { token -> Substring in
-                guard token.hasPrefix("/"), token.count > 1 else { return token }
-                // Keep trailing punctuation (e.g. a path at end of a sentence)
-                // out of the basename by splitting on the last "/".
-                if let lastSlash = token.lastIndex(of: "/") {
-                    let base = token[token.index(after: lastSlash)...]
-                    return base.isEmpty ? token : base
-                }
-                return token
-            }
-            .joined(separator: " ")
-    }
-}

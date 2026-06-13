@@ -54,8 +54,7 @@ struct StreamingPipelineTests {
             configuration: .init(
                 recordingFolder: folder,
                 recordingStart: fixedStart,
-                recordingId: "rec_two-speakers-alternating",
-                liveDiarizerConfig: nil),
+                recordingId: "rec_two-speakers-alternating"),
             systemTranscriber: transcriber,
             systemSource: source,
             library: nil)
@@ -91,8 +90,7 @@ struct StreamingPipelineTests {
             configuration: .init(
                 recordingFolder: folder,
                 recordingStart: fixedStart,
-                recordingId: "rec_two-speakers-alternating",
-                liveDiarizerConfig: nil),
+                recordingId: "rec_two-speakers-alternating"),
             systemTranscriber: transcriber,
             systemSource: source,
             library: nil)
@@ -175,8 +173,7 @@ struct StreamingPipelineTests {
             configuration: .init(
                 recordingFolder: folder,
                 recordingStart: fixedStart,
-                recordingId: "rec_two-speakers-alternating",
-                liveDiarizerConfig: nil),
+                recordingId: "rec_two-speakers-alternating"),
             systemTranscriber: transcriber,
             systemSource: source,
             library: nil)
