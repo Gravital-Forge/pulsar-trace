@@ -2,7 +2,7 @@
 
 **Local-only meeting transcription with speaker labels. Plug your AI agent into the file. Open source.**
 
-PulsarTrace turns a meeting recording into a clean, speaker-labeled Markdown transcript — and it never sends your audio anywhere. Transcription (on the Apple Neural Engine — Parakeet live, WhisperKit refine) and speaker diarization (pyannote) run entirely on your Mac. The output is plain Markdown and JSONL on disk, designed to be read by your AI agent of choice (Claude Code, Cursor, opencode, …) during or after the call.
+PulsarTrace turns a meeting recording into a clean, speaker-labeled Markdown transcript — and it never sends your audio anywhere. Transcription (on the Apple Neural Engine — Parakeet live, WhisperKit refine) and speaker diarization (pyannote community-1 on CoreML) run entirely on your Mac. The output is plain Markdown and JSONL on disk, designed to be read by your AI agent of choice (Claude Code, Cursor, opencode, …) during or after the call.
 
 Part of the Gravital Forge product family (sibling to OrbitNote).
 
@@ -42,14 +42,11 @@ Every dominant meeting-transcription tool (Otter, Fireflies, Granola, Fathom, Zo
 
 - **macOS 14 (Sonoma) or later**, Apple Silicon strongly recommended (Metal acceleration). Intel works but is slow.
 - **Xcode 16+ / Swift 6** toolchain (`swift --version` should report 6.x).
-- **Homebrew** with `ffmpeg` and `python@3.12`:
+- **Homebrew** with `ffmpeg`:
   ```bash
-  brew install ffmpeg python@3.12
+  brew install ffmpeg
   ```
-- **A free Hugging Face account + access token.** The diarization model (`pyannote/speaker-diarization-community-1`) is gated:
-  1. Visit https://huggingface.co/pyannote/speaker-diarization-community-1 and accept the terms.
-  2. Create a token at https://huggingface.co/settings/tokens.
-- ~3 GB free disk for models (Parakeet live ~500 MB, WhisperKit refine `large-v3-turbo` ~626 MB / `large-v3-whisperkit` ~947 MB; pyannote ~1 GB). CoreML model bundles download automatically on first use.
+- ~2 GB free disk for models (Parakeet live ~500 MB, WhisperKit refine `large-v3-turbo` ~626 MB / `large-v3-whisperkit` ~947 MB; diarization CoreML bundles ~21 MB). CoreML model bundles download automatically on first use.
 
 ---
 
@@ -59,20 +56,15 @@ Every dominant meeting-transcription tool (Otter, Fireflies, Granola, Fathom, Zo
 git clone <repo-url> gravital-pulsar-trace
 cd gravital-pulsar-trace
 
-# 1. Build the embedded Python diarization environment (pyannote, torch)
-./python/build-venv.sh
-
-# 2. Provide your Hugging Face token
-echo 'HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx' > .env
-
-# 3. Build the Swift binaries
+# Build the Swift binaries
 swift build            # add -c release for production speed
 ```
 
-Transcription runs on the Apple Neural Engine — Parakeet (FluidAudio) for the
-live pass, WhisperKit for the refine pass. There is no native build step: the
-CoreML model bundles download automatically on first use (see
-project-docs/DECISIONS.md D39).
+Transcription and diarization both run on the Apple Neural Engine — Parakeet
+(FluidAudio) for the live pass, WhisperKit for the refine pass, and FluidAudio's
+CoreML diarizer (pyannote community-1) for speaker spans. There is no native
+build step and no Python: the CoreML model bundles download automatically on
+first use (see project-docs/DECISIONS.md D39, D40).
 
 This produces four binaries under `.build/debug/` (or `.build/release/`):
 
@@ -81,7 +73,7 @@ This produces four binaries under `.build/debug/` (or `.build/release/`):
 - **`pulsartrace-capture`** — the device-capture daemon (microphone + system audio)
 - **`pulsartrace-mac`** — the menubar app; run it as a dev `.app` via `scripts/make-dev-app.sh` (a bare `swift run` shows no menu-bar item)
 
-Transcription models (Parakeet + WhisperKit CoreML bundles) download automatically on first use into `~/Library/Caches/PulsarTrace/models/`.
+Transcription and diarization models (Parakeet + WhisperKit + speaker-diarization CoreML bundles) download automatically on first use into `~/Library/Caches/PulsarTrace/models/`.
 
 ---
 
@@ -243,7 +235,7 @@ The operational log is for debugging and is safe to attach to a bug report — i
 ┌─────────────────────────────────────────────────────────┐
 │  Engine (Swift)                                          │
 │   ANE ASR (Parakeet/WhisperKit) ──▶ transcript + times   │
-│   pyannote (Python)    ──▶ speaker spans + embeddings    │
+│   ANE diarizer (FluidAudio CoreML) ──▶ spans + embeddings│
 │   speaker library      ──▶ known names                   │
 │        live pass ──▶ live.md     refine pass ──▶ final.md │
 └─────────────────────────────────────────────────────────┘
@@ -252,8 +244,8 @@ The operational log is for debugging and is safe to attach to a bug report — i
 The engine consumes an abstract `AudioFrameSource` — it cannot tell whether frames came from a microphone, a WAV file, a Unix socket, or a pipe. This is why the whole pipeline is buildable and testable without audio hardware, and why "bring your own audio" works: pipe PCM in and you get transcripts out.
 
 - **Transcription** — runs on the Apple Neural Engine: Parakeet TDT (FluidAudio) for the live pass, WhisperKit for the refine pass; the model stays resident. See [`DECISIONS.md`](project-docs/DECISIONS.md) D39.
-- **Diarization** — `pyannote.audio` 4.x (`speaker-diarization-community-1`) in an embedded Python subprocess.
-- **Speaker library** — SQLite with WAL journaling; voices matched by cosine similarity of pyannote embeddings, centroids refined by a running mean across appearances.
+- **Diarization** — FluidAudio offline diarization (CoreML/ANE) — speaker spans + embeddings in-process. Runs FluidInference's CoreML conversion of `pyannote/speaker-diarization-community-1` (segmentation + WeSpeaker embeddings + VBx/PLDA clustering). See [`DECISIONS.md`](project-docs/DECISIONS.md) D40.
+- **Speaker library** — SQLite with WAL journaling; voices matched by cosine similarity of WeSpeaker embeddings, centroids refined by a running mean across appearances.
 
 Architectural decisions and deviations from the original PRD are recorded in [`DECISIONS.md`](project-docs/DECISIONS.md).
 
@@ -271,8 +263,6 @@ Sources/pulsartrace/         The `pulsartrace` CLI
 Sources/pulsartrace-engine/  The streaming engine binary
 Sources/pulsartrace-capture/ The device-capture daemon binary
 Sources/pulsartrace-mac/     The menubar app (SwiftUI MenuBarExtra)
-python/pulsartrace-ai/       Embedded Python — pyannote diarization
-python/build-venv.sh         Builds the embedded Python environment
 Tests/                       Unit / Pipeline / Capture / MenuBar test targets
                              + fixtures
 scripts/make-dev-app.sh      Wraps `pulsartrace-mac` in a launchable dev `.app`
@@ -287,13 +277,12 @@ project-docs/                PRD.md, PLAN.md, DECISIONS.md — requirements,
 
 ```bash
 swift test --filter Unit       # pure logic — fast, deterministic, no devices
-swift test --filter Pipeline   # end-to-end on fixture audio (real ANE ASR + pyannote)
+swift test --filter Pipeline   # end-to-end on fixture audio (real ANE models)
 swift test --filter Capture    # real-device tests; skip cleanly when no audio hardware
 swift test --filter MenuBar    # menubar ViewModels — settings, scanner, speaker editor
-( cd python/pulsartrace-ai && .venv/bin/pytest )   # Python diarization layer
 ```
 
-Pipeline tests run the real models (Parakeet / WhisperKit on the ANE, pyannote) against committed audio fixtures and assert on distinctive fixture keywords, so a regression in output shows up as a failed assertion. See [`docs/release-smoke-test.md`](docs/release-smoke-test.md) for the manual pre-release checklist.
+Pipeline tests run the real ANE models (Parakeet / WhisperKit / FluidAudio diarizer) against committed audio fixtures and assert on distinctive fixture keywords, so a regression in output shows up as a failed assertion. See [`docs/release-smoke-test.md`](docs/release-smoke-test.md) for the manual pre-release checklist.
 
 ---
 
@@ -304,13 +293,13 @@ v0.1 (offline pipeline + streaming), real device capture, the full CLI, and the 
 - ✅ **Epic 7 — Real device capture.** `pulsartrace-capture` daemon: microphone via AVFoundation, system audio via ScreenCaptureKit (no virtual audio device needed).
 - ✅ **Epic 9 — CLI surface.** `pulsartrace record`, `doctor` (+ `--capture-test`), `events tail`, `install-cli`.
 - ✅ **Epic 8 — Menubar app.** SwiftUI `MenuBarExtra` — start/stop, settings, speaker-library editor, live transcript preview. A retroactive speaker rename rewrites every past `final.md`. Runs today as an unsigned dev build (`scripts/make-dev-app.sh`).
-- **Epic 10 — Distribution.** Signed/notarized DMG, first-run permissions + Hugging Face token wizard.
+- **Epic 10 — Distribution.** Signed/notarized DMG, first-run permissions wizard.
 
 ---
 
 ## Privacy
 
-Your audio never leaves your Mac. There is no telemetry, no analytics, no crash reporting that phones home, and no auto-update version checks. The **only** outbound network calls are first-launch model downloads — the transcription models (Parakeet + WhisperKit CoreML bundles) and the pyannote model, all from Hugging Face. After that, PulsarTrace works fully offline.
+Your audio never leaves your Mac. There is no telemetry, no analytics, no crash reporting that phones home, and no auto-update version checks. The **only** outbound network calls are first-launch model downloads — the transcription and diarization CoreML bundles (Parakeet + WhisperKit + speaker-diarization), all from public Hugging Face repos (no account or token needed). After that, PulsarTrace works fully offline.
 
 The same posture holds on disk: transcripts, recordings, `metadata.json`, the events log, and the speaker library are written readable by your user account only (`0600` files, `0700` for the directories PulsarTrace creates), and looser permissions left behind by older versions are repaired. The Unix sockets PulsarTrace's own processes use to move audio between them verify that the connecting peer is the same user and reject anyone else.
 
@@ -320,4 +309,4 @@ The same posture holds on disk: transcripts, recordings, `metadata.json`, the ev
 
 MIT — see [`LICENSE`](LICENSE).
 
-PulsarTrace builds on excellent open-source work: [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0, runs Parakeet TDT on the ANE), [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift) (MIT), [pyannote.audio](https://github.com/pyannote/pyannote-audio) (MIT), [PyTorch](https://github.com/pytorch/pytorch) (BSD), and [swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing) (MIT). The `parakeet-tdt-0.6b-v3` model is distributed under CC-BY-4.0; the `speaker-diarization-community-1` model is distributed by pyannote under its own terms.
+PulsarTrace builds on excellent open-source work: [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0, runs Parakeet TDT and the speaker diarizer on the ANE), [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift) (MIT), [pyannote.audio](https://github.com/pyannote/pyannote-audio) (MIT), and [swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing) (MIT). The `parakeet-tdt-0.6b-v3` model is distributed under CC-BY-4.0; the diarization models are FluidInference's CoreML conversion of `pyannote/speaker-diarization-community-1`, distributed by pyannote under its own terms.

@@ -51,24 +51,25 @@ public struct SpeakerEmbedding: Sendable, Equatable {
     }
 }
 
-/// The full result of an offline diarization run — the Swift decoding of the
-/// JSON the Python `pulsartrace_ai.diarize` module emits.
+/// The full result of an offline diarization run — produced in-process by
+/// `DiarizationResultMapper` from FluidAudio's CoreML/ANE pipeline (D40).
 public struct DiarizationResult: Sendable, Equatable {
-    /// pyannote model identifier (`pyannote/speaker-diarization-community-1`).
+    /// Diarization model identifier
+    /// (`FluidInference/speaker-diarization-coreml`).
     public let model: String
-    /// Hugging Face hub commit SHA of the model *checkpoint*. This is the
-    /// authoritative model identity — the speaker library refuses to
-    /// match embeddings across a different `modelRevision` (Open Question #3).
-    /// Empty when an older Python build produced the JSON.
+    /// Content digest (DirectoryDigest SHA-256) of the model directory. This
+    /// is the authoritative model identity — the speaker library refuses to
+    /// match embeddings across a different `modelRevision` (Open Question #3
+    /// / D40). Empty only in frozen test fixtures predating the digest.
     public let modelRevision: String
     /// Duration of the diarized WAV.
     public let audioDuration: Duration
-    /// Raw pyannote speaker labels, sorted (`SPEAKER_00`, `SPEAKER_01`, …).
+    /// Raw per-run speaker labels, natural-sorted (`S1`, `S2`, …).
     public let speakers: [String]
     /// Speaker turns, overlap-preserving: when two speakers talk at once both
     /// attributions appear with overlapping time ranges.
     public let spans: [SpeakerSpan]
-    /// Per-speaker embeddings (R29), keyed by raw pyannote label.
+    /// Per-speaker embeddings (R29), keyed by raw speaker label.
     public let embeddings: [SpeakerEmbedding]
 
     public init(
