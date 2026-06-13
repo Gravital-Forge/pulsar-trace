@@ -6,9 +6,8 @@ import Foundation
 /// `RefinementJobState.failed`.
 ///
 /// Error sources surveyed (via `makeStandard`'s `runJob` closure):
-/// - `OfflineRefiner.makeDiarizer` → `Diarizer.DiarizeError` (.pythonNotFound,
-///   .launchFailed)
-/// - `ResumableRefiner.run` → `Diarizer.DiarizeError` (non-.cancelled variants),
+/// - `ResumableRefiner.run` → `Diarizer.DiarizeError` (non-.cancelled variants:
+///   .modelLoadFailed, .processingFailed, .timedOut, .wavNotFound),
 ///   `TranscriptionError` from `WhisperKitRegionTranscriber` (incl.
 ///   `.decodeDeadlineExceeded`), `CancellationError` from a recording-start
 ///   decode cancel, I/O errors from `WAVReader` / `AtomicFile`.
@@ -37,8 +36,8 @@ public enum RefinementJobError: Error {
 
     // MARK: - Stable error identifiers
 
-    /// The diarization subprocess crashed or exited non-zero.
-    /// Transient — the Python layer may succeed on a retry. `retryAvailable: true`.
+    /// The in-process diarization failed or timed out (D40).
+    /// Transient — a retry may succeed. `retryAvailable: true`.
     case diarizeCrashed
 
     /// A transcription step failed (WAV decode, Whisper error).
@@ -46,8 +45,8 @@ public enum RefinementJobError: Error {
     /// retryable since we cannot always distinguish the two.
     case transcribeFailed
 
-    /// The Python interpreter or the diarization entry point was not found.
-    /// Permanent until the environment is fixed. `retryAvailable: false`.
+    /// A required model bundle could not be loaded (D40).
+    /// Permanent until the model cache is repaired. `retryAvailable: false`.
     case missingDependency
 
     /// Fallback: any error not matched above (unexpected I/O, encode, etc.).
@@ -80,17 +79,19 @@ public enum RefinementJobError: Error {
     /// Map any thrown `Error` to a `RefinementJobError`.
     ///
     /// Priority:
-    /// 1. `Diarizer.DiarizeError` — subprocess-level failures.
+    /// 1. `Diarizer.DiarizeError` — diarization-level failures.
     /// 2. `RefinementPipeline.RefineError` — pipeline-typed wrapping errors.
     /// 3. Everything else → `.io` (retryable fallback).
     public static func classify(_ error: Error) -> RefinementJobError {
         if let de = error as? Diarizer.DiarizeError {
             switch de {
-            case .pythonNotFound, .launchFailed:
+            case .modelLoadFailed:
+                // A missing / unloadable CoreML model bundle is a dependency
+                // problem — permanent until the cache is repaired (D40).
                 return .missingDependency
             case .wavNotFound:
                 return .transcribeFailed
-            case .nonZeroExit, .timedOut, .emptyOutput, .decodeFailed:
+            case .processingFailed, .timedOut:
                 return .diarizeCrashed
             case .cancelled:
                 // Should not reach here (ResumableRefiner retries internally),

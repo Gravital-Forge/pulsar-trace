@@ -1,229 +1,195 @@
 import Foundation
 import Logging
 
-/// Runs offline speaker diarization by invoking the captive Python layer.
+/// Runs offline speaker diarization in-process on the ANE (D40).
 ///
-/// Architecture (PRD §17, `pulsartrace-execution` skill):
-/// - pyannote runs in the embedded Python layer (`python/pulsartrace-ai/`),
-///   never mixed into Swift. Transcription stays in-process Swift (CoreML
-///   SDKs — Parakeet live, WhisperKit refine); pyannote stays in Python.
-/// - For offline refinement the `Diarizer` spawns the Python diarization as a
-///   **one-shot subprocess** per refine: it is handed a WAV path and gets back
-///   JSON (speaker spans + per-speaker embeddings) on stdout. The long-lived
-///   live `diart` runtime is handled separately (`LiveDiarizer`), not here.
+/// Architecture:
+/// - FluidAudio's offline pipeline (pyannote community-1 ported to CoreML —
+///   `DiarizerEngine`) replaces the captive Python subprocess (D9, retired).
+///   No venv, no HF token, no IPC: the WAV is handed to CoreML directly.
 /// - **R17**: the entry point only ever receives the *system-stream* WAV. The
 ///   mic stream is never diarized — "You" is always "You". This is structural:
 ///   `Diarizer` has a single `diarizeSystemStream(wavPath:)` method and no
 ///   other diarization surface.
-/// - **R60**: the subprocess's stderr is captured and piped, line by line,
-///   into the operational log tagged `[python]`, so one grep finds Python
-///   failures alongside Swift ones.
+/// - **Cancellation** (queue pause, D-Q7): `cancel()` cancels the in-flight
+///   `Task`; FluidAudio's pipeline checks `Task.checkCancellation()` between
+///   chunks, so compute genuinely stops. The caller sees `.cancelled`, retries
+///   when the pause gate reopens.
+/// - **Timeout**: a watchdog cancels the work at max(configured floor, the
+///   audio's real-time length) — the same budget rule the subprocess had.
 ///
-/// `Diarizer` is an `actor`: a diarization run is long-lived (model load plus
-/// inference) and the timeout machinery touches mutable process state, so
-/// serializing access keeps two refinements from racing on one instance.
+/// An `actor`: the engine load slot, the in-flight task, and the cancel flag
+/// are mutable state shared across calls.
 public actor Diarizer {
 
-    /// How to reach the captive Python diarization layer.
-    ///
-    /// In development (project-docs/DECISIONS.md D3) this points at the venv built by
-    /// `python/build-venv.sh`. A future change swaps these for the bundled
-    /// `python-build-standalone` runtime inside the `.app`; the IPC boundary
-    /// is identical, so only this configuration changes.
     public struct Configuration: Sendable {
-        /// Absolute path to the Python interpreter (the venv's `python`).
-        public let pythonExecutable: URL
-        /// Working directory the subprocess runs in — must be the directory
-        /// from which `pulsartrace_ai` is importable (the `python/pulsartrace-ai`
-        /// dir, or anywhere the package is installed).
-        public let workingDirectory: URL
-        /// The module to run: `pulsartrace_ai.diarize`.
-        public let moduleName: String
-        /// Extra environment for the subprocess. The Hugging Face token
-        /// (`HF_TOKEN`, required for the gated community-1 model) and
-        /// `HF_HOME` (cache redirect) are passed through here. In production
-        /// the token is sourced from the macOS Keychain; development
-        /// loads it from the repo `.env`.
-        public let environment: [String: String]
+        /// Model cache root (D10) — models live in
+        /// `<cacheRoot>/speaker-diarization/`.
+        public let cacheRoot: URL
         /// Minimum wall-clock budget for one diarization run. Used as a
-        /// *floor*: `diarizeSystemStream` expands the actual budget to at
-        /// least the input WAV's real-time duration so a long recording is
-        /// not killed by an arbitrarily short ceiling. 600s covers model load
-        /// plus inference on a short meeting; longer audio scales the budget
-        /// up to its own playback length.
+        /// *floor*: the actual budget is at least the input WAV's real-time
+        /// duration. At 60×+ real-time on the ANE this only trips when
+        /// something is genuinely wedged.
         public let timeout: Duration
-        /// When non-nil, replaces the standard `-m <moduleName> <wav> --output json`
-        /// argument list entirely. Used in tests to point the actor at a stand-in
-        /// subprocess (e.g. `/bin/sh -c "sleep 30"`) without a real Python venv.
-        /// Not intended for production use.
-        let customArguments: [String]?
 
         public init(
-            pythonExecutable: URL,
-            workingDirectory: URL,
-            moduleName: String = "pulsartrace_ai.diarize",
-            environment: [String: String] = [:],
-            timeout: Duration = .seconds(600),
-            customArguments: [String]? = nil
+            cacheRoot: URL = AppPaths.standard.modelsCacheDirectory,
+            timeout: Duration = .seconds(600)
         ) {
-            self.pythonExecutable = pythonExecutable
-            self.workingDirectory = workingDirectory
-            self.moduleName = moduleName
-            self.environment = environment
+            self.cacheRoot = cacheRoot
             self.timeout = timeout
-            self.customArguments = customArguments
         }
     }
 
     public enum DiarizeError: Error, CustomStringConvertible, Equatable {
         case wavNotFound(String)
-        case pythonNotFound(String)
-        case launchFailed(String)
-        case nonZeroExit(code: Int32, stderrTail: String)
+        case modelLoadFailed(String)
+        case processingFailed(String)
         case timedOut(seconds: Int)
-        case emptyOutput
-        case decodeFailed(String)
-        /// The subprocess was terminated by a `cancel()` call (queue pause).
-        /// Distinct from `.nonZeroExit` so the refiner can distinguish a pause
+        /// The run was terminated by a `cancel()` call (queue pause). Distinct
+        /// from `.processingFailed` so the refiner can distinguish a pause
         /// from a real failure and retry when the gate reopens.
         case cancelled
 
         public var description: String {
             switch self {
             case .wavNotFound(let p): return "diarization WAV not found: \(p)"
-            case .pythonNotFound(let p):
-                return "python interpreter not found: \(p)"
-            case .launchFailed(let m):
-                return "diarization subprocess failed to launch: \(m)"
-            case .nonZeroExit(let code, let tail):
-                return "diarization subprocess exited \(code): \(tail)"
-            case .timedOut(let s):
-                return "diarization subprocess timed out after \(s)s"
-            case .emptyOutput:
-                return "diarization subprocess produced no JSON on stdout"
-            case .decodeFailed(let m):
-                return "diarization output decode failed: \(m)"
-            case .cancelled:
-                return "diarization cancelled (paused by queue)"
+            case .modelLoadFailed(let m):
+                return "diarization model load failed: \(m)"
+            case .processingFailed(let m): return "diarization failed: \(m)"
+            case .timedOut(let s): return "diarization timed out after \(s)s"
+            case .cancelled: return "diarization cancelled (paused by queue)"
             }
         }
     }
 
-    /// How long to wait for a clean SIGTERM shutdown after a timeout before
-    /// escalating to SIGKILL. Bounded so a Python process that ignores
-    /// SIGTERM cannot wedge the actor's `waitUntilExit` indefinitely.
-    private static let terminationGracePeriod: Duration = .seconds(10)
+    /// Test seam: replaces the engine-backed diarize call so cancellation and
+    /// timeout semantics are testable without CoreML models.
+    typealias Operation = @Sendable (URL) async throws -> DiarizationResult
 
     private let configuration: Configuration
+    private let events: EventWriter?
     private let logger: Logger
-    /// Logger used only for `[python]`-tagged subprocess stderr (R60).
-    private let pythonLogger: Logger
-    /// The subprocess currently running inside `runSubprocess`, if any.
-    /// Cleared on every return path via `defer`.
-    private var inflightProcess: Process?
-    /// Set by `cancel()` before terminating the subprocess so the exit-code
-    /// check in `runSubprocess` can throw `.cancelled` instead of `.nonZeroExit`.
+    private let operationOverride: Operation?
+    /// Memoized engine load — cleared on failure so a retry can reload
+    /// (same pattern as `FluidVADRegionDetector.ensureManager`).
+    private var engineTask: Task<DiarizerEngine, Error>?
+    private var inflight: Task<DiarizationResult, Error>?
     private var cancelledFlag = false
+    private var timedOutFlag = false
 
     public init(
         configuration: Configuration,
+        events: EventWriter? = nil,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
         self.configuration = configuration
+        self.events = events
         self.logger = logger
-        self.pythonLogger = Logger(label: LogSubsystem.engine)
+        self.operationOverride = nil
     }
 
-    /// Terminate the in-flight pyannote subprocess. A no-op when no subprocess
-    /// is running. The next `diarizeSystemStream` call after this returns —
-    /// or the one currently in flight — throws `DiarizeError.cancelled` rather
-    /// than `.nonZeroExit`, so the refiner can distinguish a pause from a
-    /// real failure.
+    /// Test-seam initializer.
+    init(
+        configuration: Configuration,
+        events: EventWriter? = nil,
+        logger: Logger = Logger(label: LogSubsystem.engine),
+        operation: @escaping Operation
+    ) {
+        self.configuration = configuration
+        self.events = events
+        self.logger = logger
+        self.operationOverride = operation
+    }
+
+    /// Cancel the in-flight diarization. A no-op when nothing is running.
+    /// The run currently in flight throws `DiarizeError.cancelled`.
     public func cancel() {
         cancelledFlag = true
-        guard let p = inflightProcess, p.isRunning else { return }
-        p.terminate()                            // SIGTERM
-
-        // Escalate to SIGKILL after a short grace, mirroring the timeout
-        // watchdog. A cancel during a recording start must free the GPU
-        // quickly; we cannot afford a 10s SIGTERM wait.
-        // Capture only the pid (an Int32) to avoid a Sendable-capture
-        // compiler error: `Process` is not `Sendable`, but pid is.
-        let pid = p.processIdentifier
-        Task {
-            try? await Task.sleep(for: .milliseconds(500))
-            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
-        }
+        inflight?.cancel()
     }
 
     /// Diarize the **system-stream** WAV of a recording (R17).
-    ///
-    /// This is the only diarization entry point: the mic stream is never
-    /// passed here. Spawns `python -m pulsartrace_ai.diarize <wav>`, enforces
-    /// the configured timeout, pipes stderr into the log tagged `[python]`,
-    /// and decodes the stdout JSON into a `DiarizationResult`.
-    ///
-    /// - Parameter wavPath: the system-stream WAV. The engine already owns
-    ///   this file (it was written via `WAVWriter` / handed in by the refine
-    ///   command) — this is not a new audio-API bypass, just a file path.
     public func diarizeSystemStream(wavPath: URL) async throws -> DiarizationResult {
         guard FileManager.default.fileExists(atPath: wavPath.path) else {
             throw DiarizeError.wavNotFound(wavPath.path)
         }
-        guard FileManager.default.isExecutableFile(
-            atPath: configuration.pythonExecutable.path) else {
-            throw DiarizeError.pythonNotFound(configuration.pythonExecutable.path)
-        }
+        cancelledFlag = false
+        timedOutFlag = false
 
-        let effectiveTimeout = effectiveTimeout(for: wavPath)
+        let timeout = effectiveTimeout(for: wavPath)
+        let timeoutSeconds = Int(timeout.components.seconds)
         logger.notice(
-            "offline diarization: launching python diarization subprocess (budget \(Int(effectiveTimeout.components.seconds))s)")
-        let captured = try await runSubprocess(wavPath: wavPath, timeout: effectiveTimeout)
+            "offline diarization: FluidAudio community-1 on ANE (budget \(timeoutSeconds)s)")
 
-        // Forward every stderr line into the operational log, tagged [python]
-        // (R60) — a single grep finds Python errors alongside Swift ones.
-        // Defensively basename any absolute-path-looking token first: the
-        // operational log must never carry a full user file path (PRD §11 /
-        // R59, Hard Invariant #7). diarize.py already emits basenames (P1);
-        // this is a second line of defence against a stray path in a stack
-        // trace or a future diagnostic.
-        let stderrText = String(decoding: captured.stderr, as: UTF8.self)
-        for line in stderrText.split(separator: "\n", omittingEmptySubsequences: true) {
-            pythonLogger.notice("[python] \(Self.redactingPaths(in: String(line)))")
-        }
+        let operation = try await resolveOperation()
+        let work = Task { try await operation(wavPath) }
+        inflight = work
+        defer { inflight = nil }
 
-        guard captured.exitCode == 0 else {
-            let tail = String(stderrText.suffix(500))
-            throw DiarizeError.nonZeroExit(code: captured.exitCode, stderrTail: tail)
+        let watchdog = Task {
+            try await Task.sleep(for: timeout)
+            await self.noteTimeout()
         }
-        guard !captured.stdout.isEmpty else {
-            throw DiarizeError.emptyOutput
-        }
+        defer { watchdog.cancel() }
 
         do {
-            let result = try DiarizationDecoder.decode(captured.stdout)
+            let result = try await work.value
             let speakerCount = result.speakers.count
             let spanCount = result.spans.count
             logger.notice(
                 "offline diarization complete: \(speakerCount) speaker(s), \(spanCount) span(s)")
             return result
+        } catch is CancellationError {
+            if cancelledFlag { throw DiarizeError.cancelled }
+            if timedOutFlag { throw DiarizeError.timedOut(seconds: timeoutSeconds) }
+            throw DiarizeError.cancelled
+        } catch let e as DiarizeError {
+            throw e
         } catch {
-            throw DiarizeError.decodeFailed(String(describing: error))
+            if cancelledFlag { throw DiarizeError.cancelled }
+            if timedOutFlag { throw DiarizeError.timedOut(seconds: timeoutSeconds) }
+            throw DiarizeError.processingFailed(String(describing: error))
         }
     }
 
-    // MARK: - Subprocess
+    /// The engine-backed operation, or the test seam.
+    private func resolveOperation() async throws -> Operation {
+        if let operationOverride { return operationOverride }
+        let engine = try await ensureEngine()
+        return { wavPath in try await engine.diarize(wavPath: wavPath) }
+    }
 
-    /// stdout/stderr/exit-code of one subprocess run.
-    private struct Captured {
-        let stdout: Data
-        let stderr: Data
-        let exitCode: Int32
+    private func ensureEngine() async throws -> DiarizerEngine {
+        if let engineTask {
+            do { return try await engineTask.value }
+            catch {
+                if self.engineTask == engineTask { self.engineTask = nil }
+                throw DiarizeError.modelLoadFailed(String(describing: error))
+            }
+        }
+        let configuration = self.configuration
+        let events = self.events
+        let logger = self.logger
+        let task = Task {
+            try await DiarizerEngine.load(
+                cacheRoot: configuration.cacheRoot, events: events, logger: logger)
+        }
+        engineTask = task
+        do { return try await task.value }
+        catch {
+            if self.engineTask == task { self.engineTask = nil }
+            throw DiarizeError.modelLoadFailed(String(describing: error))
+        }
+    }
+
+    private func noteTimeout() {
+        timedOutFlag = true
+        inflight?.cancel()
     }
 
     /// Expand `configuration.timeout` to at least the audio's real-time
     /// length, so an 80-minute meeting is not killed by a 10-minute ceiling.
-    /// The configured value is the floor; a probe failure keeps the floor.
     private func effectiveTimeout(for wavPath: URL) -> Duration {
         let configured = configuration.timeout
         guard let audioSeconds = WAVReader.probeDurationSeconds(at: wavPath),
@@ -234,113 +200,20 @@ public actor Diarizer {
         guard audioSeconds > configuredSeconds else { return configured }
         return .seconds(Int(audioSeconds.rounded(.up)))
     }
+}
 
-    /// Launch the Python subprocess, drain both pipes concurrently (so a large
-    /// stdout cannot deadlock against a full stderr buffer), and enforce the
-    /// timeout.
-    private func runSubprocess(wavPath: URL, timeout: Duration) async throws -> Captured {
-        defer { self.inflightProcess = nil }
+// MARK: - RefinementCancellable
 
-        let process = Process()
-        process.executableURL = configuration.pythonExecutable
-        process.arguments = configuration.customArguments ?? [
-            "-m", configuration.moduleName,
-            wavPath.path,
-            "--output", "json",
-        ]
-        process.currentDirectoryURL = configuration.workingDirectory
+extension Diarizer: RefinementCancellable {}
+// `cancel()` is sync on `Diarizer`; async protocol methods accept sync
+// implementations, so no wrapper is needed.
 
-        var env = ProcessInfo.processInfo.environment
-        for (key, value) in configuration.environment {
-            env[key] = value
-        }
-        // Defence in depth (Hard Invariant #1 / project-docs/DECISIONS.md D12): pyannote
-        // 4.0.4 ships default-on OpenTelemetry that phones home. diarize.py
-        // already disables it before importing pyannote; we also force the
-        // disable env var here so the captive subprocess can never phone home
-        // regardless of how it is launched. Caller-supplied environment does
-        // not get to override this.
-        env["PYANNOTE_METRICS_ENABLED"] = "false"
-        // Determinism (PRD §12): PYTHONHASHSEED only takes effect if set
-        // *before* the interpreter starts, so it must be exported here rather
-        // than from inside diarize.py. Fixed seed → reproducible diarization.
-        if env["PYTHONHASHSEED"] == nil {
-            env["PYTHONHASHSEED"] = "1729"
-        }
-        process.environment = env
+// MARK: - Transitional
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        self.inflightProcess = process
-        self.cancelledFlag = false      // fresh run — clear any prior cancel
-
-        do {
-            try process.run()
-        } catch {
-            throw DiarizeError.launchFailed(String(describing: error))
-        }
-
-        // Drain both pipes on background tasks before waiting on the process:
-        // `readDataToEndOfFile` blocks until EOF, which only happens once the
-        // child closes the fd, so reading concurrently avoids a pipe-buffer
-        // deadlock on large output.
-        async let stdoutData = Self.readToEnd(stdoutPipe.fileHandleForReading)
-        async let stderrData = Self.readToEnd(stderrPipe.fileHandleForReading)
-
-        // Timeout watchdog: if the process outlives the budget, terminate it
-        // so the `waitUntilExit` below returns. `firedTimeout` records whether
-        // the watchdog actually killed the process — set before `terminate()`
-        // so a real timeout is never confused with an ordinary failure exit.
-        //
-        // Escalation: `terminate()` sends only SIGTERM, which Python (or a
-        // wedged native extension under it) can ignore — leaving `waitUntilExit`
-        // blocked forever and the actor unable to make progress. So after a
-        // grace period we escalate to SIGKILL, which the kernel always honours.
-        let timeoutSeconds = Int(timeout.components.seconds)
-        let firedTimeout = TimeoutFlag()
-        let watchdog = Task {
-            try await Task.sleep(for: timeout)
-            guard process.isRunning else { return }
-            await firedTimeout.set()
-            process.terminate()  // SIGTERM — ask politely first.
-
-            // Grace period for a clean SIGTERM shutdown, then SIGKILL.
-            try? await Task.sleep(for: Self.terminationGracePeriod)
-            if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
-        }
-
-        await Self.waitForExit(process)
-        watchdog.cancel()
-
-        let out = await stdoutData
-        let err = await stderrData
-
-        // Cancellation takes precedence over timeout: if `cancel()` was called
-        // while the process was running, throw `.cancelled` so callers can
-        // distinguish a queue-pause from a real failure.
-        if self.cancelledFlag {
-            throw DiarizeError.cancelled
-        }
-
-        if await firedTimeout.value {
-            throw DiarizeError.timedOut(seconds: timeoutSeconds)
-        }
-
-        return Captured(stdout: out, stderr: err, exitCode: process.terminationStatus)
-    }
-
-    /// One-shot flag toggled by the timeout watchdog. An `actor` so the
-    /// watchdog task and the awaiting caller observe it without a data race.
-    private actor TimeoutFlag {
-        private(set) var value = false
-        func set() { value = true }
-    }
-
+extension Diarizer {
+    /// Transitional — only `LiveDiarizer` (rewritten in the next task) still
+    /// calls this. Deleted with it.
+    ///
     /// Replace any absolute-path-looking token (a whitespace-delimited run
     /// starting with `/`) with just its last path component, so a full user
     /// file path can never reach the operational log (PRD §11 / R59, Hard
@@ -361,43 +234,4 @@ public actor Diarizer {
             }
             .joined(separator: " ")
     }
-
-    /// Read a file handle to EOF off the actor, on a detached task so the
-    /// blocking read never stalls the actor's executor.
-    ///
-    /// Uses the Swift-throwing `FileHandle.readToEnd()` rather than the legacy
-    /// `readDataToEndOfFile()`. The legacy method reports a failure (e.g. the
-    /// fd was closed/invalidated because the child was SIGKILL'd, or fd churn
-    /// under a heavily parallel test run) by raising an Objective-C
-    /// `NSFileHandleOperationException` — which Swift cannot catch, so it
-    /// reaches `std::terminate` and aborts the whole process. `readToEnd()`
-    /// surfaces the same failure as a catchable Swift error; on failure the
-    /// pipe simply yields no more bytes (`Data()`), which the caller already
-    /// tolerates (a missing-stdout/empty-stderr child is handled downstream).
-    private static func readToEnd(_ handle: FileHandle) async -> Data {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                // `try?` flattens `readToEnd()`'s `Data?` and the throw into
-                // `Data??`; `?? nil ?? Data()` collapses both to `Data`.
-                let data = (try? handle.readToEnd()) ?? nil ?? Data()
-                continuation.resume(returning: data)
-            }
-        }
-    }
-
-    /// Await process exit without blocking the actor's executor.
-    private static func waitForExit(_ process: Process) async {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                process.waitUntilExit()
-                continuation.resume()
-            }
-        }
-    }
 }
-
-// MARK: - RefinementCancellable
-
-extension Diarizer: RefinementCancellable {}
-// `cancel()` is sync on `Diarizer`; async protocol methods accept sync
-// implementations, so no wrapper is needed.

@@ -12,15 +12,9 @@ import Logging
 /// `TranscriptAssembly.assembleAndWrite`.
 ///
 /// `OfflineRefiner` owns everything `RefinementPipeline` needs but does not
-/// build itself: wiring the dev-environment `Diarizer` (venv interpreter,
-/// repo root, `.env`), opening the persistent speaker library, and
-/// constructing the WhisperKit transcriber + FluidVAD wiring.
-///
-/// Robustness overrides (D3): the repo root is otherwise the `#filePath`
-/// dev-tree path baked into the binary at build time.
-/// `PULSARTRACE_REPO_ROOT`, `PULSARTRACE_VENV_PYTHON` and `HF_TOKEN`
-/// environment variables take precedence so a binary can run off a machine
-/// that is not the build host, ahead of full app packaging.
+/// build itself: wiring the in-process `Diarizer` (FluidAudio CoreML/ANE,
+/// D40 — no venv, no token, no IPC), opening the persistent speaker library,
+/// and constructing the WhisperKit transcriber + FluidVAD wiring.
 public struct OfflineRefiner: Sendable {
 
     /// A lightweight progress line — the CLI prints these to stderr, the
@@ -89,7 +83,7 @@ public struct OfflineRefiner: Sendable {
             whisperKit, vad: FluidVADRegionDetector())
         let options = TranscriptionOptions(language: language)
 
-        let diarizer = try Self.makeDiarizer()
+        let diarizer = Self.makeDiarizer(events: events)
 
         // The persistent speaker library at the standard location. A failure
         // to open it is non-fatal — refine continues with `Speaker_N` labels.
@@ -116,88 +110,12 @@ public struct OfflineRefiner: Sendable {
             progress: stageProgress)
     }
 
-    // MARK: - Diarizer wiring (dev environment)
+    // MARK: - Diarizer wiring
 
-    /// Build a `Diarizer` against the dev venv + repo `.env` (D3/D9).
-    ///
-    /// Packaging will later swap this for the bundled `python-build-standalone`
-    /// runtime; the IPC boundary is identical, only this wiring changes.
-    public static func makeDiarizer() throws -> Diarizer {
-        let repoRoot = repoRootURL()
-        let pythonWorkingDir = repoRoot
-            .appendingPathComponent("python/pulsartrace-ai")
-
-        // `PULSARTRACE_VENV_PYTHON` overrides the venv interpreter outright;
-        // otherwise it is resolved under the (possibly overridden) repo root.
-        let venvPython: URL
-        if let p = ProcessInfo.processInfo.environment["PULSARTRACE_VENV_PYTHON"],
-           !p.isEmpty {
-            venvPython = URL(fileURLWithPath: p)
-        } else {
-            venvPython = repoRoot
-                .appendingPathComponent("python/pulsartrace-ai/.venv/bin/python")
-        }
-
-        var env = dotEnv(repoRoot: repoRoot)
-        // A `HF_TOKEN` from the real process environment wins over the `.env`
-        // file (dev convenience vs. an explicit caller-supplied token).
-        if let token = ProcessInfo.processInfo.environment["HF_TOKEN"],
-           !token.isEmpty {
-            env["HF_TOKEN"] = token
-        }
-        // Cache the pyannote model under PulsarTrace's own cache dir (D10).
-        if let caches = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask).first {
-            env["HF_HOME"] = caches
-                .appendingPathComponent("PulsarTrace/huggingface").path
-        }
-
-        let config = Diarizer.Configuration(
-            pythonExecutable: venvPython,
-            workingDirectory: pythonWorkingDir,
-            environment: env)
-        return Diarizer(configuration: config)
-    }
-
-    /// Repo root.
-    ///
-    /// `PULSARTRACE_REPO_ROOT` (if set) takes precedence — a cheap robustness
-    /// override so the binary can be run off the build host ahead of full
-    /// app packaging (D3). The `#filePath`-derived path is the dev-tree
-    /// fallback: a build-machine path baked into the binary.
-    private static func repoRootURL() -> URL {
-        if let root = ProcessInfo.processInfo.environment["PULSARTRACE_REPO_ROOT"],
-           !root.isEmpty {
-            return URL(fileURLWithPath: root)
-        }
-        return URL(fileURLWithPath: #filePath)  // …/Sources/PulsarTraceEngine/Refinement/OfflineRefiner.swift
-            .deletingLastPathComponent()        // …/Refinement
-            .deletingLastPathComponent()        // …/PulsarTraceEngine
-            .deletingLastPathComponent()        // …/Sources
-            .deletingLastPathComponent()        // repo root
-    }
-
-    /// Load `KEY=VALUE` pairs from the repo `.env` (dev-only, D9).
-    private static func dotEnv(repoRoot: URL) -> [String: String] {
-        let envFile = repoRoot.appendingPathComponent(".env")
-        guard let text = try? String(contentsOf: envFile, encoding: .utf8) else {
-            return [:]
-        }
-        var out: [String: String] = [:]
-        for raw in text.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#"),
-                  let eq = line.firstIndex(of: "=") else { continue }
-            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: eq)...])
-                .trimmingCharacters(in: .whitespaces)
-            if value.count >= 2,
-               (value.hasPrefix("\"") && value.hasSuffix("\""))
-                || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                value = String(value.dropFirst().dropLast())
-            }
-            out[key] = value
-        }
-        return out
+    /// Build a `Diarizer` over the FluidAudio ANE backend (D40). Models load
+    /// lazily from the shared cache root (D10) on the first diarize call;
+    /// `events` receives `model_downloaded` after a fresh download.
+    public static func makeDiarizer(events: EventWriter? = nil) -> Diarizer {
+        Diarizer(configuration: .init(), events: events)
     }
 }

@@ -42,7 +42,7 @@ struct SpeakerLibraryPipelineTests {
 
     /// Decode a committed diarization JSON fixture into a `DiarizationResult`.
     private func diarization(_ name: String) throws -> DiarizationResult {
-        try DiarizationDecoder.decode(FixtureLocator.diarizationData(name))
+        try DiarizationFixtureDecoder.decode(FixtureLocator.diarizationData(name))
     }
 
     /// Lossy normalization for transcript-text comparison: lowercase, letters
@@ -66,12 +66,10 @@ struct SpeakerLibraryPipelineTests {
     }
 
     /// A `DiarizationResult` is `Sendable`; the test injects one as the refine
-    /// pipeline's diarization stage. A no-op `Diarizer` stands in for the
-    /// unused subprocess.
+    /// pipeline's diarization stage via `precomputedDiarization`, so this
+    /// stand-in `Diarizer` is never actually invoked.
     private func unusedDiarizer() -> Diarizer {
-        Diarizer(configuration: .init(
-            pythonExecutable: URL(fileURLWithPath: "/usr/bin/false"),
-            workingDirectory: URL(fileURLWithPath: "/tmp")))
+        Diarizer(configuration: .init())
     }
 
     // MARK: - The speaker-library "done" criterion

@@ -6,49 +6,52 @@ import Testing
 /// The `Diarizer.Configuration.timeout` is a *floor*, not a ceiling: when the
 /// system-stream WAV is longer than the configured timeout, the Diarizer
 /// expands the per-call budget to at least the audio's wall-clock length, so
-/// pyannote on a 78-minute meeting doesn't get killed at 10 minutes.
+/// diarization of a 78-minute meeting doesn't get killed at 10 minutes.
 ///
 /// The bug this guards against: rec_2026-05-20-100033 (78.5 min audio) failed
 /// with `DiarizeError.timedOut(seconds: 600)` → `RefinementJobError.diarizeCrashed`,
 /// because the offline path used the default 600s ceiling regardless of the
 /// recording's length.
+///
+/// Exercised through the test-only `operation:` seam (D40, in-process): the
+/// seam stands in for the FluidAudio engine call while the watchdog's
+/// floor-expansion is the system under test. A header-only WAV declares the
+/// audio's length so the probe can read it without samples on disk.
 @Suite("Diarizer timeout scales with audio duration")
 struct DiarizerTimeoutTests {
 
-    /// When the audio is longer than the configured timeout, the subprocess
-    /// is given the audio duration's worth of wall-clock — not the smaller
-    /// configured value. Verified by giving the diarizer a 1s configured
-    /// timeout against a WAV header declaring 30 seconds of audio, and a
-    /// fake subprocess that sleeps 3 seconds before exiting cleanly. The
-    /// old behavior would have killed the subprocess at 1s with `.timedOut`;
-    /// the new behavior lets it run to completion (and then surfaces
-    /// `.emptyOutput`, since the fake produced no JSON).
+    /// When the audio is longer than the configured timeout, the watchdog is
+    /// given the audio duration's worth of wall-clock — not the smaller
+    /// configured value. Verified with a 1 s configured floor against a WAV
+    /// header declaring 3 s of audio, and an operation that takes ~1.4 s: the
+    /// old 1 s ceiling would have fired `.timedOut`; the expanded 3 s budget
+    /// lets it run to completion.
     @Test("audio duration > configured timeout extends the watchdog budget")
     func longAudioExtendsTimeout() async throws {
         let wav = FileManager.default.temporaryDirectory
             .appendingPathComponent("pt-timeout-\(UUID().uuidString).wav")
-        try makeWAVHeaderClaiming(durationSeconds: 30).write(to: wav)
+        try makeWAVHeaderClaiming(durationSeconds: 3).write(to: wav)
         defer { try? FileManager.default.removeItem(at: wav) }
 
-        // 1s configured floor << 30s audio → effective budget should be 30s.
-        // Subprocess sleeps 3s then exits 0 with no stdout → `.emptyOutput`,
-        // which proves the watchdog did not fire at 1s.
-        let diarizer = Diarizer(configuration: .init(
-            pythonExecutable: URL(fileURLWithPath: "/bin/sh"),
-            workingDirectory: URL(fileURLWithPath: "/tmp"),
-            timeout: .seconds(1),
-            customArguments: ["-c", "sleep 3; exit 0"]))
+        let diarizer = Diarizer(
+            configuration: .init(timeout: .seconds(1)),
+            operation: { _ in
+                try await Task.sleep(for: .milliseconds(1400))
+                return DiarizationResultMapper.map(
+                    segments: [], speakerDatabase: [:],
+                    audioDuration: .seconds(3), modelRevision: "rev")
+            })
 
-        await #expect(throws: Diarizer.DiarizeError.emptyOutput) {
-            _ = try await diarizer.diarizeSystemStream(wavPath: wav)
-        }
+        // Must NOT throw `.timedOut` — the budget expanded to 3 s.
+        let result = try await diarizer.diarizeSystemStream(wavPath: wav)
+        #expect(result.modelRevision == "rev")
     }
 
     /// When the audio is shorter than the configured timeout, the configured
     /// value still applies — the floor is `configuration.timeout`, not the
-    /// audio duration. Verified by giving the diarizer a generous 30s
-    /// configured timeout against a 1s WAV and a subprocess that sleeps for
-    /// 3s: the run reaches the subprocess's clean exit, not the watchdog.
+    /// audio duration. Verified with a generous 3 s configured floor against a
+    /// 1 s WAV and an operation that takes ~1.4 s: it reaches completion well
+    /// inside the 3 s floor.
     @Test("short audio keeps the configured timeout floor")
     func shortAudioKeepsConfiguredFloor() async throws {
         let wav = FileManager.default.temporaryDirectory
@@ -56,15 +59,17 @@ struct DiarizerTimeoutTests {
         try makeWAVHeaderClaiming(durationSeconds: 1).write(to: wav)
         defer { try? FileManager.default.removeItem(at: wav) }
 
-        let diarizer = Diarizer(configuration: .init(
-            pythonExecutable: URL(fileURLWithPath: "/bin/sh"),
-            workingDirectory: URL(fileURLWithPath: "/tmp"),
-            timeout: .seconds(30),
-            customArguments: ["-c", "sleep 1; exit 0"]))
+        let diarizer = Diarizer(
+            configuration: .init(timeout: .seconds(3)),
+            operation: { _ in
+                try await Task.sleep(for: .milliseconds(1400))
+                return DiarizationResultMapper.map(
+                    segments: [], speakerDatabase: [:],
+                    audioDuration: .seconds(1), modelRevision: "rev")
+            })
 
-        await #expect(throws: Diarizer.DiarizeError.emptyOutput) {
-            _ = try await diarizer.diarizeSystemStream(wavPath: wav)
-        }
+        let result = try await diarizer.diarizeSystemStream(wavPath: wav)
+        #expect(result.modelRevision == "rev")
     }
 
     // MARK: - Helpers

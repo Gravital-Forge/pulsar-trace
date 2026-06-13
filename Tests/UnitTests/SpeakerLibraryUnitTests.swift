@@ -47,7 +47,7 @@ struct SpeakerLibraryUnitTests {
 
     /// Decode a committed diarization fixture's per-speaker embeddings.
     private func fixtureEmbeddings(_ name: String) throws -> [String: [Float]] {
-        let result = try DiarizationDecoder.decode(
+        let result = try DiarizationFixtureDecoder.decode(
             DiarizationFixtureLocator.data(name))
         return Dictionary(
             result.embeddings.map { ($0.speaker, $0.vector) },
@@ -631,7 +631,7 @@ struct SpeakerLibraryUnitTests {
         let distinct = try fixtureEmbeddings(
             "two-speakers-alternating.json")["SPEAKER_01"]!
 
-        let rev = try DiarizationDecoder.decode(
+        let rev = try DiarizationFixtureDecoder.decode(
             DiarizationFixtureLocator.data("single-speaker-30s.json")).modelRevision
 
         let created = try await library.createSpeaker(
