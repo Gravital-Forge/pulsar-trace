@@ -77,7 +77,8 @@ A file begins with a marker comment and a heading:
     system-stream speaker in `final.md` carries its **library name**: a
     user-assigned name (`Steve`) for a recognised returning speaker, or an
     `Unknown #N` placeholder for a speaker the library has not been given a
-    name for yet. The refine pass diarizes the system stream with pyannote,
+    name for yet. The refine pass diarizes the system stream in-process on the
+    Apple Neural Engine (FluidAudio's CoreML port of pyannote community-1),
     then reconciles each cluster against the persistent speaker library by
     centroid cosine similarity — a returning voice is auto-labelled with the
     name it was given before, and its stable `spk_<ulid>` id is recorded in
