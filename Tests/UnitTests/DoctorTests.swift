@@ -29,14 +29,19 @@ struct DoctorTests {
             isAppleSilicon: false).status == .warn)
     }
 
-    // MARK: - Python runtime
+    // MARK: - diarization models
 
-    @Test("a missing diarization runtime is a warning")
-    func pythonRuntime() {
-        #expect(EnvironmentDoctor.pythonRuntimeCheck(
-            interpreterPresent: true).status == .ok)
-        #expect(EnvironmentDoctor.pythonRuntimeCheck(
-            interpreterPresent: false).status == .warn)
+    @Test("cached diarization models pass")
+    func diarizerModelsCachedIsOK() {
+        let check = EnvironmentDoctor.diarizerModelsCheck(cached: true)
+        #expect(check.status == .ok)
+    }
+
+    @Test("missing diarization models are an informational warning")
+    func diarizerModelsMissingIsInformationalWarn() {
+        let check = EnvironmentDoctor.diarizerModelsCheck(cached: false)
+        #expect(check.status == .warn)
+        #expect(check.detail.contains("first"))
     }
 
     // MARK: - speaker library
