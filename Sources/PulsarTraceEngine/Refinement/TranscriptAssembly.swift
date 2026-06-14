@@ -104,11 +104,16 @@ enum TranscriptAssembly {
             marker: .final)
 
         // Distinct speakers, in first-appearance order, splitting any
-        // co-attributed `Speaker_0+Speaker_1` label into its components.
+        // co-attributed `Speaker_0+Speaker_1` label into its components. The
+        // `Unrecognized` sentinel labels no-overlap lines so no text is lost,
+        // but it is not a real speaker (DiarizedTranscript): it never earns a
+        // row in the speaker summary — the `metadata.json` `speakers` array or
+        // the recordings-list pills. It is always solo, never a `+` component.
         var seen = Set<String>()
         var speakers: [String] = []
         for row in rows {
             for component in row.label.split(separator: "+").map(String.init) {
+                if component == DiarizationMerge.unknownSpeaker { continue }
                 if seen.insert(component).inserted { speakers.append(component) }
             }
         }
@@ -188,11 +193,10 @@ enum TranscriptAssembly {
                 isMicrophone: label == "You",
                 speakerId: speakerIdByLabel[label])
         }
-        let pyannote = diarization.map {
-            RefinementMetadata.PyannoteModelInfo(
+        let diarizationModel = diarization.map {
+            RefinementMetadata.DiarizationModelInfo(
                 id: $0.model,
-                revision: $0.modelRevision,
-                libraryVersion: $0.modelVersion)
+                revision: $0.modelRevision)
         }
         return RefinementMetadata(
             recordingId: folder.recordingId,
@@ -201,7 +205,7 @@ enum TranscriptAssembly {
             durationSeconds: audioDurationSeconds,
             speakers: speakerEntries,
             whisperModel: .init(name: whisperModelName, sha256: whisperModelSHA256),
-            pyannoteModel: pyannote,
+            diarizationModel: diarizationModel,
             language: language,
             sourceBasename: sourceBasename)
     }

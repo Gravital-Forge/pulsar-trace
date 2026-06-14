@@ -16,6 +16,14 @@ Source of truth: `PRD.md`. Architectural deviations logged in `DECISIONS.md`.
 > are removed. The epic entries below are the historical build log and name the
 > whisper.cpp stack as it stood when each epic shipped; see `DECISIONS.md` D39
 > for the current engine.
+>
+> **Status note (D40):** diarization has likewise moved off Python/pyannote onto
+> the Apple Neural Engine — FluidAudio's CoreML port of pyannote community-1, run
+> in-process (`DiarizerEngine`) for both the live and offline passes. The entire
+> `python/` tree, the venv/`build-venv.sh` setup, the `HF_TOKEN`/`.env` flow, and
+> the pyannote subprocesses are removed. The Epic 3 / Epic 6 diarization entries
+> below are the historical build log and name the pyannote/Python stack as it
+> stood when each epic shipped; see `DECISIONS.md` D40 for the current engine.
 
 Dev environment, the audio/capture stack, and the Claude Code sandbox model
 (what runs sandboxed vs not, and why) are documented in `PREWORK.md` — read it

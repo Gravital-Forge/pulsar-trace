@@ -33,14 +33,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(1),
                     speakers: ["SPEAKER_00"],
                     spans: [SpeakerSpan(
-                        speaker: "SPEAKER_00",
-                        start: .seconds(0),
-                        end: .seconds(1))],
-                    exclusiveSpans: [SpeakerSpan(
                         speaker: "SPEAKER_00",
                         start: .seconds(0),
                         end: .seconds(1))],
@@ -114,11 +109,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(3),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
@@ -188,11 +181,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(2),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: gate,
@@ -292,13 +283,11 @@ struct ResumableRefinerTests {
             },
             diarize: { _ in
                 DiarizationResult(
-                    model: "stub", modelVersion: "stub",
+                    model: "stub",
                     audioDuration: .seconds(1),
                     speakers: ["SPEAKER_00"],
                     spans: [SpeakerSpan(speaker: "SPEAKER_00",
                                         start: .seconds(0), end: .seconds(1))],
-                    exclusiveSpans: [SpeakerSpan(speaker: "SPEAKER_00",
-                                                 start: .seconds(0), end: .seconds(1))],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
@@ -432,11 +421,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(1),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
@@ -544,14 +531,9 @@ struct ResumableRefinerTests {
                 }
                 return DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(1),
                     speakers: ["speaker_0"],
                     spans: [SpeakerSpan(
-                        speaker: "speaker_0",
-                        start: .seconds(0),
-                        end: .seconds(1))],
-                    exclusiveSpans: [SpeakerSpan(
                         speaker: "speaker_0",
                         start: .seconds(0),
                         end: .seconds(1))],
@@ -599,11 +581,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(1),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
@@ -649,11 +629,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(2),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),

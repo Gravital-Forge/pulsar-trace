@@ -12,7 +12,6 @@ flows, Gatekeeper, real device switching.
 
 - [ ] Fresh clone builds: `swift build` succeeds with no errors.
 - [ ] The narrow filters listed in CLAUDE.md all green (the broad `swift test --filter PipelineTests` is known-flaky under cross-suite races — see CLAUDE.md).
-- [ ] `pytest` green from `python/pulsartrace-ai/` after `python/build-venv.sh`.
 - [ ] `pulsartrace --help` prints usage; `pulsartrace version` prints the version.
 - [ ] Pipe smoke: `ffmpeg -re -i Tests/Fixtures/audio/single-speaker-30s.wav -f f32le -ac 1 -ar 16000 - | .build/debug/pulsartrace-engine --stdin` reports a frame count.
 - [ ] After a clean engine/CLI run, today's `~/Library/Application Support/PulsarTrace/events/*.jsonl` contains an `app_started` and `app_stopped` pair.
@@ -92,14 +91,14 @@ session — `MenuBarExtra` rendering, the global hotkey, audio playback.
 - [ ] Empty speaker library shows the "Record a meeting to get started" state;
       empty recordings list shows its "No recordings yet" state.
 
-## ANE pipeline (D39)
+## ANE pipeline (D39/D40)
 
 - [ ] **GPU stays free during live + Meet.** Start a Google Meet call with
   screen-share, start a recording, then run
   `sudo powermetrics --samplers gpu_power,ane_power -i 1000 -n 30`.
   Expect: ANE power clearly active during speech; GPU residency/power stays
-  near the no-recording baseline (windowed live diarization adds a small
-  periodic GPU blip — that is pyannote/MPS, deferred in D39). Meet video and
+  near the no-recording baseline (live diarization also runs on the ANE
+  since D40 — the old pyannote/MPS GPU blip is gone). Meet video and
   screen-share stay fluent. (The old pipeline showed ~90% GPU here.)
 - [ ] **Refine beats the old baseline and leaves the GPU free.** Refine
   a long (ideally ~1 h) recording with `large-v3-turbo` while watching

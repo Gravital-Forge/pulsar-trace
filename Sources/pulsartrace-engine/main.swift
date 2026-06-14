@@ -80,8 +80,8 @@ struct EngineMain {
     /// else a sibling folder named for the fixture stem, else a timestamped
     /// folder in the cwd.
     ///
-    /// Live diarization is best-effort: if the pyannote subprocess cannot
-    /// start it is skipped and system speakers stay the generic
+    /// Live diarization is best-effort: if the in-process diarizer engine
+    /// (D40) cannot load it is skipped and system speakers stay the generic
     /// `Them?`. `--no-live-diarization` skips it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
         // --- resolve the source(s) ------------------------------------------
@@ -161,12 +161,24 @@ struct EngineMain {
             ? ParakeetWindowTranscriber(engine: parakeet)
             : nil
 
-        // --- live diarization config (dev venv + .env, like RefineCommand) --
-        let liveDiarizerConfig: LiveDiarizer.Configuration?
-        if args.contains("--no-live-diarization") {
-            liveDiarizerConfig = nil
-        } else {
-            liveDiarizerConfig = Self.liveDiarizerConfig()
+        // --- live diarization engine (resident, ANE — D40) ------------------
+        // Loaded next to Parakeet so the model download happens before audio
+        // starts. A load failure degrades to generic `Them` labels, never
+        // blocks the live pass.
+        var diarizerEngine: DiarizerEngine?
+        if !args.contains("--no-live-diarization") {
+            do {
+                diarizerEngine = try await DiarizerEngine.load(
+                    cacheRoot: AppPaths.standard.modelsCacheDirectory,
+                    events: lifecycle.events,
+                    logger: Logger(label: LogSubsystem.engine))
+            } catch {
+                Logger(label: LogSubsystem.engine).error(
+                    """
+                    live diarization unavailable — continuing with generic \
+                    Them labels: \(PathRedactor.redactHome("\(error)"))
+                    """)
+            }
         }
 
         // --- speaker library, READ-ONLY (R18/R32) ---------------------------
@@ -206,7 +218,7 @@ struct EngineMain {
                 recordingStart: recordingStart,
                 recordingId: recordingId,
                 transcriberConfig: transcriberConfig,
-                liveDiarizerConfig: liveDiarizerConfig),
+                liveDiarizerEngine: diarizerEngine),
             systemTranscriber: transcriber,
             micTranscriber: micTranscriber,
             systemSource: source,
@@ -227,67 +239,6 @@ struct EngineMain {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd-HHmmss"
         return f.string(from: Date())
-    }
-
-    /// Build the `LiveDiarizer.Configuration` against the dev venv + repo
-    /// `.env` — mirrors `RefineCommand.makeDiarizer`'s wiring (project-docs/DECISIONS.md
-    /// D3/D9). A future change swaps this for the bundled python runtime.
-    static func liveDiarizerConfig() -> LiveDiarizer.Configuration {
-        let env = ProcessInfo.processInfo.environment
-        let repoRoot: URL
-        if let root = env["PULSARTRACE_REPO_ROOT"], !root.isEmpty {
-            repoRoot = URL(fileURLWithPath: root)
-        } else {
-            repoRoot = URL(fileURLWithPath: #filePath)   // …/Sources/pulsartrace-engine/main.swift
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-        }
-        let workingDir = repoRoot.appendingPathComponent("python/pulsartrace-ai")
-        let venvPython: URL
-        if let p = env["PULSARTRACE_VENV_PYTHON"], !p.isEmpty {
-            venvPython = URL(fileURLWithPath: p)
-        } else {
-            venvPython = workingDir.appendingPathComponent(".venv/bin/python")
-        }
-
-        var subprocessEnv = Self.dotEnv(repoRoot: repoRoot)
-        if let token = env["HF_TOKEN"], !token.isEmpty {
-            subprocessEnv["HF_TOKEN"] = token
-        }
-        if let caches = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask).first {
-            subprocessEnv["HF_HOME"] = caches
-                .appendingPathComponent("PulsarTrace/huggingface").path
-        }
-        return LiveDiarizer.Configuration(
-            pythonExecutable: venvPython,
-            workingDirectory: workingDir,
-            environment: subprocessEnv)
-    }
-
-    /// Load `KEY=VALUE` pairs from the repo `.env` (dev-only, D9).
-    static func dotEnv(repoRoot: URL) -> [String: String] {
-        let envFile = repoRoot.appendingPathComponent(".env")
-        guard let text = try? String(contentsOf: envFile, encoding: .utf8) else {
-            return [:]
-        }
-        var out: [String: String] = [:]
-        for raw in text.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#"),
-                  let eq = line.firstIndex(of: "=") else { continue }
-            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: eq)...])
-                .trimmingCharacters(in: .whitespaces)
-            if value.count >= 2,
-               (value.hasPrefix("\"") && value.hasSuffix("\""))
-                || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                value = String(value.dropFirst().dropLast())
-            }
-            out[key] = value
-        }
-        return out
     }
 
     /// Resolve the fixture WAV path from either `--fixture <p>` or

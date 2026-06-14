@@ -11,17 +11,9 @@ struct RefinementJobErrorTests {
 
     // MARK: - Classifier unit tests
 
-    @Test("DiarizeError.pythonNotFound → missingDependency, not retryable")
-    func classifiesPythonNotFound() {
-        let err = Diarizer.DiarizeError.pythonNotFound("/usr/bin/python3")
-        let classified = RefinementJobError.classify(err)
-        #expect(classified.errorClass == "missingDependency")
-        #expect(classified.retryAvailable == false)
-    }
-
-    @Test("DiarizeError.launchFailed → missingDependency, not retryable")
-    func classifiesLaunchFailed() {
-        let err = Diarizer.DiarizeError.launchFailed("exec failed")
+    @Test("DiarizeError.modelLoadFailed → missingDependency, not retryable")
+    func classifiesModelLoadFailed() {
+        let err = Diarizer.DiarizeError.modelLoadFailed("cache missing")
         let classified = RefinementJobError.classify(err)
         #expect(classified.errorClass == "missingDependency")
         #expect(classified.retryAvailable == false)
@@ -35,9 +27,9 @@ struct RefinementJobErrorTests {
         #expect(classified.retryAvailable == true)
     }
 
-    @Test("DiarizeError.nonZeroExit → diarizeCrashed, retryable")
-    func classifiesNonZeroExit() {
-        let err = Diarizer.DiarizeError.nonZeroExit(code: 1, stderrTail: "OOM")
+    @Test("DiarizeError.processingFailed → diarizeCrashed, retryable")
+    func classifiesProcessingFailed() {
+        let err = Diarizer.DiarizeError.processingFailed("CoreML error")
         let classified = RefinementJobError.classify(err)
         #expect(classified.errorClass == "diarizeCrashed")
         #expect(classified.retryAvailable == true)
@@ -46,21 +38,6 @@ struct RefinementJobErrorTests {
     @Test("DiarizeError.timedOut → diarizeCrashed, retryable")
     func classifiesTimedOut() {
         let err = Diarizer.DiarizeError.timedOut(seconds: 600)
-        let classified = RefinementJobError.classify(err)
-        #expect(classified.errorClass == "diarizeCrashed")
-        #expect(classified.retryAvailable == true)
-    }
-
-    @Test("DiarizeError.emptyOutput → diarizeCrashed, retryable")
-    func classifiesEmptyOutput() {
-        let classified = RefinementJobError.classify(Diarizer.DiarizeError.emptyOutput)
-        #expect(classified.errorClass == "diarizeCrashed")
-        #expect(classified.retryAvailable == true)
-    }
-
-    @Test("DiarizeError.decodeFailed → diarizeCrashed, retryable")
-    func classifiesDecodeFailed() {
-        let err = Diarizer.DiarizeError.decodeFailed("bad JSON")
         let classified = RefinementJobError.classify(err)
         #expect(classified.errorClass == "diarizeCrashed")
         #expect(classified.retryAvailable == true)
@@ -169,7 +146,7 @@ struct RefinementJobErrorTests {
     @Test("queue: diarizeCrashed error produces .failed(errorClass: diarizeCrashed, retryAvailable: true)")
     func queueProducesDiarizeCrashedFailed() async throws {
         let queue = try await makeQueue(
-            throwing: Diarizer.DiarizeError.nonZeroExit(code: 1, stderrTail: "crash"))
+            throwing: Diarizer.DiarizeError.processingFailed("crash"))
         let state = try await runAndWaitForFailure(queue)
         if case .failed(let cls, let retry) = state {
             #expect(cls == "diarizeCrashed")
@@ -182,7 +159,7 @@ struct RefinementJobErrorTests {
     @Test("queue: missingDependency error produces .failed(errorClass: missingDependency, retryAvailable: false)")
     func queueProducesMissingDependencyFailed() async throws {
         let queue = try await makeQueue(
-            throwing: Diarizer.DiarizeError.pythonNotFound("/no/python"))
+            throwing: Diarizer.DiarizeError.modelLoadFailed("cache missing"))
         let state = try await runAndWaitForFailure(queue)
         if case .failed(let cls, let retry) = state {
             #expect(cls == "missingDependency")

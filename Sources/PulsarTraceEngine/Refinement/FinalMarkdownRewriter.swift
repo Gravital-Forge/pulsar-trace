@@ -374,7 +374,7 @@ public struct FinalMarkdownRewriter: Sendable {
                 durationSeconds: metadata.durationSeconds,
                 speakers: deduped,
                 whisperModel: metadata.whisperModel,
-                pyannoteModel: metadata.pyannoteModel,
+                diarizationModel: metadata.diarizationModel,
                 language: metadata.language,
                 sourceBasename: metadata.sourceBasename)
             try AtomicFile.write(try updated.encoded(), to: metadataURL)
@@ -617,7 +617,7 @@ public struct FinalMarkdownRewriter: Sendable {
                 durationSeconds: metadata.durationSeconds,
                 speakers: updatedSpeakers,
                 whisperModel: metadata.whisperModel,
-                pyannoteModel: metadata.pyannoteModel,
+                diarizationModel: metadata.diarizationModel,
                 language: metadata.language,
                 sourceBasename: metadata.sourceBasename)
             try AtomicFile.write(try updated.encoded(), to: metadataURL)

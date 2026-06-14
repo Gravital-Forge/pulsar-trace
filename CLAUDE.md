@@ -74,7 +74,7 @@ reentrant across `await` suspensions and won't actually serialize).
 - `swift test --filter WhisperKitRefine` — refine ANE backend (one-time ~626 MB download)
 - `swift test --filter FluidVAD` — Silero-CoreML region detection
 - `swift test --filter Speaker` — speaker library + reconciler
-- `swift test --filter DiarizationE2E`
+- `swift test --filter DiarizationE2E` — FluidAudio offline diarization (one-time ~21 MB model download)
 - `swift test --filter Source`
 - `swift test --filter Lifecycle`
 - `swift test --filter FinalMarkdownRewriter`

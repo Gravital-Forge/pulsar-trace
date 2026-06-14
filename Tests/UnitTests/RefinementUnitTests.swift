@@ -154,17 +154,16 @@ struct RefinementUnitTests {
                 .init(label: "Speaker_0", isMicrophone: false),
             ],
             whisperModel: .init(name: "base", sha256: "abc123"),
-            pyannoteModel: .init(
-                id: "pyannote/speaker-diarization-community-1",
-                revision: "deadbeef",
-                libraryVersion: "4.0.4"),
+            diarizationModel: .init(
+                id: "FluidInference/speaker-diarization-coreml",
+                revision: "deadbeef"),
             language: "en",
             sourceBasename: "demo.wav")
 
         let json = try metadata.encoded()
         let obj = try JSONSerialization.jsonObject(with: json) as! [String: Any]
 
-        #expect(obj["schema_version"] as? Int == 1)
+        #expect(obj["schema_version"] as? Int == 2)
         #expect(obj["recording_id"] as? String == "rec_demo")
         #expect(obj["recording_start"] as? String == "2026-04-30T14:30:00Z")
         #expect(obj["refined_at"] as? String == "2026-04-30T15:00:00Z")
@@ -176,11 +175,10 @@ struct RefinementUnitTests {
         #expect(whisper["name"] as? String == "base")
         #expect(whisper["sha256"] as? String == "abc123")
 
-        let pyannote = obj["pyannote_model"] as! [String: Any]
-        #expect(pyannote["id"] as? String
-            == "pyannote/speaker-diarization-community-1")
-        #expect(pyannote["revision"] as? String == "deadbeef")
-        #expect(pyannote["library_version"] as? String == "4.0.4")
+        let diarization = obj["diarization_model"] as! [String: Any]
+        #expect(diarization["id"] as? String
+            == "FluidInference/speaker-diarization-coreml")
+        #expect(diarization["revision"] as? String == "deadbeef")
 
         let speakers = obj["speakers"] as! [[String: Any]]
         #expect(speakers.count == 2)
@@ -198,15 +196,15 @@ struct RefinementUnitTests {
             durationSeconds: 12.5,
             speakers: [.init(label: "Speaker_0", isMicrophone: false)],
             whisperModel: .init(name: "large-v3", sha256: "f00d"),
-            pyannoteModel: nil,
+            diarizationModel: nil,
             language: "en",
             sourceBasename: "x.wav")
 
         let data = try metadata.encoded()
         let decoded = try JSONDecoder().decode(RefinementMetadata.self, from: data)
         #expect(decoded == metadata)
-        // pyannoteModel is omittable when diarization was skipped.
-        #expect(decoded.pyannoteModel == nil)
+        // diarizationModel is omittable when diarization was skipped.
+        #expect(decoded.diarizationModel == nil)
     }
 
     // MARK: - Event payload encoding

@@ -51,7 +51,7 @@ struct DiarizationMergePipelineTests {
 
     @Test("Two-speaker merge renders stable Speaker_N markdown")
     func twoSpeakerMergeSnapshot() throws {
-        let diarization = try DiarizationDecoder.decode(
+        let diarization = try DiarizationFixtureDecoder.decode(
             FixtureLocator.diarizationData("two-speakers-alternating.json"))
         let document = DiarizationMerge.diarizedDocument(
             recordingStart: Self.start,
@@ -69,7 +69,7 @@ struct DiarizationMergePipelineTests {
 
     @Test("Merged markdown is byte-identical across repeated merges")
     func mergeIsStableAcrossRuns() throws {
-        let diarization = try DiarizationDecoder.decode(
+        let diarization = try DiarizationFixtureDecoder.decode(
             FixtureLocator.diarizationData("two-speakers-alternating.json"))
         let segments = alternatingSegments()
 
@@ -84,7 +84,7 @@ struct DiarizationMergePipelineTests {
 
     @Test("Single-speaker recording yields one speaker label, no ghosts")
     func singleSpeakerMerge() throws {
-        let diarization = try DiarizationDecoder.decode(
+        let diarization = try DiarizationFixtureDecoder.decode(
             FixtureLocator.diarizationData("single-speaker-30s.json"))
         let segments = [
             TranscriptSegment(start: .seconds(1), end: .seconds(5),

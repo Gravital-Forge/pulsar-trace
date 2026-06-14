@@ -7,11 +7,11 @@ import Foundation
 /// not the generic `Them?`.
 ///
 /// This exercises the exact wiring fixed in review item SW-B: `LiveRunner`
-/// must pass the live diarizer's *real* pyannote model revision to
+/// must pass the live diarizer's *real* model revision to
 /// `SpeakerLibrary.bestMatch`. `bestMatch` skips any library speaker whose
-/// `pyannoteModelRevision` does not equal the one passed in (Open Question
-/// #3) — so with the old hardcoded `""` the lookup matched nothing and R18
-/// was dead. These tests prove the lookup now fires, and that the revision
+/// `modelRevision` does not equal the one passed in (Open Question
+/// #3 / D40) — so with the old hardcoded `""` the lookup matched nothing and
+/// R18 was dead. These tests prove the lookup now fires, and that the revision
 /// scoping is real (a mismatched revision still falls back to `Them`).
 ///
 /// No Python subprocess: `LiveDiarizer._seedForTesting` pre-seeds the running
@@ -85,12 +85,10 @@ struct LiveRunnerLibraryLookupTests {
         #expect(speaker.name == "Dana Lee")
 
         // A live diarizer seeded so its `Them` centroid is the same vector and
-        // its reported model revision matches the library speaker's.
-        let diarizer = LiveDiarizer(
-            configuration: .init(
-                pythonExecutable: URL(fileURLWithPath: "/usr/bin/true"),
-                workingDirectory: dir),
-            scratchDirectory: dir.appendingPathComponent("scratch"))
+        // its reported model revision matches the library speaker's. The
+        // test-seam initializer carries no engine — `_seedForTesting` supplies
+        // the state the real windowed pass would otherwise produce.
+        let diarizer = LiveDiarizer(testSeamLogger: .init(label: "test"))
         await diarizer._seedForTesting(
             speakers: [(key: "Them", centroid: knownCentroid)],
             modelRevision: revision)
@@ -127,11 +125,7 @@ struct LiveRunnerLibraryLookupTests {
         // … but the live diarizer reports a *different* revision. Even though
         // the centroid is identical, `bestMatch` must skip the speaker
         // (Open Question #3) — the live label degrades to generic `Them`.
-        let diarizer = LiveDiarizer(
-            configuration: .init(
-                pythonExecutable: URL(fileURLWithPath: "/usr/bin/true"),
-                workingDirectory: dir),
-            scratchDirectory: dir.appendingPathComponent("scratch"))
+        let diarizer = LiveDiarizer(testSeamLogger: .init(label: "test"))
         await diarizer._seedForTesting(
             speakers: [(key: "Them", centroid: knownCentroid)],
             modelRevision: "new-revision")

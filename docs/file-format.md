@@ -77,13 +77,16 @@ A file begins with a marker comment and a heading:
     system-stream speaker in `final.md` carries its **library name**: a
     user-assigned name (`Steve`) for a recognised returning speaker, or an
     `Unknown #N` placeholder for a speaker the library has not been given a
-    name for yet. The refine pass diarizes the system stream with pyannote,
+    name for yet. The refine pass diarizes the system stream in-process on the
+    Apple Neural Engine (FluidAudio's CoreML port of pyannote community-1),
     then reconciles each cluster against the persistent speaker library by
     centroid cosine similarity — a returning voice is auto-labelled with the
     name it was given before, and its stable `spk_<ulid>` id is recorded in
     `metadata.json`. When an utterance is talked over by two speakers, both
     names are surfaced joined with `+` (e.g. `Steve+Unknown #1`); an utterance
     that overlaps no diarized span keeps the fallback label `Unrecognized`.
+    `Unrecognized` is a per-line fallback, not a speaker: it never earns a row
+    in `metadata.json`'s `speakers` array (nor in any speaker-summary UI).
     - *Historical note:* Epic 2 emitted a single placeholder label `Speaker`;
       Epic 3 replaced it with diarized `Speaker_0`, `Speaker_1`, … labels;
       Epic 5 replaced those positional labels with persistent library names.
@@ -178,7 +181,7 @@ parsing `final.md` prose. It is a public API surface; it is written atomically
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "recording_id": "rec_two-speakers-alternating",
   "recording_start": "2026-05-16T03:26:49Z",
   "refined_at": "2026-05-16T03:26:49Z",
@@ -193,38 +196,36 @@ parsing `final.md` prose. It is a public API surface; it is written atomically
     "name": "large-v3-turbo",
     "sha256": ""
   },
-  "pyannote_model": {
-    "id": "pyannote/speaker-diarization-community-1",
-    "revision": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
-    "library_version": "4.0.4"
+  "diarization_model": {
+    "id": "FluidInference/speaker-diarization-coreml",
+    "revision": "<sha256 content digest of the model directory>"
   }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | integer | Sidecar schema version. Starts at 1; bumped on a breaking change. |
+| `schema_version` | integer | Sidecar schema version. Currently `2`; bumped on a breaking change. (v2: `pyannote_model` → `diarization_model`; `library_version` dropped — D40.) |
 | `recording_id` | string | `rec_<short>`, derived from the recording folder / WAV name. Stable across re-refines. |
 | `recording_start` | string | Wall-clock recording start, ISO-8601 UTC. Mirrors the `final.md` heading. |
 | `refined_at` | string | Wall-clock start of the refine pass that produced this file, ISO-8601 UTC. |
 | `duration_seconds` | number | Audio duration (the longer of the streams). |
 | `language` | string | Transcription language the refine pass detected/used (ISO-639-1). |
 | `source_basename` | string | Basename of the user-supplied `refine` input — never a full path. |
-| `speakers` | array | One entry per distinct speaker in `final.md`. |
+| `speakers` | array | One entry per distinct speaker in `final.md`. The `Unrecognized` fallback label (a no-overlap or delisted line) is not a speaker and never appears here. |
 | `speakers[].label` | string | Transcript-facing label — the persistent library name (`Steve`, `Unknown #1`) for a system speaker; `You` for the mic stream. (Pre-Epic-5 files carry `Speaker_N`.) |
 | `speakers[].is_microphone` | boolean | `true` for the `You` (mic) speaker — never diarized (R17). |
 | `speakers[].speaker_id` | string\|null | Stable speaker-library id (`spk_<ulid>`, R83) for a reconciled system speaker. `null` for `You`, and for a speaker not reconciled (diarization skipped, or the library was unavailable). An agent keys off this id for stable identity across renames. |
 | `whisper_model.name` | string | Refine-pass model name (`large-v3-turbo`, `large-v3-whisperkit`). The field name is frozen public schema (it predates the ANE move — see DECISIONS.md D39). |
 | `whisper_model.sha256` | string | Pinned SHA-256 of the model file, when the model has a pinned hash. Empty (`""`) for the SDK-managed CoreML bundles, whose identity is tracked by a directory digest instead (D39). |
-| `pyannote_model` | object\|null | pyannote model identity. `null` when diarization was skipped (e.g. no speech detected). |
-| `pyannote_model.id` | string | Model id, e.g. `pyannote/speaker-diarization-community-1`. |
-| `pyannote_model.revision` | string | Hugging Face hub commit SHA of the model checkpoint. |
-| `pyannote_model.library_version` | string | pyannote.audio library version. |
+| `diarization_model` | object\|null | Diarization model identity. `null` when diarization was skipped (e.g. no speech detected). |
+| `diarization_model.id` | string | Model id, e.g. `FluidInference/speaker-diarization-coreml`. |
+| `diarization_model.revision` | string | Content digest (DirectoryDigest SHA-256) of the model directory — the speaker library's centroid-compatibility key (D40). |
 
 When a recording has no usable speech, `final.md` still carries the
 `<!-- pulsartrace:final -->` marker and a single explanatory note line
 (`_(no speech detected in this recording)_`); `metadata.json` is still written
-with an empty `speakers` array and `pyannote_model: null`.
+with an empty `speakers` array and `diarization_model: null`.
 
 ## Versioning
 

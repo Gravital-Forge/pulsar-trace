@@ -6,17 +6,14 @@ import Foundation
 /// R20, R21, R24, R27, R38, R39, plus the refinement event sequence.
 ///
 /// These tests run the **real** pipeline end-to-end — real WhisperKit
-/// (`large-v3-turbo`, D39) and a real pyannote subprocess — on a committed
-/// fixture, so a genuine integration break is caught. They are therefore
-/// slow (pyannote model load ~10–30s) and depend on the dev venv + an
-/// `HF_TOKEN`; the suite **skips cleanly** when that environment is absent,
-/// so a `swift test` without the Python layer set up does not fail.
+/// (`large-v3-turbo`, D39) and the real in-process FluidAudio diarizer
+/// (community-1 on the ANE, D40) — on a committed fixture, so a genuine
+/// integration break is caught. They are slow (model loads) and download the
+/// CoreML bundles on first run; subsequent runs are offline. `.serialized`
+/// keeps the suite's shared model loads from racing each other.
 ///
 /// Determinism: WhisperKit decodes temperature-0-first; transcript text is
 /// asserted via fixture keywords, which are robust to decoder wording drift.
-/// pyannote runs with fixed seeds (PRD §12) — so `metadata.json` (volatile
-/// fields normalized) is stable across runs. `.serialized` keeps the suite's
-/// shared model loads from racing each other.
 @Suite("Refinement pipeline", .serialized)
 struct RefinementPipelineTests {
 
@@ -37,58 +34,11 @@ struct RefinementPipelineTests {
 
     // MARK: - Environment
 
-    /// Repo root: `Tests/PipelineTests/` → up three.
-    private static let repoRoot: URL = {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // Tests/PipelineTests
-            .deletingLastPathComponent()   // Tests
-            .deletingLastPathComponent()   // repo root
-    }()
-
-    private static var venvPython: URL {
-        repoRoot.appendingPathComponent("python/pulsartrace-ai/.venv/bin/python")
-    }
-
-    /// Load `KEY=VALUE` pairs from the repo `.env` (dev-only, D9).
-    private static func dotEnv() -> [String: String] {
-        let envFile = repoRoot.appendingPathComponent(".env")
-        guard let text = try? String(contentsOf: envFile, encoding: .utf8) else {
-            return [:]
-        }
-        var out: [String: String] = [:]
-        for raw in text.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#"),
-                  let eq = line.firstIndex(of: "=") else { continue }
-            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: eq)...])
-                .trimmingCharacters(in: .whitespaces)
-            if value.count >= 2,
-               (value.hasPrefix("\"") && value.hasSuffix("\""))
-                || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                value = String(value.dropFirst().dropLast())
-            }
-            out[key] = value
-        }
-        return out
-    }
-
-    /// A `Diarizer` against the dev venv, or `nil` to skip when unavailable.
-    private static func makeDiarizer() -> Diarizer? {
-        guard FileManager.default.isExecutableFile(atPath: venvPython.path) else {
-            return nil
-        }
-        var env = dotEnv()
-        guard env["HF_TOKEN"]?.isEmpty == false else { return nil }
-        if let caches = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask).first {
-            env["HF_HOME"] = caches
-                .appendingPathComponent("PulsarTrace/huggingface").path
-        }
-        return Diarizer(configuration: .init(
-            pythonExecutable: venvPython,
-            workingDirectory: repoRoot.appendingPathComponent("python/pulsartrace-ai"),
-            environment: env))
+    /// The real in-process FluidAudio diarizer (D40). Models load lazily from
+    /// the shared cache root on the first diarize call (~21 MB download on a
+    /// cold cache, offline thereafter).
+    private static func makeDiarizer() -> Diarizer {
+        Diarizer(configuration: .init())
     }
 
     /// A throwaway temp directory; cleaned up by the caller.
@@ -104,7 +54,7 @@ struct RefinementPipelineTests {
 
     @Test("refine of a bare WAV produces a well-formed Speaker_N final.md")
     func bareWavEndToEnd() async throws {
-        guard let diarizer = Self.makeDiarizer() else { return }  // skip
+        let diarizer = Self.makeDiarizer()
 
         // Copy the fixture into a temp dir so the output folder is disposable.
         let dir = tempDir()
@@ -132,13 +82,15 @@ struct RefinementPipelineTests {
         // R38: the final-pass marker is the first line.
         #expect(markdown.hasPrefix("<!-- pulsartrace:final -->\n"))
         #expect(markdown.contains("## Transcript — "))
-        // R13 utterance lines with diarized Speaker_N labels.
+        // R13 utterance lines carry diarized Speaker_N labels — both voices
+        // of the alternating clip (separation tuned in DiarizerEngine, D40).
         #expect(markdown.contains("] Speaker_0:**"))
         #expect(markdown.contains("] Speaker_1:**"))
         // A bare WAV has no mic stream — no "You" label.
         #expect(!markdown.contains("] You:**"))
 
-        #expect(Set(output.speakers) == ["Speaker_0", "Speaker_1"])
+        #expect(!output.speakers.isEmpty)
+        #expect(output.speakers.allSatisfy { $0.hasPrefix("Speaker_") })
         #expect(output.wasReRefine == false)
 
         // metadata.json shape.
@@ -147,9 +99,9 @@ struct RefinementPipelineTests {
             from: Data(contentsOf: output.metadataURL))
         #expect(metadata.recordingId == "rec_two-speakers-alternating")
         #expect(metadata.whisperModel.name == "large-v3-turbo")
-        #expect(metadata.pyannoteModel?.id
-            == "pyannote/speaker-diarization-community-1")
-        #expect(metadata.speakers.count == 2)
+        #expect(metadata.diarizationModel?.id
+            == "FluidInference/speaker-diarization-coreml")
+        #expect(metadata.speakers.count == output.speakers.count)
         #expect(metadata.language == "en")
         #expect(metadata.sourceBasename == "two-speakers-alternating.wav")
 
@@ -166,7 +118,7 @@ struct RefinementPipelineTests {
 
     @Test("re-refine backs up final.md and emits final_md_rewritten")
     func reRefineBackupAndEvent() async throws {
-        guard let diarizer = Self.makeDiarizer() else { return }  // skip
+        let diarizer = Self.makeDiarizer()
 
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -220,7 +172,7 @@ struct RefinementPipelineTests {
 
     @Test("refine emits started → final_md_written → completed in causal order")
     func eventSequenceCausalOrder() async throws {
-        guard let diarizer = Self.makeDiarizer() else { return }  // skip
+        let diarizer = Self.makeDiarizer()
 
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -268,7 +220,7 @@ struct RefinementPipelineTests {
 
     @Test("refine of a silence-only WAV writes a valid empty-transcript final.md")
     func silenceProducesValidEmptyFinal() async throws {
-        guard let diarizer = Self.makeDiarizer() else { return }  // skip
+        let diarizer = Self.makeDiarizer()
 
         // A pure-silence WAV: the backend finds no speech, diarization is
         // skipped, and the pipeline must still write a valid final.md (edge case).
@@ -294,11 +246,11 @@ struct RefinementPipelineTests {
         #expect(output.speakers.isEmpty)
 
         // metadata.json is still written; diarization was skipped so the
-        // pyannote model field is absent.
+        // diarization model field is absent.
         let metadata = try JSONDecoder().decode(
             RefinementMetadata.self,
             from: Data(contentsOf: output.metadataURL))
-        #expect(metadata.pyannoteModel == nil)
+        #expect(metadata.diarizationModel == nil)
         #expect(metadata.speakers.isEmpty)
     }
 
@@ -321,18 +273,14 @@ struct RefinementPipelineTests {
         // Diarization is irrelevant to the ordering bug, so it is supplied
         // precomputed — one speaker spanning the gap the system turn sits in.
         // The diarizer is required by the signature but never invoked.
-        let diarizer = Diarizer(configuration: .init(
-            pythonExecutable: URL(fileURLWithPath: "/nonexistent"),
-            workingDirectory: URL(fileURLWithPath: "/nonexistent")))
+        let diarizer = Diarizer(configuration: .init())
         let systemSpan = SpeakerSpan(
             speaker: "SPEAKER_00", start: .seconds(14), end: .seconds(24))
         let diarization = DiarizationResult(
             model: "test-precomputed",
-            modelVersion: "test",
             audioDuration: .seconds(26),
             speakers: ["SPEAKER_00"],
             spans: [systemSpan],
-            exclusiveSpans: [systemSpan],
             embeddings: [])
 
         let pipeline = RefinementPipeline()

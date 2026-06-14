@@ -915,3 +915,152 @@ history).
 **Stale dev-machine leftovers** (safe to delete manually, no migration
 code): `~/Library/Caches/PulsarTrace/models/ggml-*.bin` and the repo's
 `vendor/` build tree.
+
+## D40 — Diarization moves to the Apple Neural Engine; the pyannote Python sidecar is removed
+
+**Decision:** Speaker diarization now runs **fully in-process on the Apple
+Neural Engine** via FluidAudio 0.15.2's `OfflineDiarizerManager` — both the
+offline (refine) pass and the live (streaming) pass. The Python/pyannote
+sidecar is **gone**: the entire `python/` tree is deleted (no venv, no
+`requirements.lock`, no `build-venv.sh`, no `pulsartrace_ai.diarize` /
+`pulsartrace_ai.live_diarize` modules), and with it the one-shot subprocess
+(D9), the long-lived windowed-pyannote subprocess (D19), the Swift↔Python
+JSON wire contract, the `HF_TOKEN`/`.env` arrangement, and the Hugging Face
+gating flow. There is no embedded Python anywhere in the app. The revert
+path, should ANE diarization disappoint, is `git revert` of this branch.
+
+The models are FluidInference's CoreML conversion of
+`pyannote/speaker-diarization-community-1` — the same model family the PRD
+standardises on, ported to CoreML: powerset segmentation + WeSpeaker 256-d
+speaker embeddings + AHC (agglomerative) warm start + a VBx/PLDA clustering
+refinement. They are downloaded (~21 MB) from the **public** Hugging Face
+repo `FluidInference/speaker-diarization-coreml` into
+`~/Library/Caches/PulsarTrace/models/speaker-diarization/`. FluidAudio
+derives that folder name by stripping the `-coreml` suffix from the repo
+name, so the on-disk directory is `speaker-diarization/` even though the
+repo is `…-coreml`. The `model_downloaded` event's `model_name` for this
+bundle is `speaker-diarization-coreml` (the repo's short name). The repo is
+public, so the model-download network call is governed by the D39 pattern
+(SDK-managed download into the D10 cache root, no token, no gating); there
+is no longer any gated download to fall back through a terms flow.
+
+A new resident `DiarizerEngine` actor
+(`Sources/PulsarTraceEngine/Diarization/DiarizerEngine.swift`) owns the
+`OfflineDiarizerManager` and is loaded **once per process**; the live pass
+shares that single resident instance. The offline `Diarizer` lazily loads
+its **own** `OfflineDiarizerManager` per refine queue (one model load per
+refine worker, not per job). R29 — one embedding space across live,
+offline, and the speaker library — now holds **by construction**, because
+all three paths run the same FluidAudio WeSpeaker model.
+
+**Model identity (`modelRevision`):** there is no pinned SHA-256 and no
+Hugging Face commit SHA anymore. `modelRevision` is the **DirectoryDigest**
+— a deterministic SHA-256 tree hash of the model directory (the same
+content-addressed digest D39 introduced for the WhisperKit/Parakeet/silero
+bundles). It replaces the pyannote checkpoint's HF commit SHA from D12 and
+carries **exactly the same Open-Question-#3 scoping semantics**: the speaker
+library refuses to match centroids across a `modelRevision` change, so an
+upstream bundle revision (which moves the embedding space) cannot silently
+mis-match old speakers.
+
+**VBx evidence weight raised — `clustering.warmStartFa = 0.2` (FluidAudio
+default 0.07).** This is the one tuning deviation from FluidAudio's defaults
+and a future maintainer must know it is deliberate. Measured on the
+committed fixtures: at the default Fa 0.07 the VBx clusterer **collapses two
+clearly-distinct voices into a single cluster** on recordings shorter than
+~1 minute — even though the embeddings themselves separate cleanly
+(cross-speaker cosine ~0.35–0.38, same-speaker ~0.93). The cause is the VBx
+prior: with little audio accumulated, the prior dominates the per-frame
+evidence and pulls everything into one speaker. The *same* 24 s two-speaker
+clip that fuses at Fa 0.07 separates correctly when the clip is 72 s long.
+Sweeping the parameter: every Fa in the range 0.08…0.3 separates the
+two-speaker clip, and **none** of them splits a 2-minute single-voice concat
+(i.e. raising Fa this far does not introduce spurious over-splitting on
+single-speaker audio). Fa = 0.2 sits well clear of the 0.07/0.08 boundary
+where the behaviour flips. **Rationale:** the failure modes are not
+symmetric. Under-separation — two real people fused under one label — has
+**no post-hoc remedy** (the embeddings were averaged together; you cannot
+un-mix them). Over-split — one person spread across two labels — is fully
+recoverable with the speaker-merge tool. So we bias the parameter toward
+splitting, and 0.2 buys a wide safety margin against the under-separation
+cliff while staying inside the no-spurious-split band.
+
+**Thresholds recalibrated for the WeSpeaker embedding space.** pyannote's
+256-d space and WeSpeaker's 256-d space are different geometries, so the
+old cosine thresholds do not transfer. Measured on fixtures: same-speaker
+similarity ~0.93, cross-speaker ~0.35. Accordingly:
+`SpeakerLibrary.defaultMatchThreshold` lowered 0.7 → **0.45**, and
+`LiveDiarizer.stitchThreshold` lowered 0.55 → **0.45**. 0.45 sits roughly
+midway between the ~0.35 cross-speaker floor and the ~0.93 same-speaker
+ceiling. These numbers are pinned by the `DiarizationE2E threshold
+calibration` suite so a future embedding-space change that shifts them will
+fail loudly.
+
+**Live pass — geometry and algorithm unchanged, inference moved in-process.**
+`LiveDiarizer` keeps the 10 s window / 5 s step geometry and the
+embedding-stitching algorithm (per-window labels stitched into stable
+provisional `Them`/`Them #N` keys by cosine match against running live
+centroids); only the per-window inference is now an in-process
+`DiarizerEngine` call instead of a JSON round-trip to the Python subprocess.
+Measured: a **single 10 s window does not separate two voices** on its own —
+speaker differentiation emerges from stitching the per-window results across
+windows, exactly as before. The R16 best-effort/provisional posture is
+unchanged (the post-pass remains the source of truth), and R29 now spans
+live + offline + library by construction (above).
+
+**Offline `Diarizer` — structurally identical, mechanism swapped.** Same
+type name, same `diarizeSystemStream(wavPath:)` entry point (R17 structural
+invariant intact — mic is never diarized), same `RefinementCancellable`.
+Cancellation (queue pause, D-Q7) now maps onto Swift `Task` cancellation:
+FluidAudio calls `Task.checkCancellation()` inside its compute loop, so a
+pause genuinely **stops compute** rather than SIGKILLing a subprocess; the
+`.cancelled` case is kept so the D-Q7 pause/requeue/retry loop is untouched.
+The timeout watchdog is kept as well — effective timeout = max(600 s floor,
+the audio's real-time length).
+
+**Speaker library schema v3.** The column `pyannote_model_revision` is
+renamed to `model_revision`. On first open of any pre-v3 database (detected
+by the presence of the old column — this covers both v1 and v2), the entire
+file is archived to `speakers.sqlite.pre-v3.bak` via `VACUUM INTO` and the
+live database is reset. This is mandatory, not cosmetic: pyannote-space
+centroids can never meaningfully match WeSpeaker embeddings, so carrying
+them forward would only produce garbage matches. After the reset, known
+speakers simply re-emerge as `Unknown #N` on the next refine and can be
+renamed/merged as usual.
+
+**`metadata.json` schema v2.** The `pyannote_model` field becomes
+`diarization_model { id, revision }`, and the old `library_version` field is
+dropped (there is no Python library version to record anymore). `id` is the
+model identity, `revision` is the DirectoryDigest above.
+
+**Doctor / preflight.** The `doctor` command no longer probes a Python
+environment (there is none). It checks the **model cache** instead —
+presence/health of the diarization bundle under the D10 cache root, the
+same way it now checks the WhisperKit/Parakeet bundles after D39.
+
+**Why:** the ANE is idle during meetings and the in-process port removes an
+entire embedded-Python runtime — its venv, its torch/onnx pin set, its
+subprocess lifecycle, its gated-download/token flow, and its telemetry
+kill-switch — from the shipping app. CoreML diarization is ~21 MB versus a
+multi-gigabyte torch install, runs on the Neural Engine alongside the D39
+transcription models, and unifies the embedding space across every pass. The
+licences permit commercial use (FluidAudio Apache-2.0; the community-1 model
+family as published by FluidInference).
+
+**Supersedes / reshapes earlier decisions:** this entry **supersedes D9**
+(the one-shot pyannote diarization subprocess) and **D19** (windowed-pyannote
+as the live diarizer over `diart`) outright. It supersedes the
+pyannote-specific halves of **D10** (the `HF_HOME` redirect — moot: FluidAudio
+downloads straight into the cache root, so there is no `HF_HOME` to set; the
+shared-cache-root rationale survives via the D10/D39 root) and **D12** (the
+OpenTelemetry kill-switch — moot: there is no Python pyannote process to
+emit telemetry; the only diarization network call is the public-repo model
+download, governed by the D39 pattern). D12's `model_revision` *field*
+survives but is now the DirectoryDigest rather than an HF commit SHA, with
+the same Open-Question-#3 cross-revision-refusal semantics. D11's diarization
+JSON `schema` field and Swift↔Python wire contract are retired along with
+the subprocess (the dominant-overlap merge and 30% co-attribution logic in
+`DiarizationMerge` are unchanged — they operate on the in-process result the
+same way). **PRD §17's "pyannote stays in Python" is superseded** here, the
+same way D39 superseded the PRD's whisper.cpp sections. This **completes the
+diarization deferral** explicitly noted in D39.

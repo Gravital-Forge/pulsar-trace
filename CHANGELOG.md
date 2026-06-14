@@ -20,6 +20,12 @@ There are no tagged releases yet; everything to date is under Unreleased.
 
 ### Changed
 
+- Speaker diarization now runs fully in-process on the Apple Neural Engine
+  (FluidAudio's CoreML port of pyannote community-1) — the embedded Python
+  environment, Hugging Face token, and `python/build-venv.sh` setup step are
+  gone. Existing speaker libraries are archived and reset (embeddings moved
+  to a new vector space); speakers re-appear as `Unknown #N` on next refine.
+  `metadata.json` is now schema v2 (`diarization_model`).
 - The Refinements pane is gone — refinement status lives on the recording rows (a steady green check on refined recordings, an orange clock on unrefined ones, queued clock, determinate refining progress, failure badge with Retry) and in the transcript detail's banner (queued/refining with Cancel, "Refinement complete — Show refined transcript", failures with Retry).
 - A completed refinement never swaps the transcript you are reading: the banner offers "Show refined transcript" instead.
 - **Breaking (file format):** live transcripts mark provisional speakers with a compact `?` suffix (`Them?`, `Them #2?`, `Steve?`) instead of ` (provisional)`. `final.md` is unchanged; `live.md` files recorded before this change keep the old marker until refined.
@@ -47,6 +53,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 - Refinement no longer fails permanently on recordings containing more than ~98 seconds of uninterrupted speech: long speech regions are now split into chunks (cut at the quietest nearby moment) before being sent to whisper, instead of exceeding the transcription channel's frame limit on every retry.
 - The green check on a refined recording's row no longer vanishes the moment you select the row (gone until the next app restart): it was modeled as a transient "just refined" notification dismissed by selection. It is now a steady status badge — green check means refined, orange clock means not yet refined.
 - Near-silent recordings no longer crash diarization: a speaker whose voice sample is too sparse to fingerprint keeps its spans and label, and refinement completes — previously the whole job failed (`diarizeCrashed`) on every retry. The same fix stops live diarization from discarding such windows mid-recording.
+- The recordings list no longer shows a phantom "Unrecognized" speaker. `Unrecognized` is the per-line fallback for speech that overlaps no diarized turn — it labels the line so no text is lost, but it is not a person, so it no longer earns a speaker pill or a row in `metadata.json`'s `speakers` array. (Existing recordings drop the stale pill on their next refine.)
 
 ### Security
 

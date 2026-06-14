@@ -36,9 +36,9 @@ struct SpeakerReconcilerTests {
     ) -> DiarizationResult {
         DiarizationResult(
             model: "pyannote/test", modelRevision: revision,
-            modelVersion: "test", audioDuration: .seconds(30),
+            audioDuration: .seconds(30),
             speakers: embeddings.keys.sorted(),
-            spans: [], exclusiveSpans: [],
+            spans: [],
             embeddings: embeddings
                 .map { SpeakerEmbedding(speaker: $0.key, vector: $0.value) }
                 .sorted { $0.speaker < $1.speaker })

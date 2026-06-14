@@ -532,7 +532,7 @@ extension RefinementJobQueue {
                 enqueuedAt: job.enqueuedAt,
                 state: job.state)
 
-            let diarizer = try OfflineRefiner.makeDiarizer()
+            let diarizer = OfflineRefiner.makeDiarizer(events: events)
 
             // Register the diarizer so pauseForRecording() can cancel it
             // mid-run (D-Q7). Clearing the slot is the queue's

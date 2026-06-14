@@ -67,8 +67,7 @@ struct IPCTwoDaemonTests {
             configuration: .init(
                 recordingFolder: folder,
                 recordingStart: fixedStart,
-                recordingId: "rec_ipc-two-socket",
-                liveDiarizerConfig: nil),
+                recordingId: "rec_ipc-two-socket"),
             systemTranscriber: ParakeetWindowTranscriber(engine: engine),
             micTranscriber: ParakeetWindowTranscriber(engine: engine),
             systemSource: systemSource,
@@ -109,8 +108,7 @@ struct IPCTwoDaemonTests {
             configuration: .init(
                 recordingFolder: folder,
                 recordingStart: fixedStart,
-                recordingId: "rec_ipc-pause-resume",
-                liveDiarizerConfig: nil),
+                recordingId: "rec_ipc-pause-resume"),
             systemTranscriber: ParakeetWindowTranscriber(engine: engine),
             systemSource: ScriptedSource(events),
             library: nil)
