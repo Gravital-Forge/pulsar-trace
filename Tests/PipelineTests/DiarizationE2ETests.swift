@@ -79,6 +79,34 @@ struct DiarizationE2ETests {
         #expect(result.speakers.count == 2)
         #expect(result.modelRevision.count == 64)
     }
+
+    /// D40 live-separation regression: the windowed live path (per-segment
+    /// embeddings + online bank) must surface BOTH voices in the 24 s
+    /// two-speaker clip. The bug was the live pass collapsing them to one
+    /// provisional key because per-window VBx under-separates on short windows.
+    /// Drives `LiveDiarizer.diarizeWindow` over 10 s windows / 5 s step — the
+    /// production geometry from `StreamingPipeline.Configuration`.
+    @Test func liveWindowedPassSeparatesTwoSpeakers() async throws {
+        let engine = try await DiarizerTestEngine.shared()
+        let wav = try WAVReader(contentsOf: fixtureURL("two-speakers-alternating"))
+        let diarizer = LiveDiarizer(engine: engine)
+
+        let windowSamples = 10 * wav.sampleRate
+        let stepSamples = 5 * wav.sampleRate
+        var keys = Set<String>()
+        var start = 0
+        while start < wav.samples.count {
+            let end = min(start + windowSamples, wav.samples.count)
+            let window = Array(wav.samples[start..<end])
+            let windowStart = Duration.milliseconds(start * 1000 / wav.sampleRate)
+            let spans = await diarizer.diarizeWindow(
+                samples: window, windowStart: windowStart)
+            for span in spans { keys.insert(span.provisionalKey) }
+            if end == wav.samples.count { break }
+            start += stepSamples
+        }
+        #expect(keys.count >= 2, "live windowed pass collapsed speakers: \(keys)")
+    }
 }
 
 /// Coverage of the resident `DiarizerEngine` (D40): it loads the FluidAudio
