@@ -84,6 +84,13 @@ public actor DiarizerEngine {
         // separation is the worse failure (two people fused under one label,
         // unfixable post-hoc); over-split has a user remedy (speaker merge).
         config.clustering.warmStartFa = 0.2
+        // Live path (D40 separation fix): expose the per-segment embeddings the
+        // segmentation stage produces *before* VBx clustering, so the windowed
+        // live diarizer can group voices itself instead of trusting VBx — which
+        // collapses two speakers into one on the sub-minute windows the live
+        // pass feeds it. Cheap to populate (a zip/map); the refine path maps
+        // only `segments` + `speakerDatabase`, so it ignores this.
+        config.exposeChunkEmbeddings = true
         let manager = OfflineDiarizerManager(config: config)
         try await manager.prepareModels(directory: cacheRoot)
 
@@ -127,6 +134,41 @@ public actor DiarizerEngine {
             if case .noSpeechDetected = e {
                 return emptyResult(audioDuration: duration)
             }
+            throw e
+        }
+    }
+
+    /// One raw per-segment embedding from a window's segmentation stage,
+    /// **before** global clustering — window-relative timing plus the 256-d
+    /// WeSpeaker vector (R29 space). The live pass groups these with its own
+    /// running speaker bank, bypassing the VBx clustering that collapses two
+    /// voices into one on the sub-minute windows it processes (D40 fix).
+    public struct WindowSegmentEmbedding: Sendable {
+        public let start: Duration
+        public let end: Duration
+        public let vector: [Float]
+    }
+
+    /// Live windowed path (D40 separation fix): diarize a buffer of 16 kHz mono
+    /// Float32 samples and return the per-segment embeddings, **bypassing VBx
+    /// clustering**. Non-finite vectors are dropped; silent audio yields `[]`.
+    public func diarizeWindowSegments(
+        samples: [Float]
+    ) async throws -> [WindowSegmentEmbedding] {
+        do {
+            let raw = try await manager.process(audio: samples)
+            return (raw.chunkEmbeddings ?? []).compactMap { chunk in
+                let vector = chunk.embedding256
+                guard !vector.isEmpty, vector.allSatisfy(\.isFinite) else {
+                    return nil
+                }
+                return WindowSegmentEmbedding(
+                    start: .milliseconds(Int((chunk.startTimeSeconds * 1000).rounded())),
+                    end: .milliseconds(Int((chunk.endTimeSeconds * 1000).rounded())),
+                    vector: vector)
+            }
+        } catch let e as OfflineDiarizationError {
+            if case .noSpeechDetected = e { return [] }
             throw e
         }
     }
