@@ -94,6 +94,13 @@ public actor LiveDiarizer: LiveDiarizing {
     /// (see the DiarizationE2E calibration suite).
     public static let stitchThreshold = 0.45
 
+    /// Segments shorter than this carry unreliable WeSpeaker embeddings — the
+    /// segmentation tail sub-windows. Measured in the D40 spike: a ~2 s
+    /// segment's cosine to the *same* speaker can fall to ~0. Such segments are
+    /// labelled by a read-only nearest match but never create a speaker or
+    /// refine a centroid, so they cannot spawn ghosts or poison the bank.
+    public static let minReliableSegment: Duration = .seconds(2)
+
     /// Test-only: a diarizer with no engine — `diarizeWindow` returns `[]`;
     /// `_seedForTesting` + `centroids()`/`modelRevision()` only.
     init(testSeamLogger logger: Logger = Logger(label: LogSubsystem.engine)) {
@@ -139,9 +146,10 @@ public actor LiveDiarizer: LiveDiarizing {
         let started = ContinuousClock.now
         windowCounter += 1
 
-        let work = Task { try await engine.diarize(samples: samples) }
-        let result = await withTaskGroup(of: DiarizationResult?.self) {
-            group -> DiarizationResult? in
+        let work = Task { try await engine.diarizeWindowSegments(samples: samples) }
+        let segments = await withTaskGroup(
+            of: [DiarizerEngine.WindowSegmentEmbedding]?.self
+        ) { group -> [DiarizerEngine.WindowSegmentEmbedding]? in
             group.addTask { try? await work.value }
             group.addTask { [windowTimeout = configuration.windowTimeout] in
                 try? await Task.sleep(for: windowTimeout)
@@ -152,51 +160,50 @@ public actor LiveDiarizer: LiveDiarizing {
             group.cancelAll()
             return first
         }
-        guard let result else {
+        guard let segments else {
             logger.warning("live diarization: window produced no usable result")
             return []
         }
 
-        let spans = stitch(result: result, windowStart: windowStart)
+        let spans = stitch(segments: segments, windowStart: windowStart)
         let roundTripMS = Int(((ContinuousClock.now - started).seconds * 1000)
             .rounded())
-        let speakerCount = result.speakers.count
-        // `.debug`: one line per window (~every 5 s) — a performance
-        // observable, not an operational event.
+        // `.debug`: one line per window (~every 5 s) — a performance observable.
         logger.debug("""
             live diarization: window \(windowCounter) done — \
-            \(roundTripMS) ms on ANE, \(speakerCount) speaker(s)
+            \(roundTripMS) ms on ANE, \(spans.count) span(s)
             """)
         return spans
     }
 
     // MARK: - Stitching
 
-    /// Turn one window's result into stable-keyed, recording-absolute
-    /// `LiveSpeakerSpan`s.
-    private func stitch(
-        result: DiarizationResult, windowStart: Duration
+    /// Turn one window's per-segment embeddings into stable-keyed,
+    /// recording-absolute `LiveSpeakerSpan`s. Segments at least
+    /// `minReliableSegment` long drive the bank (match-or-create + refine);
+    /// shorter ones are labelled by a read-only nearest match and dropped when
+    /// they match nothing — they never create a speaker or update a centroid
+    /// (D40 spike: short-segment embeddings are noisy). `internal` so the
+    /// stitch logic is unit-testable without CoreML models.
+    func stitch(
+        segments: [DiarizerEngine.WindowSegmentEmbedding],
+        windowStart: Duration
     ) -> [LiveSpeakerSpan] {
-        let embeddingByLabel = Dictionary(
-            result.embeddings.map { ($0.speaker, $0.vector) },
-            uniquingKeysWith: { first, _ in first })
-
-        var keyByRawLabel: [String: String] = [:]
-        for (rawLabel, vector) in embeddingByLabel.sorted(by: { $0.key < $1.key }) {
-            keyByRawLabel[rawLabel] = stitchKey(for: vector)
-        }
-
         var out: [LiveSpeakerSpan] = []
-        for span in result.spans {
-            // A raw label with no embedding still gets a key — fall back to a
-            // by-name mapping so its span is not dropped.
-            let key = keyByRawLabel[span.speaker]
-                ?? fallbackKey(forRawLabel: span.speaker)
+        for segment in segments {
+            guard !segment.vector.isEmpty else { continue }
+            let key: String?
+            if (segment.end - segment.start) >= Self.minReliableSegment {
+                key = stitchKey(for: segment.vector)        // match-or-create + refine
+            } else {
+                key = nearestKey(for: segment.vector)       // read-only; may be nil
+            }
+            guard let key else { continue }
             out.append(LiveSpeakerSpan(
                 provisionalKey: key,
-                start: windowStart + span.start,
-                end: windowStart + span.end,
-                embedding: embeddingByLabel[span.speaker] ?? []))
+                start: windowStart + segment.start,
+                end: windowStart + segment.end,
+                embedding: segment.vector))
         }
         return out
     }
@@ -231,6 +238,23 @@ public actor LiveDiarizer: LiveDiarizing {
         liveSpeakers.append(LiveSpeaker(
             key: key, centroid: embedding, appearances: 1))
         return key
+    }
+
+    /// Best existing live speaker for an embedding (cosine ≥ threshold), or
+    /// `nil`. Read-only — never creates a speaker or refines a centroid. Used
+    /// to label sub-`minReliableSegment` segments without letting their noisy
+    /// embeddings spawn ghosts or poison the bank.
+    private func nearestKey(for embedding: [Float]) -> String? {
+        var bestIndex = -1
+        var bestScore = Self.stitchThreshold
+        for (i, speaker) in liveSpeakers.enumerated() {
+            let score = Centroid.cosineSimilarity(speaker.centroid, embedding)
+            if score >= bestScore {
+                bestScore = score
+                bestIndex = i
+            }
+        }
+        return bestIndex >= 0 ? liveSpeakers[bestIndex].key : nil
     }
 
     /// Fallback key for a raw label with no embedding — keep it stable per
