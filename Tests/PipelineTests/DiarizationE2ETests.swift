@@ -153,6 +153,50 @@ struct DiarizationE2ELiveTests {
         #expect(!centroids.isEmpty)
         #expect(await live.modelRevision().count == 64)
     }
+
+    /// D41 over-split guard: the live windowed pass over the single-speaker
+    /// clip must form exactly ONE provisional key. FluidAudio's default AHC
+    /// threshold can split one speaker into several on the short windows the
+    /// live pass uses; `DiarizerEngine.liveClusteringThreshold` counters that.
+    @Test func liveWindowedPassKeepsSingleSpeakerAsOneKey() async throws {
+        let engine = try await DiarizerTestEngine.shared()
+        let live = LiveDiarizer(engine: engine)
+        let samples = try await fixtureSamples("single-speaker-30s.wav")
+
+        let window = AudioFormat.sampleRate * 10
+        let step = AudioFormat.sampleRate * 5
+        var keys = Set<String>()
+        var start = 0
+        while start + window <= samples.count {
+            let spans = await live.diarizeWindow(
+                samples: Array(samples[start..<(start + window)]),
+                windowStart: .milliseconds(start * 1000 / AudioFormat.sampleRate))
+            for s in spans { keys.insert(s.provisionalKey) }
+            start += step
+        }
+        #expect(keys == ["Them"], "single speaker over-split into \(keys)")
+    }
+
+    /// D41: separation is preserved at the higher live threshold — the live
+    /// windowed pass over the two-speaker clip forms exactly TWO keys.
+    @Test func liveWindowedPassFormsTwoKeysForTwoSpeakers() async throws {
+        let engine = try await DiarizerTestEngine.shared()
+        let live = LiveDiarizer(engine: engine)
+        let samples = try await fixtureSamples("two-speakers-alternating.wav")
+
+        let window = AudioFormat.sampleRate * 10
+        let step = AudioFormat.sampleRate * 5
+        var keys = Set<String>()
+        var start = 0
+        while start + window <= samples.count {
+            let spans = await live.diarizeWindow(
+                samples: Array(samples[start..<(start + window)]),
+                windowStart: .milliseconds(start * 1000 / AudioFormat.sampleRate))
+            for s in spans { keys.insert(s.provisionalKey) }
+            start += step
+        }
+        #expect(keys.count == 2, "expected 2 live speakers, got \(keys)")
+    }
 }
 
 /// Pins the WeSpeaker-space similarity thresholds (D40). If this fails after
