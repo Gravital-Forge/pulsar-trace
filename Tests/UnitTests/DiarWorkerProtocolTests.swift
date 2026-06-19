@@ -28,3 +28,37 @@ struct DiarWindowResultCodableTests {
         }
     }
 }
+
+@Suite("DiarWorker frame codec")
+struct DiarWorkerFrameTests {
+    @Test("request frame round-trips requestId + samples")
+    func requestFrameRoundTrips() throws {
+        let samples: [Float] = [0.0, -1.0, 0.5, 0.25]
+        let frame = DiarWorkerProtocol.encodeRequest(requestId: 7, samples: samples)
+        // 4-byte length prefix + 8-byte id + 4*4 sample bytes
+        #expect(frame.count == 4 + 8 + 16)
+        let (len, body) = try DiarWorkerProtocol.splitLengthPrefixed(frame)
+        #expect(len == 8 + 16)
+        let decoded = try DiarWorkerProtocol.decodeRequest(body)
+        #expect(decoded.requestId == 7)
+        #expect(decoded.samples == samples)
+    }
+
+    @Test("message frame round-trips a result envelope")
+    func messageFrameRoundTrips() throws {
+        let msg = DiarWorkerMessage.result(
+            requestId: 9,
+            window: DiarWindowResult(spans: [.init(speaker: "S1", startMillis: 0, endMillis: 10)],
+                                     embeddings: []))
+        let frame = try DiarWorkerProtocol.encodeMessage(msg)
+        let (_, body) = try DiarWorkerProtocol.splitLengthPrefixed(frame)
+        #expect(try DiarWorkerProtocol.decodeMessage(body) == msg)
+    }
+
+    @Test("a truncated length prefix is reported, not crashed")
+    func truncatedPrefixThrows() {
+        #expect(throws: (any Error).self) {
+            _ = try DiarWorkerProtocol.splitLengthPrefixed(Data([0x01, 0x02]))
+        }
+    }
+}
