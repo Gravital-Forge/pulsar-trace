@@ -1,11 +1,15 @@
 # Live-Pass Speaker Collapse & Lag — Investigation + Instrumentation
 
-**Date:** 2026-06-18
-**Status:** **RESOLVED (the freeze) — D42.** The per-pass tracing caught the bug on a
-real recording; the freeze mechanism is identified, reproduced deterministically, and
-fixed. The underlying FluidAudio ANE hang that *triggers* it remains an upstream issue
-(see §0 and §4). **Branch:** `fix/live-diarizer-wedge-reclaim`, off the ANE branch
-(`feat/ane-transcription-pipeline`).
+**Date:** 2026-06-18 (updated 2026-06-19)
+**Status:** Root cause **identified and reproduced.** D42 (in-process gate reclaim)
+stops a *single transient* wedge from permanently freezing diarization — but a live run
+on 2026-06-19 showed it is **not sufficient under a wedge storm**: the reclaim relaunches
+into a still-jammed ANE, the un-cancellable hung calls pile up, and they end up starving
+Parakeet **transcription** too (see §0b). The real fix is **process isolation (D43)** —
+run the diarizer in its own killable worker so `SIGKILL` releases the wedged ANE call;
+plan in `docs/specs/2026-06-19-diarizer-worker-process-plan.md`.
+**Branches:** D42 instrumentation + reclaim on `fix/live-diarizer-wedge-reclaim`
+(off the ANE branch `feat/ane-transcription-pipeline`).
 
 ---
 
@@ -42,10 +46,71 @@ remaining ~170 s** — every window after the first wedge was skipped. So:
    free a newer holder's slot. A reclaim logs `live trace diar RECLAIMED wedged slot`.
    One wedged window now costs ~one window (~5 s), not the whole call.
 
-**Still open (upstream):** the fix makes the freeze non-fatal, but each wedged window is
-still *lost* and the hung FluidAudio call still leaks. Eliminating the hang itself needs
-the upstream/fork change (make `runEmbeddingModel` async) and/or serializing ANE access
-so Parakeet and the diarizer don't contend. See §4.
+**Still open after D42:** the reclaim makes a *single* freeze non-fatal, but each wedged
+window is still *lost* and the hung FluidAudio call still leaks (in-process, it cannot be
+released). §0b shows why that leak is worse than it sounds, and §0c is the chosen fix.
+
+---
+
+## 0b. Live-run verification (2026-06-19) — D42 is not enough; it amplifies a storm
+
+Replayed the original problem recording `2026-06-18-084407` (~7 min) through a live
+session built **with D42** (gate reclaim) + the per-pass tracing, on an otherwise idle
+M2 (pure playback — no real meeting load). Log `2026-06-19.log`, ~03:01–03:07Z. This run
+caught a far worse failure than the single freeze, and it implicates D42 itself.
+
+**Timeline (audio-relative `t`):**
+
+| `t` | Diarizer | Transcription / queues |
+|---|---|---|
+| 25→105 s | healthy; `keys` 1→2→3, `stateSpans`→25 | committing; `qSys=qMic=0` |
+| **~110 s** | first wedge → `RECLAIMED`, **then `RECLAIMED` every 5 s to the end** | still committing |
+| ~152 s | reclaim cascade | **last commit (161 tokens), then no more transcriber lines** |
+| ~134→164 s | cascade | decode queues fill `qSys/qMic 0 → 249 → … → 1500` over ~30 s |
+| 164 s → end | cascade | `qSys=qMic=1500` (full, dropping) → "recording paused" in `live.md` |
+
+**The causal chain (this is the key new finding):**
+
+1. One diar window wedges at `t≈110 s` (the synchronous FluidAudio embedding `prediction`
+   hangs — §0).
+2. D42 reclaims the slot and **launches a new window every 5 s**. But the ANE is still
+   jammed by the *previous* hung call, so **each new window also wedges.** The reclaim
+   cannot cancel or release the prior call (it is un-cancellable in-process) — it only
+   abandons it. So the leaked, hung ANE calls **accumulate, one every 5 s.**
+3. For the first ~6 wedges (~30 s) the queues stay at 0 — transcription is unaffected.
+   Then, once ~6–7 leaked diar calls are pinning the ANE, **Parakeet decodes can no longer
+   get ANE time**: the decode worker stalls, its bounded queues fill `0→1500` over 30 s,
+   and audio is dropped → "recording paused." Transcription is dead for the rest of the run.
+
+This dose-response (transcription survives the first ~6 wedges, dies once ~7 leaks
+accumulate) is strong evidence the diar leaks **starve Parakeet** — the transcription
+stall is *not* an independent bug; it is a downstream consequence of the diar cascade.
+
+**The uncomfortable conclusion:** D42 made the *storm* case worse for the live experience.
+- **Before D42** (run `2026-06-18-212738`): one wedge → diarization froze, but **transcription survived** the whole call.
+- **With D42** (this run): the reclaim keeps relaunching → leaks pile up → **both diarization and transcription die.**
+
+So in-process reclaim is the wrong layer: it trades a single permanent diar-freeze for an
+unbounded leak that eventually takes transcription down too. The root issue is unchanged —
+**an un-cancellable synchronous ANE call can only be released by killing the process that
+holds it.** (The WAV is always whole, so the offline refine pass still recovers the full
+transcript + diarization; only the *live* view degrades.)
+
+---
+
+## 0c. Chosen fix (D43) — process isolation
+
+Run the live diarizer in its own **killable worker process**, fed audio over a Unix-domain
+socket, returning raw spans+embeddings to the engine; the engine supervises it with a
+per-window deadline and `SIGKILL`s + respawns it on a hang. Process death is the one
+primitive that actually releases a wedged ANE call (the kernel tears down the dead client's
+ANE driver session), so a hang becomes a recoverable ~1 s blip instead of a permanent leak,
+and it can never starve Parakeet (different process). The cross-window stitcher stays
+engine-side, so a respawned worker loses no `Them #N` identity continuity.
+
+Decisions: **diarizer-only** (transcriber stays in the engine); **supervisor + socket IPC**;
+**no** cross-process ANE coordination. Full task-by-task plan:
+`docs/specs/2026-06-19-diarizer-worker-process-plan.md`.
 
 ---
 
