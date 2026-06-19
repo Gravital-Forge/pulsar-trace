@@ -126,7 +126,7 @@ struct DiarizationE2ELiveTests {
 
     @Test func windowedPassYieldsStableProvisionalKeys() async throws {
         let engine = try await DiarizerTestEngine.shared()
-        let live = LiveDiarizer(engine: engine)
+        let live = LiveDiarizer(rawDiarizer: DiarizerEngineRawAdapter(engine: engine))
 
         // Drive the fixture through the production window geometry
         // (10 s window / 5 s step — StreamingPipeline defaults).

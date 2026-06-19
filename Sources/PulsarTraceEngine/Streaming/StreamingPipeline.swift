@@ -143,7 +143,8 @@ public struct StreamingPipeline: Sendable {
         // --- live diarization (in-process, optional) -------------------------
         var liveDiarizer: LiveDiarizer?
         if let engine = configuration.liveDiarizerEngine {
-            liveDiarizer = LiveDiarizer(engine: engine, logger: logger)
+            liveDiarizer = LiveDiarizer(
+                rawDiarizer: DiarizerEngineRawAdapter(engine: engine), logger: logger)
         }
         // --- run the streams ------------------------------------------------
         let runner = LiveRunner(
