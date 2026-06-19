@@ -119,7 +119,7 @@ public actor DiarWorkerClient: RawWindowDiarizing {
             for await body in h.connection.inboundBodies {
                 guard let msg = try? DiarWorkerProtocol.decodeMessage(body) else { continue }
                 if case let .result(requestId, window) = msg {
-                    await self.deliver(requestId: requestId, window: window)
+                    self.deliver(requestId: requestId, window: window)
                 }
                 // `hello` is consumed by the launcher before handing us the handle.
             }
