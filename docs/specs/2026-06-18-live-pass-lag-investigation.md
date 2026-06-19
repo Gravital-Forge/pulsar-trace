@@ -7,7 +7,9 @@ on 2026-06-19 showed it is **not sufficient under a wedge storm**: the reclaim r
 into a still-jammed ANE, the un-cancellable hung calls pile up, and they end up starving
 Parakeet **transcription** too (see §0b). The real fix is **process isolation (D43)** —
 run the diarizer in its own killable worker so `SIGKILL` releases the wedged ANE call;
-plan in `docs/specs/2026-06-19-diarizer-worker-process-plan.md`.
+plan in `docs/specs/2026-06-19-diarizer-worker-process-plan.md`. **D43 is now
+implemented + merged on this branch; automated tests green, manual live replay
+pending — see §9.**
 **Branches:** D42 instrumentation + reclaim on `fix/live-diarizer-wedge-reclaim`
 (off the ANE branch `feat/ane-transcription-pipeline`).
 
@@ -355,3 +357,70 @@ Verified: emits with sane values on a 30 s smoke run; **Streaming 19/19** and
 - Diar cadence + single-in-flight skip: `Streaming/DiarBufferManager.swift`, `Streaming/DiarGate.swift`
 - Hand-off queue drop-oldest: `Streaming/BoundedFrameQueue.swift`
 - Window geometry: transcriber 10 s window / 4 s step; diar 10 s window / 5 s step
+
+---
+
+## 9. D43 implementation status (2026-06-19)
+
+The worker-process plan (`docs/specs/2026-06-19-diarizer-worker-process-plan.md`)
+is **implemented and merged on `fix/live-diarizer-wedge-reclaim`** (12 commits,
+`0d3b540`…`d28f760`). Live windowed diarization now runs in a separate killable
+worker process; a hung ANE prediction is recovered by `SIGKILL` + respawn rather
+than leaking in-process and starving Parakeet.
+
+**What landed (engine target unless noted):**
+
+- `Diarization/DiarWindowResult.swift` — `Codable` wire DTO (spans + embeddings,
+  ms ints) + `DiarWorkerMessage` envelope (`hello`/`result`).
+- `Diarization/DiarWorkerProtocol.swift` — 4-byte LE length-prefixed frame codec
+  (binary request, JSON message); scalar reads use `loadUnaligned`.
+- `Diarization/RawWindowDiarizing.swift` — the narrow seam `LiveDiarizer` now
+  drives; `Diarization/DiarizerEngineRawAdapter.swift` adapts the in-process
+  `DiarizerEngine` to it (used inside the worker + the offline E2E test).
+- `Diarization/DiarWorkerConnection.swift` — bidirectional frame transport over a
+  connected fd (blocking-read thread → `AsyncStream<Data>`).
+- `Diarization/DiarWorkerServer.swift` — the stateless worker run loop.
+- `Diarization/DiarWorkerClient.swift` — the supervisor actor: per-window
+  deadline via a `CheckedContinuation` keyed by `requestId` (resumed by whichever
+  of the reader / deadline wins — **no task-group await**, so a hung reply cannot
+  re-wedge the engine), `SIGKILL` + capped-exponential-backoff respawn.
+- `Diarization/DiarWorkerProcessLauncher.swift` — engine is the socket server
+  (bind/listen once, accept + read `hello` per incarnation); spawns
+  `pulsartrace-engine --diarizer-worker`; the `@Sendable` kill closure captures
+  only the child pid and guards `pid > 0` (never `kill(-1)`).
+- `Streaming/LiveDiarizer.swift` — stitches over `RawWindowDiarizing`; in-process
+  engine + `withTaskGroup` window timeout removed (the supervisor owns timeouts).
+- `Streaming/StreamingPipeline.swift` — `Configuration.liveRawDiarizer` replaces
+  `liveDiarizerEngine`. `pulsartrace-engine/main.swift` — `--diarizer-worker`
+  mode + `live()` spawns a `DiarWorkerClient`, honouring `--no-live-diarization`
+  and reusing the existing `recordingId` for the socket path.
+
+Cross-window stitch state (`liveSpeakers` centroids, `Them #N` keys) stays
+engine-side, so a respawned worker loses no identity continuity. The D42 in-process
+`DiarGate` reclaim is left in place as a harmless ≤1-window-in-flight backstop.
+
+**Automated verification — green at `d28f760`:** `swift build` clean;
+`--filter DiarWorker` 11/11 (the real-worker integration test is gated on
+`PT_DIAR_WORKER_E2E=1` + models present, skipped by default); `--filter UnitTests`
+387/387; `--filter LiveRunner` 17 (one pre-existing flaky heartbeat test gated);
+`--filter Streaming` 19/19. The `DiarWorkerClient` `hangThenRecover` test is the
+process-level analogue of the D42 recovery test (hung worker → deadline → kill →
+next window recovers), deterministic across repeated runs.
+
+**Manual live verification — PENDING (Task 11, requires a human + the dev app):**
+
+1. `swift build` the dev binary (the menu-bar/dev app must launch
+   `.build/debug/pulsartrace-engine`; a pre-built release `.app` will not include
+   these changes).
+2. Replay the known-bad `2026-06-18-084407` recording (wedges ~t=110–210 s)
+   through a ~7-min live session.
+3. Inspect the log:
+   ```
+   grep -E "diar worker: restarting|RECLAIMED|SKIPPED|live trace diar:" ~/Library/Logs/PulsarTrace/<YYYY-MM-DD>.log
+   ```
+   **Pass criteria:** `live trace diar:` keeps appearing through the whole run with
+   `keys > 1`; on a wedge you see `diar worker: restarting (deadline)` followed
+   within ~1–2 s by resumed diar lines (recovery, not a `SKIPPED`/`RECLAIMED`
+   cascade); transcription never stalls (`committedTokens` keeps growing, `qSys`/
+   `qMic` near 0, no long "recording paused" stretch in `live.md`).
+4. Record the observed behaviour here (replace this line with the result).
