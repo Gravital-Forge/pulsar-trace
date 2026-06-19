@@ -1,6 +1,11 @@
 import Foundation
 import Logging
 import PulsarTraceEngine
+#if canImport(Glibc)
+import Glibc
+#else
+import Darwin
+#endif
 
 /// `pulsartrace-engine` — the streaming engine binary.
 ///
@@ -21,7 +26,9 @@ struct EngineMain {
 
         let exitCode: Int32
         do {
-            if args.contains("--live") {
+            if args.contains("--diarizer-worker") {
+                await diarizerWorker(args: args, lifecycle: lifecycle)
+            } else if args.contains("--live") {
                 let summary = try await live(args: args, lifecycle: lifecycle)
                 FileHandle.standardOutput.write(Data((summary + "\n").utf8))
             } else {
@@ -231,6 +238,46 @@ struct EngineMain {
             + "bytes=\(output.bytesWritten) mic_echoes_dropped=\(output.micEchoesDropped) "
             + "median_lag_seconds=\(medianLag) max_lag_seconds=\(maxLag) "
             + "language=\(output.language)"
+    }
+
+    /// Worker mode (D43): connect to the engine's diarizer socket, load the
+    /// FluidAudio diarizer, and serve windows until the connection closes or the
+    /// engine SIGKILLs us. Stateless — holds no cross-window state.
+    static func diarizerWorker(args: [String], lifecycle: AppLifecycle) async {
+        guard let socketPath = value(after: "--diar-socket", in: args),
+              let cacheRootPath = value(after: "--cache-root", in: args) else {
+            FileHandle.standardError.write(Data("diar worker: missing --diar-socket/--cache-root\n".utf8))
+            return
+        }
+        let cacheRoot = URL(fileURLWithPath: cacheRootPath)
+        let engine: DiarizerEngine
+        do {
+            engine = try await DiarizerEngine.load(cacheRoot: cacheRoot, events: nil)
+        } catch {
+            FileHandle.standardError.write(Data("diar worker: model load failed: \(error)\n".utf8))
+            return
+        }
+        // Connect to the engine (it is already listening + accepting).
+        let fd = socket(AF_UNIX, sockStreamType, 0)
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        _ = socketPath.withCString { src in
+            withUnsafeMutablePointer(to: &addr.sun_path) { dst in
+                dst.withMemoryRebound(to: CChar.self, capacity: 104) { strncpy($0, src, 103) }
+            }
+        }
+        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let rc = withUnsafePointer(to: &addr) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+        }
+        guard rc == 0 else {
+            FileHandle.standardError.write(Data("diar worker: connect failed: \(errno)\n".utf8))
+            return
+        }
+        let connection = DiarWorkerConnection(fd: fd)
+        let server = DiarWorkerServer(connection: connection,
+                                      rawDiarizer: DiarizerEngineRawAdapter(engine: engine))
+        await server.run()
     }
 
     /// A filesystem-safe timestamp stem for a `--stdin` live recording folder.
