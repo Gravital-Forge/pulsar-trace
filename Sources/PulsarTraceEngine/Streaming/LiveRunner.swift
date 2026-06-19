@@ -90,6 +90,10 @@ final class LiveRunner: Sendable {
     /// the teardown bound exists only as a defensive cap.
     private let workerDrainTimeout: Duration
 
+    /// How long a live-diarization window may hold the single in-flight slot
+    /// before it is presumed wedged and force-reclaimed (D42) — see `DiarGate`.
+    private let diarWedgeReclaim: Duration
+
     init(
         configuration: StreamingPipeline.Configuration,
         writer: LiveMarkdownWriter,
@@ -101,7 +105,8 @@ final class LiveRunner: Sendable {
         phaseHeartbeatInterval: Duration = LiveRunner.defaultPhaseHeartbeatInterval,
         phaseHeartbeatThreshold: Duration = LiveRunner.defaultPhaseHeartbeatThreshold,
         queueCapacity: Duration = .seconds(30),
-        workerDrainTimeout: Duration = .seconds(10)
+        workerDrainTimeout: Duration = .seconds(10),
+        diarWedgeReclaim: Duration = .seconds(2)
     ) {
         self.configuration = configuration
         self.writer = writer
@@ -114,6 +119,7 @@ final class LiveRunner: Sendable {
         self.phaseHeartbeatThreshold = phaseHeartbeatThreshold
         self.queueCapacity = queueCapacity
         self.workerDrainTimeout = workerDrainTimeout
+        self.diarWedgeReclaim = diarWedgeReclaim
     }
 
     func run(
@@ -170,12 +176,14 @@ final class LiveRunner: Sendable {
         let systemStreamer = StreamingTranscriber(
             transcriber: systemTranscriber,
             configuration: configuration.transcriberConfig,
-            logger: logger)
+            logger: logger,
+            streamLabel: "system")
         let micStreamer = micTranscriber.map {
             StreamingTranscriber(
                 transcriber: $0,
                 configuration: configuration.transcriberConfig,
-                logger: logger)
+                logger: logger,
+                streamLabel: "mic")
         }
 
         // The full system + mic audio is streamed straight to disk as frames
@@ -191,7 +199,7 @@ final class LiveRunner: Sendable {
         let diarState = DiarState()
         /// Bounds outstanding live-diarization work to a single window in
         /// flight (Fix B) and lets the run hand off any in-flight task at exit.
-        let diarGate = DiarGate()
+        let diarGate = DiarGate(reclaimAfter: diarWedgeReclaim)
 
         var systemDone = false
         var micDone = !hasMic
@@ -427,14 +435,47 @@ final class LiveRunner: Sendable {
                 if let liveDiarizer {
                     if let req = diarBuffers.append(frame.samples) {
                         phase.set("await-diarGate-tryAcquire")
-                        if await diarGate.tryAcquire() {
+                        // Per-pass diagnostic state (numbers only — Hard Invariant #7).
+                        let _diarBufSec = diarBuffers.bufferedSampleCount / AudioFormat.sampleRate
+                        let _qSys = systemQueue.depth
+                        let _qMic = micQueue?.depth ?? 0
+                        let _acq = await diarGate.tryAcquire()
+                        if let token = _acq.token {
+                            if case .reclaimed = _acq {
+                                // A prior window held the slot past the deadline
+                                // and was abandoned as wedged — diarization is
+                                // recovering rather than frozen (D42).
+                                self.logger.notice("""
+                                    live trace diar RECLAIMED wedged slot: \
+                                    t≈\(Int((ContinuousClock.now - startWall).seconds))s \
+                                    diarBuf=\(_diarBufSec)s qSys=\(_qSys) qMic=\(_qMic)
+                                    """)
+                            }
                             let windowStart = samplesToDuration(req.startSampleIndex)
+                            let _launchWall = (ContinuousClock.now - startWall).seconds
+                            let _lg = self.logger
                             Task.detached {
+                                let _diarT0 = ContinuousClock.now
                                 let spans = await liveDiarizer.diarizeWindow(
                                     samples: req.samples, windowStart: windowStart)
                                 await diarState.merge(spans)
-                                await diarGate.release()
+                                await diarGate.release(token)
+                                let _ran = (ContinuousClock.now - _diarT0).seconds * 1000
+                                let _stateSpans = await diarState.count()
+                                let _keys = await liveDiarizer.centroids().count
+                                _lg.notice("""
+                                    live trace diar: t=\(Int(windowStart.seconds))s \
+                                    launchLag=\(String(format: "%.1f", _launchWall - windowStart.seconds))s \
+                                    ran=\(Int(_ran))ms spans=\(spans.count) diarBuf=\(_diarBufSec)s \
+                                    stateSpans=\(_stateSpans) keys=\(_keys) qSys=\(_qSys) qMic=\(_qMic)
+                                    """)
                             }
+                        } else {
+                            self.logger.notice("""
+                                live trace diar SKIPPED(gate busy): \
+                                t≈\(Int((ContinuousClock.now - startWall).seconds))s \
+                                diarBuf=\(_diarBufSec)s qSys=\(_qSys) qMic=\(_qMic)
+                                """)
                         }
                     }
                 } else {

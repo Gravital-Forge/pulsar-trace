@@ -40,6 +40,10 @@ public final class BoundedFrameQueue: @unchecked Sendable {
     /// Total frames dropped over the queue's lifetime.
     public var droppedFrameCount: Int { lock.withLock { _droppedFrameCount } }
 
+    /// Diagnostic: current buffered (un-dequeued) frame count — the worker
+    /// backlog, surfaced in the `live trace diar` log.
+    public var depth: Int { lock.withLock { buffer.count } }
+
     /// Non-suspending dequeue for a worker that parks on an external wakeup
     /// instead of `dequeue()`. Returns nil when momentarily empty.
     public func tryDequeueNonSuspending() -> AudioFrame? {
