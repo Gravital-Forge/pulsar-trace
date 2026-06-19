@@ -51,7 +51,7 @@ public enum DiarWorkerProtocol {
     public static func splitLengthPrefixed(_ data: Data) throws -> (length: Int, body: Data) {
         guard data.count >= 4 else { throw CodecError.shortPrefix }
         let len = Int(data.subdata(in: data.startIndex ..< data.startIndex + 4)
-            .withUnsafeBytes { $0.load(as: UInt32.self).littleEndian })
+            .withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).littleEndian })
         guard len <= maxBodyBytes else { throw CodecError.oversized(len) }
         let bodyStart = data.startIndex + 4
         guard data.count - 4 >= len else {
@@ -62,7 +62,7 @@ public enum DiarWorkerProtocol {
 
     public static func decodeRequest(_ body: Data) throws -> (requestId: UInt64, samples: [Float]) {
         guard body.count >= 8, (body.count - 8) % 4 == 0 else { throw CodecError.shortRequest }
-        let id = body.withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
+        let id = body.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).littleEndian }
         let count = (body.count - 8) / 4
         var samples = [Float](repeating: 0, count: count)
         body.withUnsafeBytes { raw in
