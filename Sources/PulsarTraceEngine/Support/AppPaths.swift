@@ -78,6 +78,13 @@ public struct AppPaths: Sendable {
         socketDirectory.appendingPathComponent(
             "\(recordingId)-mic.sock", isDirectory: false)
     }
+
+    /// Per-session Unix-domain socket for the live diarizer worker (D43).
+    /// Same `$TMPDIR/PulsarTrace/` directory and 104-byte `sun_path` budget as
+    /// the capture sockets (see `socketDirectory`).
+    public func diarizerSocketURL(recordingId: String) -> URL {
+        socketDirectory.appendingPathComponent("\(recordingId)-diar.sock", isDirectory: false)
+    }
 }
 
 /// ISO-8601 / UTC formatting used by both the operational log and events log.

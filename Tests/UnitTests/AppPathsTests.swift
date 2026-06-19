@@ -100,3 +100,16 @@ struct AppPathsTests {
                 "socketDirectory must not live under Application Support; got: \(socketPath)")
     }
 }
+
+@Suite("AppPaths diarizer socket")
+struct AppPathsDiarizerSocketTests {
+    @Test("diarizer socket path is under the socket dir and stays within the sockaddr_un 104-byte cap")
+    func diarizerSocketPath() {
+        let paths = AppPaths(home: URL(fileURLWithPath: "/Users/test"))
+        let url = paths.diarizerSocketURL(recordingId: "2026-06-19-084407")
+        #expect(url.lastPathComponent == "2026-06-19-084407-diar.sock")
+        #expect(url.deletingLastPathComponent() == paths.socketDirectory)
+        // sockaddr_un.sun_path is capped at 104 bytes incl. NUL on Darwin.
+        #expect(url.path.utf8.count < 104)
+    }
+}
