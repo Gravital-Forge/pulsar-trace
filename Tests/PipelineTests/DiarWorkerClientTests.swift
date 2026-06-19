@@ -7,6 +7,42 @@ import Glibc
 import Darwin
 #endif
 
+/// A DiarWorkerConnecting spy that records close() and lets the test drive
+/// inbound frames + a scripted hello/result, so we can assert the supervisor
+/// closes the connection (C1: no leaked engine-side fd).
+final class SpyConnection: DiarWorkerConnecting, @unchecked Sendable {
+    let inboundBodies: AsyncStream<Data>
+    private let cont: AsyncStream<Data>.Continuation
+    private let lock = NSLock()
+    private var _closeCount = 0
+    var closeCount: Int { lock.withLock { _closeCount } }
+    init() {
+        var c: AsyncStream<Data>.Continuation!
+        self.inboundBodies = AsyncStream { c = $0 }
+        self.cont = c
+    }
+    func send(_ frame: Data) throws {
+        // Echo a result for any request so diarizeRawWindow resolves.
+        if let req = try? DiarWorkerProtocol.decodeRequest(frame.dropFirst(4)) {
+            let msg = DiarWorkerMessage.result(requestId: req.requestId,
+                window: DiarWindowResult(spans: [], embeddings: []))
+            if let f = try? DiarWorkerProtocol.encodeMessage(msg),
+               let (_, body) = try? DiarWorkerProtocol.splitLengthPrefixed(f) {
+                cont.yield(body)
+            }
+        }
+    }
+    func close() { lock.withLock { _closeCount += 1 }; cont.finish() }
+}
+
+actor SpyLauncher: DiarWorkerLaunching {
+    let conn = SpyConnection()
+    func launch() async throws -> DiarWorkerHandle {
+        DiarWorkerHandle(connection: conn, modelRevision: "rev",
+                         kill: {}, awaitExit: {})
+    }
+}
+
 /// A fake launcher backed by a socketpair + an in-process worker task whose
 /// "hang" behaviour is scriptable. Each `launch()` makes a fresh pair and a
 /// fresh worker; `kill` cancels the worker task and closes its end (modelling
@@ -78,5 +114,15 @@ struct DiarWorkerClientTests {
         #expect(second?.spans.first?.speaker == "S1")
         #expect(await launcher.launches >= 2)                       // respawned
         await client.shutdown()
+    }
+
+    @Test("shutdown closes the worker connection (C1: no leaked fd)")
+    func shutdownClosesConnection() async {
+        let launcher = SpyLauncher()
+        let client = DiarWorkerClient(launcher: launcher, deadline: .seconds(5), restartBackoff: .zero)
+        await client.start()
+        _ = await client.diarizeRawWindow(samples: [0])   // exercises a normal round-trip
+        await client.shutdown()
+        #expect(await launcher.conn.closeCount >= 1)       // FAILS before the fix
     }
 }

@@ -46,22 +46,30 @@ public final class DiarWorkerProcessLauncher: DiarWorkerLaunching, @unchecked Se
         // whole process group).
         let pid = process.processIdentifier
 
-        // accept() blocks until the worker connects (after it loads models).
-        let connFd = try accept(timeout: .seconds(120))
-        let connection = DiarWorkerConnection(fd: connFd)
+        // Any failure between spawn and returning the handle must reap the worker
+        // so it cannot become an orphan holding the ANE (I1).
+        do {
+            // accept() blocks until the worker connects (after it loads models).
+            let connFd = try accept(timeout: .seconds(120))
+            let connection = DiarWorkerConnection(fd: connFd)
 
-        // First inbound frame must be the hello (carries the model revision).
-        var revision = ""
-        for await body in connection.inboundBodies {
-            if case let .hello(rev)? = try? DiarWorkerProtocol.decodeMessage(body) { revision = rev }
-            break
+            // First inbound frame must be the hello (carries the model revision).
+            var revision = ""
+            for await body in connection.inboundBodies {
+                // Consume ONLY the hello here; the SAME single-buffer AsyncStream is then drained by DiarWorkerClient.startReader. Safe because the worker emits no result frame until it receives a request, which cannot be sent before startReader is attached.
+                if case let .hello(rev)? = try? DiarWorkerProtocol.decodeMessage(body) { revision = rev }
+                break
+            }
+
+            return DiarWorkerHandle(
+                connection: connection,
+                modelRevision: revision,
+                kill: { if pid > 0 { Darwin.kill(pid, SIGKILL) } },
+                awaitExit: { await exited.wait() })
+        } catch {
+            if pid > 0 { Darwin.kill(pid, SIGKILL) }
+            throw error
         }
-
-        return DiarWorkerHandle(
-            connection: connection,
-            modelRevision: revision,
-            kill: { if pid > 0 { Darwin.kill(pid, SIGKILL) } },
-            awaitExit: { await exited.wait() })
     }
 
     private func ensureListening() throws {
@@ -87,11 +95,12 @@ public final class DiarWorkerProcessLauncher: DiarWorkerLaunching, @unchecked Se
     }
 
     private func accept(timeout: Duration) throws -> Int32 {
-        var pfd = pollfd(fd: listenFd, events: Int16(POLLIN), revents: 0)
+        let fd = lock.withLock { listenFd }   // M2: snapshot under the lock
+        var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
         let ms = Int32(timeout.components.seconds * 1000)
         let rc = poll(&pfd, 1, ms)
         guard rc > 0 else { throw DiarWorkerLaunchError.acceptTimeout }
-        let conn = Darwin.accept(listenFd, nil, nil)
+        let conn = Darwin.accept(fd, nil, nil)
         guard conn >= 0 else { throw DiarWorkerLaunchError.accept(errno) }
         return conn
     }

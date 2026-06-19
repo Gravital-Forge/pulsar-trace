@@ -40,6 +40,10 @@ public actor DiarWorkerClient: RawWindowDiarizing {
     private var consecutiveRestarts = 0
     private var restarting = false
     private var shuttingDown = false
+    /// Bumped on every successful launch. A reader task carries the generation
+    /// it was started for; a superseded incarnation's EOF is ignored structurally
+    /// rather than relying on scheduling timing (I4).
+    private var generation: Int = 0
 
     public init(
         launcher: any DiarWorkerLaunching,
@@ -82,6 +86,7 @@ public actor DiarWorkerClient: RawWindowDiarizing {
         readerTask?.cancel()
         handle?.kill()
         await handle?.awaitExit()
+        handle?.connection.close()      // C1: release the engine-side fd
         failAllPending()
         handle = nil
     }
@@ -108,13 +113,14 @@ public actor DiarWorkerClient: RawWindowDiarizing {
             let h = try await launcher.launch()
             handle = h
             revision = h.modelRevision
-            startReader(for: h)
+            generation += 1
+            startReader(for: h, generation: generation)
         } catch {
-            logger.error("diar worker: launch failed: \(error)")
+            logger.error("diar worker: launch failed: \(PathRedactor.redactHome("\(error)"))")
         }
     }
 
-    private func startReader(for h: DiarWorkerHandle) {
+    private func startReader(for h: DiarWorkerHandle, generation gen: Int) {
         readerTask = Task {
             for await body in h.connection.inboundBodies {
                 guard let msg = try? DiarWorkerProtocol.decodeMessage(body) else { continue }
@@ -123,7 +129,7 @@ public actor DiarWorkerClient: RawWindowDiarizing {
                 }
                 // `hello` is consumed by the launcher before handing us the handle.
             }
-            await self.readerEnded()      // EOF / worker exited unexpectedly
+            await self.readerEnded(generation: gen)   // EOF / worker exited unexpectedly
         }
     }
 
@@ -131,7 +137,9 @@ public actor DiarWorkerClient: RawWindowDiarizing {
         if let cont = pending.removeValue(forKey: requestId) { cont.resume(returning: window) }
     }
 
-    private func readerEnded() async {
+    private func readerEnded(generation gen: Int) async {
+        // A superseded incarnation's EOF must not restart a healthy worker (I4).
+        guard gen == generation else { return }
         guard !shuttingDown, !restarting else { return }
         await restart(reason: "worker connection closed")
     }
@@ -143,6 +151,7 @@ public actor DiarWorkerClient: RawWindowDiarizing {
         readerTask?.cancel()
         handle?.kill()
         await handle?.awaitExit()
+        handle?.connection.close()      // C1: release the engine-side fd
         handle = nil
         failAllPending()
 

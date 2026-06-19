@@ -67,6 +67,11 @@ public final class DiarWorkerConnection: DiarWorkerConnecting, @unchecked Sendab
         finish()
     }
 
+    /// Defense-in-depth: a dropped connection always releases its fd. `close()`
+    /// is idempotent via its `already` guard, so this is safe alongside the
+    /// supervisor's explicit close (C1).
+    deinit { close() }
+
     /// Blocking read loop: read 4-byte LE length, then exactly `length` bytes,
     /// yield the body. Clean EOF or any error finishes the stream.
     private static func readLoop(fd: Int32, yield: (Data) -> Void, finish: () -> Void) {
