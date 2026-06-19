@@ -37,6 +37,18 @@ public final class DiarWorkerProcessLauncher: DiarWorkerLaunching, @unchecked Se
         process.executableURL = executableURL
         process.arguments = ["--diarizer-worker", "--diar-socket", socketPath,
                              "--cache-root", cacheRoot.path]
+        // The worker's stdout/stderr are pure FluidAudio log noise — its real
+        // channel is the socket. Route them to /dev/null so a full, slowly-
+        // drained inherited pipe can never block the worker in write() (during
+        // CoreML model load or a serving window). That write() block — NOT ANE
+        // contention — is what actually wedged live diarization: FluidAudio's
+        // AppLogger mirrors every level to stderr in DEBUG builds, and
+        // OfflineEmbeddingExtractor.emitProfileLog writes to stderr per window;
+        // the engine inherited pipe filled and parked the worker. The engine
+        // already discarded this stream (RecordOrchestrator drains it to void),
+        // so /dev/null is the same destination without the blocking pipe.
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         let exited = ProcessExitGate()
         process.terminationHandler = { _ in Task { await exited.signal() } }
         try process.run()
