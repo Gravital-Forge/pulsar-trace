@@ -87,9 +87,10 @@ struct EngineMain {
     /// else a sibling folder named for the fixture stem, else a timestamped
     /// folder in the cwd.
     ///
-    /// Live diarization is best-effort: if the in-process diarizer engine
-    /// (D40) cannot load it is skipped and system speakers stay the generic
-    /// `Them?`. `--no-live-diarization` skips it outright.
+    /// Live diarization is best-effort: it runs in a separate killable worker
+    /// process (D43) and, if that worker cannot be launched, it is skipped and
+    /// system speakers stay the generic `Them?`. `--no-live-diarization` skips
+    /// it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
         // --- resolve the source(s) ------------------------------------------
         let source: any AudioFrameSource
@@ -168,24 +169,19 @@ struct EngineMain {
             ? ParakeetWindowTranscriber(engine: parakeet)
             : nil
 
-        // --- live diarization engine (resident, ANE — D40) ------------------
-        // Loaded next to Parakeet so the model download happens before audio
-        // starts. A load failure degrades to generic `Them` labels, never
-        // blocks the live pass.
-        var diarizerEngine: DiarizerEngine?
+        // --- live diarization in a separate killable worker process (D43) ----
+        // A hung ANE prediction is recovered by SIGKILL, not a permanent
+        // in-process leak that would also starve Parakeet. Best-effort — a
+        // launch failure degrades the live pass to generic `Them` labels.
+        // `--no-live-diarization` skips it entirely.
+        var diarClient: DiarWorkerClient?
         if !args.contains("--no-live-diarization") {
-            do {
-                diarizerEngine = try await DiarizerEngine.load(
-                    cacheRoot: AppPaths.standard.modelsCacheDirectory,
-                    events: lifecycle.events,
-                    logger: Logger(label: LogSubsystem.engine))
-            } catch {
-                Logger(label: LogSubsystem.engine).error(
-                    """
-                    live diarization unavailable — continuing with generic \
-                    Them labels: \(PathRedactor.redactHome("\(error)"))
-                    """)
-            }
+            let launcher = DiarWorkerProcessLauncher(
+                socketURL: AppPaths.standard.diarizerSocketURL(recordingId: recordingId),
+                cacheRoot: AppPaths.standard.modelsCacheDirectory)
+            let client = DiarWorkerClient(launcher: launcher)
+            await client.start()
+            diarClient = client
         }
 
         // --- speaker library, READ-ONLY (R18/R32) ---------------------------
@@ -225,12 +221,14 @@ struct EngineMain {
                 recordingStart: recordingStart,
                 recordingId: recordingId,
                 transcriberConfig: transcriberConfig,
-                liveDiarizerEngine: diarizerEngine),
+                liveRawDiarizer: diarClient),
             systemTranscriber: transcriber,
             micTranscriber: micTranscriber,
             systemSource: source,
             micSource: micSource,
             library: library)
+
+        if let diarClient { await diarClient.shutdown() }
 
         let medianLag = String(format: "%.1f", output.medianLagSeconds)
         let maxLag = String(format: "%.1f", output.maxLagSeconds)

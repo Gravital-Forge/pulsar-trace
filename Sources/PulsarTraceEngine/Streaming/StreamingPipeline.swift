@@ -42,10 +42,10 @@ public struct StreamingPipeline: Sendable {
         public let recordingId: String
         /// Streaming-transcription tunables.
         public let transcriberConfig: StreamingTranscriber.Configuration
-        /// Resident in-process diarization engine for the live windowed pass
-        /// (D40). `nil` → no live diarization (system speakers stay the
-        /// generic `Them?`).
-        public let liveDiarizerEngine: DiarizerEngine?
+        /// Raw per-window diarizer for the live windowed pass — in production a
+        /// `DiarWorkerClient` proxying to the killable worker process (D43).
+        /// `nil` → no live diarization (system speakers stay the generic `Them?`).
+        public let liveRawDiarizer: (any RawWindowDiarizing)?
         /// How often the system stream is handed to the live diarizer, and the
         /// window length it sees.
         public let diarizationStep: Duration
@@ -56,7 +56,7 @@ public struct StreamingPipeline: Sendable {
             recordingStart: Date,
             recordingId: String,
             transcriberConfig: StreamingTranscriber.Configuration = .init(),
-            liveDiarizerEngine: DiarizerEngine? = nil,
+            liveRawDiarizer: (any RawWindowDiarizing)? = nil,
             diarizationStep: Duration = .seconds(5),
             diarizationWindow: Duration = .seconds(10)
         ) {
@@ -64,7 +64,7 @@ public struct StreamingPipeline: Sendable {
             self.recordingStart = recordingStart
             self.recordingId = recordingId
             self.transcriberConfig = transcriberConfig
-            self.liveDiarizerEngine = liveDiarizerEngine
+            self.liveRawDiarizer = liveRawDiarizer
             self.diarizationStep = diarizationStep
             self.diarizationWindow = diarizationWindow
         }
@@ -140,11 +140,10 @@ public struct StreamingPipeline: Sendable {
             pathBasename: RecordingFolder.FileName.live))
         logger.notice("live.md created — live pass started")
 
-        // --- live diarization (in-process, optional) -------------------------
+        // --- live diarization (worker-backed, optional) ----------------------
         var liveDiarizer: LiveDiarizer?
-        if let engine = configuration.liveDiarizerEngine {
-            liveDiarizer = LiveDiarizer(
-                rawDiarizer: DiarizerEngineRawAdapter(engine: engine), logger: logger)
+        if let raw = configuration.liveRawDiarizer {
+            liveDiarizer = LiveDiarizer(rawDiarizer: raw, logger: logger)
         }
         // --- run the streams ------------------------------------------------
         let runner = LiveRunner(
