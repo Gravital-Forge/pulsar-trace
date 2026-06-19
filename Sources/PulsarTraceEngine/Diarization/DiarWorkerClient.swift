@@ -109,12 +109,18 @@ public actor DiarWorkerClient: RawWindowDiarizing {
 
     private func bringUp() async {
         guard !shuttingDown else { return }
+        // Bump the generation BEFORE the launch `await`: a superseded reader's
+        // EOF arriving *during* the relaunch must see a newer generation and be
+        // ignored. Incrementing only after launch() returns leaves a window
+        // (zero backoff) where the stale EOF passes the guard and re-enters
+        // restart, which could overwrite `handle` and leak a worker (I4).
+        generation += 1
+        let gen = generation
         do {
             let h = try await launcher.launch()
             handle = h
             revision = h.modelRevision
-            generation += 1
-            startReader(for: h, generation: generation)
+            startReader(for: h, generation: gen)
         } catch {
             logger.error("diar worker: launch failed: \(PathRedactor.redactHome("\(error)"))")
         }
