@@ -7,9 +7,14 @@ on 2026-06-19 showed it is **not sufficient under a wedge storm**: the reclaim r
 into a still-jammed ANE, the un-cancellable hung calls pile up, and they end up starving
 Parakeet **transcription** too (see §0b). The real fix is **process isolation (D43)** —
 run the diarizer in its own killable worker so `SIGKILL` releases the wedged ANE call;
-plan in `docs/specs/2026-06-19-diarizer-worker-process-plan.md`. **D43 is now
-implemented + merged on this branch; automated tests green, manual live replay
-pending — see §9.**
+plan in `docs/specs/2026-06-19-diarizer-worker-process-plan.md`.
+
+> **RESOLVED 2026-06-19.** D43 shipped, and a live replay confirmed it saved
+> **transcription** — but also revealed the *real* root cause: the "wedge" was
+> never ANE contention. It was FluidAudio's verbose logging **blocking in
+> `write()` on a full, slowly-drained stderr pipe.** The ANE-contention narrative
+> in §0/§0b/§0c is a **misdiagnosis**; the corrected mechanism, the `lldb`/
+> `spindump` evidence, and the actual fixes are in **§10**.
 **Branches:** D42 instrumentation + reclaim on `fix/live-diarizer-wedge-reclaim`
 (off the ANE branch `feat/ane-transcription-pipeline`).
 
@@ -407,20 +412,122 @@ engine-side, so a respawned worker loses no identity continuity. The D42 in-proc
 process-level analogue of the D42 recovery test (hung worker → deadline → kill →
 next window recovers), deterministic across repeated runs.
 
-**Manual live verification — PENDING (Task 11, requires a human + the dev app):**
+**Manual live verification — DONE (2026-06-19).** Ran the replay (dev app →
+`.build/debug/pulsartrace-engine`, the `2026-06-18-084407` system audio). Result:
+D43 kept **transcription** healthy the whole run (`qSys=qMic=0`, no "recording
+paused") — a clear win over the D42 run, which cascaded to `qSys=qMic=1500` and
+killed transcription. **But diarization still died** after the first wedge
+(`ran=0ms spans=0` to the end → every later utterance mislabelled as the first
+speaker, the reported symptom). Chasing *why the respawn never recovered*
+uncovered the real root cause — and it was **not** the ANE. See **§10**.
 
-1. `swift build` the dev binary (the menu-bar/dev app must launch
-   `.build/debug/pulsartrace-engine`; a pre-built release `.app` will not include
-   these changes).
-2. Replay the known-bad `2026-06-18-084407` recording (wedges ~t=110–210 s)
-   through a ~7-min live session.
-3. Inspect the log:
-   ```
-   grep -E "diar worker: restarting|RECLAIMED|SKIPPED|live trace diar:" ~/Library/Logs/PulsarTrace/<YYYY-MM-DD>.log
-   ```
-   **Pass criteria:** `live trace diar:` keeps appearing through the whole run with
-   `keys > 1`; on a wedge you see `diar worker: restarting (deadline)` followed
-   within ~1–2 s by resumed diar lines (recovery, not a `SKIPPED`/`RECLAIMED`
-   cascade); transcription never stalls (`committedTokens` keeps growing, `qSys`/
-   `qMic` near 0, no long "recording paused" stretch in `live.md`).
-4. Record the observed behaviour here (replace this line with the result).
+---
+
+## 10. Resolution (2026-06-19) — the real root cause: a blocking stderr pipe, not the ANE
+
+The §9 replay forced the issue. D43 did what it was designed to do —
+**transcription survived** — but live diarization went dark after the first wedge
+and never came back, so the "everything becomes Stanisław" symptom persisted.
+Capturing the stuck worker mid-failure overturned the entire ANE-contention theory.
+
+### What the replay showed (run 16:49–16:53Z, the D43 build)
+
+- Healthy for ~105 s: `live trace diar: ran≈200ms spans=1–3`, `keys` 1→2→3.
+- At audio t≈110 s one window exceeded the 2 s deadline → `diar worker: window
+  deadline exceeded — killing + respawning`. ✓ D43 detected it and killed the worker.
+- From t=120 s to the end: **`ran=0ms spans=0` every window** — the supervisor's
+  `handle` stayed nil because the respawned worker never finished loading.
+- The respawned worker's `diarizer: models resident` is timestamped **16:53:07.869**,
+  ~90 ms *after* `live pass finished` (16:53:07.780). It made **zero** progress for
+  ~106 s and completed only as the stream stopped. So "106 s to reload" was the
+  wrong framing: it was **blocked the whole time and unblocked at teardown.**
+- Throughout, `qSys=qMic=0` and the transcriber kept committing — transcription fine.
+
+### The capture (`lldb` + `spindump` of the stuck worker, pid 60957)
+
+Both tools agree. The model-load task spent **397/397 samples** (the full 5 s) here:
+
+```
+diarizerWorker → DiarizerEngine.load → prepareModels → prewarmModelsIfNeeded
+  → prewarmEmbeddingStack → extractEmbeddings → emitProfileLog
+    → NSFileHandle.write → write          ← blocked in the syscall
+```
+
+- `CPU Time: <0.001s` over the 5 s — doing nothing. Pure I/O block.
+- That thread "last ran 85 s ago" — parked in `write()` for 85 s.
+- `ANEServicesThread` is idle in its runloop. **The ANE is not busy.**
+- The line it was trying to emit: `Embedding timings: … embeddingTotal=6.45ms` —
+  the ANE embedding **already finished, in 6 ms.** It was wedged *logging that the
+  ANE succeeded.*
+
+`write()` parking for 85 s with zero CPU can only be a pipe/terminal with a full
+buffer and no reader draining — not a regular file, and not the ANE.
+
+### The mechanism
+
+1. FluidAudio logs verbosely to **stderr** — `Shared/AppLogger.swift` mirrors
+   **every** level to `FileHandle.standardError` in **DEBUG builds**
+   (`#if DEBUG → logToConsole`), and `OfflineEmbeddingExtractor.emitProfileLog`
+   writes a `[Profiling]` line straight to stderr **per embedding extraction**
+   (unconditionally). The offline diarizer hits both, every window.
+2. The diarizer worker **inherited the engine's stderr** —
+   `DiarWorkerProcessLauncher` never set `standardOutput`/`standardError`.
+3. That engine pipe was drained **byte-by-byte** by `RecordOrchestrator` via
+   `for try await byte in handle.bytes`, on the cooperative pool in the app
+   process. Under the DEBUG flood the drain can't keep up.
+4. The 64 KB pipe fills → the next `write()` blocks indefinitely → the worker's
+   model load (and, by the same path, a normal serving window) parks in `write()`.
+   It "recovers" only when teardown closes the pipe.
+
+This is the **same** `extractEmbeddings → emitProfileLog → write` path that runs on
+every serving window, so the **original per-window wedges — and the D42
+SKIPPED/RECLAIMED cascades — were almost certainly this too**, not an
+un-cancellable ANE prediction. §0/§0b/§0c attributed the hang to FluidAudio's
+synchronous embedding `prediction` (citing its prewarm "can hang on a contended
+ANE" comment); that was plausible but wrong — the hang is *after* the prediction,
+in the profile-log write. The ~4 % ANE duty cycle never fit the "ANE saturated"
+story; the blocking-`write()` explanation does.
+
+### The fixes (committed)
+
+- **Worker (`912208e`):** `DiarWorkerProcessLauncher` now sets
+  `process.standardOutput = .nullDevice` / `process.standardError = .nullDevice`.
+  The worker's real channel is the socket; its stderr was pure FluidAudio noise
+  that the engine already discarded (`drainToVoid`), so `/dev/null` is the same
+  destination minus the pipe that can block — robust regardless of log volume or
+  build config (`/dev/null` never blocks).
+- **Engine (`80faa21`):** `RecordOrchestrator` now drains subprocess pipes with a
+  chunked, blocking `readToEnd()` on a background thread instead of byte-by-byte
+  `FileHandle.bytes` on the cooperative pool — so a chatty child (the engine's own
+  Parakeet FluidAudio logging in debug) can't outpace the reader and fill the pipe.
+
+### Result
+
+Re-replayed the same audio: **live diarization now runs cleanly through the whole
+call** — no `ran=0ms spans=0` dead zone, no respawn stall, speakers tracked
+end-to-end; transcription remains healthy. Confirmed by the user. Automated suites
+green (`swift build`; `--filter DiarWorker` 12/12, `RecordOrchestrator` 8/8,
+`UnitTests`, `LiveRunner`, `Streaming`).
+
+### Implication for D42 / D43
+
+Both were engineered against a misdiagnosed cause (an un-cancellable ANE hang).
+They are not harmful — D43's process isolation is still a reasonable safety net and
+the D42 `DiarGate` reclaim is a harmless ≤1-window bound — but the
+**kill-respawn-to-release-a-wedged-ANE-call rationale no longer holds**: the actual
+wedge was blocking stderr, now fixed at the source. A future cleanup could
+reasonably simplify or unwind the worker/kill/respawn machinery now that the live
+diarizer no longer wedges. Not done here.
+
+### Follow-up (NOT implemented) — the label collapse (§2b)
+
+Independent of the wedge, and still open: when the live diarizer has **no coverage**
+for an utterance, `LiveRunner.resolveSystemLabel` falls back to `?? "Them"`, and
+`"Them"` is literally the **first speaker's provisional key**
+(`LiveDiarizer.provisionalKey(index: 0)`). So a no-coverage utterance inherits the
+first speaker's name through the R18 library lookup — which is why thin coverage
+reads as "everything is Stanisław." With diarization now healthy this is rarely
+hit, but **any** momentary gap still mislabels. The fix (deferred): a no-coverage
+utterance must resolve to a neutral/unknown marker and skip the R18 name lookup
+entirely, so it never collides with `provisionalKey(index: 0)`. Cheap and certain;
+recorded here so it is not re-chased as a diarizer bug.
