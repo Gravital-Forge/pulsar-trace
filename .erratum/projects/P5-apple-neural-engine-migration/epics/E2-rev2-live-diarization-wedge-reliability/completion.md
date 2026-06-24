@@ -1,11 +1,9 @@
 # PT-P5-E2-rev2 · Live-Diarization Wedge Reliability — Completion Record
 
-**Status:** Open — interim record · **Last updated:** 2026-06-23
+**Status:** Frozen · **Closed:** 2026-06-23
 
-This epic is **open**: the work below is resolved on the `fix/live-diarizer-wedge-reclaim` branch
-but is **not yet merged** into the integration branch (`feat/ane-transcription-pipeline`, tip
-`8ae53bb`), so it is not part of the current shipped state. This record is interim and will be frozen
-when the tail merges.
+The resolution merged via PR #12 (`cc3199d`, "Fix the live-diarizer wedge at its real root cause … keep
+live diarization in-process") and is part of the branch's shipped state.
 
 ## What was built
 
@@ -74,6 +72,3 @@ Relevant current-branch files the in-process design uses: `Sources/PulsarTraceEn
   note) reflect the in-process design and the chunked drain, and that the live no-coverage `Speaker?`
   marker is reflected wherever the provisional live-label markers are described (transcript-format
   contract).
-- **Open before this epic can close:** merge the `fix/live-diarizer-wedge-reclaim` tail into the
-  integration branch so the resolution (worker revert, the two pipe-drain fixes, the §2b label fix) is
-  part of the shipped state, then freeze this record.

@@ -1,6 +1,6 @@
 # PT-P5-E2-rev2 · Live-Diarization Wedge Reliability — Specification
 
-**Status:** Open · **Opened:** 2026-06-18
+**Status:** Frozen · **Opened:** 2026-06-18 · **Closed:** 2026-06-23
 
 **revises:** PT-P5-E2-rev1
 
@@ -15,9 +15,8 @@ guarantees (PT-R15/R16, and the wedged-decode isolation intent that PT-P5-R4 car
 adding one. Touches Live Diarization (PT-C13), the engine record orchestrator's subprocess-pipe drain
 (PT-C9), and live system-label resolution (PT-C12/PT-C14).
 
-This is the project's genuinely **in-flight tail**: the investigation has reached a resolution on the
-`fix/live-diarizer-wedge-reclaim` branch, but that tail is **not yet merged** into the
-integration branch (`feat/ane-transcription-pipeline`).
+This was the project's last open work; its resolution merged via PR #12 (`cc3199d`), which keeps live
+diarization in-process and fixes the wedge at its real root cause.
 
 ## Acceptance criteria
 
