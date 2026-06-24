@@ -9,8 +9,8 @@ speaker identity across recordings — entirely on the user's machine.
 ### PT-R70 · Technical — Pluggable audio-source protocol
 
 All audio enters the engine as an asynchronous sequence of fixed-format frames through one protocol;
-no engine code reaches a real audio API directly.
-*Acceptance:* the transcription pipeline runs unchanged over any conforming source.
+no engine code reaches a real audio API directly. *Acceptance:* the transcription pipeline runs
+unchanged over any conforming source.
 
 ### PT-R71 · Technical — Fixture playback source
 
@@ -108,7 +108,8 @@ already-refined recording with the current models and speaker library.
 ### PT-R90 · Functional — Retroactive transcript rewrite on speaker edit
 
 A speaker rename, merge, split, or unmerge retroactively rewrites the affected final transcripts and
-their metadata, atomically, emitting the paired rewrite event; the live transcript is never rewritten.
+their metadata, atomically, emitting the paired rewrite event; the live transcript is never
+rewritten.
 
 ### PT-R91 · Functional — Robust offline decoding
 
@@ -266,7 +267,8 @@ named other party.
 
 ### PT-R19 · Functional — Microphone-echo dedup
 
-A system-side duplicate of microphone speech is dropped by text similarity within a small time window.
+A system-side duplicate of microphone speech is dropped by text similarity within a small time
+window.
 
 ### PT-R35 · Functional — Human- and tool-readable live transcript
 
@@ -304,8 +306,8 @@ Live speaker labels are marked provisional.
 
 ### PT-R18 · Functional — Live library lookup
 
-During the live pass, a system speaker whose centroid matches the library shows the known name, still
-marked provisional.
+During the live pass, a system speaker whose centroid matches the library shows the known name,
+still marked provisional.
 
 ### PT-R32 · Constraint — Library read-only during the live pass
 
@@ -363,7 +365,8 @@ until interrupted.
 
 ### PT-R50 · Functional — `doctor` command
 
-A `doctor` command validates dependencies, permissions, and model presence with an actionable report.
+A `doctor` command validates dependencies, permissions, and model presence with an actionable
+report.
 
 ### PT-R68 · Functional — Capture self-test
 
@@ -436,7 +439,8 @@ recording never blocks the next.
 
 ### PT-R95 · Functional — Refinement yields to recording
 
-Starting a recording pauses an in-flight refine, which resumes from its on-disk checkpoint afterward.
+Starting a recording pauses an in-flight refine, which resumes from its on-disk checkpoint
+afterward.
 
 ### PT-R96 · Technical — Cross-process event-log integrity
 
@@ -451,8 +455,8 @@ file; a wedged decode is recoverable.
 
 ### PT-R98 · Constraint — Owner-only content files
 
-Every content-bearing file — transcripts, audio, metadata, the event log, the speaker library and its
-journal and backup, and internal lock files — is owner-only on disk.
+Every content-bearing file — transcripts, audio, metadata, the event log, the speaker library and
+its journal and backup, and internal lock files — is owner-only on disk.
 
 ### PT-R99 · Constraint — Private owned directories
 

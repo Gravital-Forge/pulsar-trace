@@ -12,15 +12,15 @@ close.
 **Decision:** The live decode step and window were lengthened (step to a few seconds, window to ten)
 to roughly halve live decode load.
 
-**Because:** The live pass was decoding more often than the bounded lag required, leaving no headroom;
-a longer step keeps lag acceptable while freeing the recognizer.
+**Because:** The live pass was decoding more often than the bounded lag required, leaving no
+headroom; a longer step keeps lag acceptable while freeing the recognizer.
 
 ### PT-P4-D2 · Per-window live language restricted to an allow-list
 
 *2026-05-29*
 
-**Decision:** Per-window language detection chooses among a user-configured allow-list rather than all
-languages, surfaced through a settings picker.
+**Decision:** Per-window language detection chooses among a user-configured allow-list rather than
+all languages, surfaced through a settings picker.
 
 **Because:** Unrestricted per-window detection drifted between languages mid-meeting; an allow-list
 keeps it stable for the languages a user actually speaks.
@@ -40,9 +40,9 @@ a same-user socket check plus durable writes close the remaining on-disk and IPC
 
 *2026-06-09*
 
-**Decision:** Duplicated transcriber cores are unified, the live runner's several responsibilities are
-split into focused types, transcript assembly is extracted, and layering leaks are removed — with no
-behaviour change.
+**Decision:** Duplicated transcriber cores are unified, the live runner's several responsibilities
+are split into focused types, transcript assembly is extracted, and layering leaks are removed —
+with no behaviour change.
 
 **Because:** The live and refine paths had accumulated parallel implementations; consolidating them
 makes the engine maintainable before the larger backend change ahead.
@@ -55,16 +55,16 @@ makes the engine maintainable before the larger backend change ahead.
 master–detail, rendering the selected (including live) transcript in-window, with renameable
 recordings and find-in-transcript; the separate refinements pane folds into the recording rows.
 
-**Because:** Multiple renderers and a separate status pane fragmented the experience; one renderer and
-an in-window detail make the window self-sufficient.
+**Because:** Multiple renderers and a separate status pane fragmented the experience; one renderer
+and an in-window detail make the window self-sufficient.
 
 ### PT-P4-D6 · Compact provisional marker emitted at the source
 
 *2026-06-10*
 
-**Decision:** The live transcript marks provisional speakers with a compact `?` suffix emitted by the
-engine itself, replacing the verbose `(provisional)` text; transcripts written before this keep the
-old marker until refined.
+**Decision:** The live transcript marks provisional speakers with a compact `?` suffix emitted by
+the engine itself, replacing the verbose `(provisional)` text; transcripts written before this keep
+the old marker until refined.
 
 **Because:** Marking provisional at the source keeps every reader consistent, and a compact glyph
 reads better; the change is a versioned transcript-contract change with a stated migration.

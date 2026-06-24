@@ -6,9 +6,9 @@
 
 Close the on-disk and cross-process exposure of a local-only privacy product: owner-only content
 files and private directories with looser permissions repaired (PT-P4-R4), same-user peer
-authentication on internal sockets (PT-P4-R5), and fsync-before-rename durability (PT-P4-R6). Touches
-file writing (PT-C4, PT-C11), the Events Log (PT-C6), the Speaker Library (PT-C5), and the IPC layer
-(PT-C8).
+authentication on internal sockets (PT-P4-R5), and fsync-before-rename durability (PT-P4-R6).
+Touches file writing (PT-C4, PT-C11), the Events Log (PT-C6), the Speaker Library (PT-C5), and the
+IPC layer (PT-C8).
 
 ## Acceptance criteria
 

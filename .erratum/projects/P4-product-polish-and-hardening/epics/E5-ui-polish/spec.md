@@ -4,15 +4,16 @@
 
 ## Intent
 
-Polish the interface: styled transcript rendering, a glanceable menubar icon, system notifications on
-refinement completion/failure (PT-P4-R8), a direct hotkey recorder, and an accessibility pass
+Polish the interface: styled transcript rendering, a glanceable menubar icon, system notifications
+on refinement completion/failure (PT-P4-R8), a direct hotkey recorder, and an accessibility pass
 (PT-P4-R7). Touches the Menubar Application (PT-C16).
 
 ## Acceptance criteria
 
 - Transcripts render as styled rows (timestamp / speaker / text) rather than raw Markdown.
 - A refinement completing or failing posts a system notification (when bundled).
-- The global hotkey is recorded directly in settings; interactive controls carry accessibility labels.
+- The global hotkey is recorded directly in settings; interactive controls carry accessibility
+  labels.
 
 ## Tasks
 

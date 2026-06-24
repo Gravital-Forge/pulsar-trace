@@ -20,8 +20,8 @@ written file caps the loss at about a second.
 *2026-05-18*
 
 **Decision:** Each capture engine runs a frame watchdog (a few seconds without audio) that rebuilds
-just that engine with backoff retry, surfaced through the existing pause/resume frames; an engine-side
-backstop tolerates daemon death.
+just that engine with backoff retry, surfaced through the existing pause/resume frames; an
+engine-side backstop tolerates daemon death.
 
 **Because:** A silently stalled stream left the engine alive but wedged; reusing the pause/resume
 mechanism recovers it without a new control path.
@@ -34,8 +34,8 @@ mechanism recovers it without a new control path.
 checkpointing, so a recording stops and returns to idle immediately while its refine is enqueued;
 the CLI keeps its direct one-shot refiner.
 
-**Because:** A finished recording auto-triggering an in-line refine blocked the next meeting; a queue
-decouples them and survives restarts.
+**Because:** A finished recording auto-triggering an in-line refine blocked the next meeting; a
+queue decouples them and survives restarts.
 
 ### PT-P3-D4 · Queue UI polls a snapshot
 
@@ -74,8 +74,8 @@ clobbered line was observed; the lock serializes cross-process appends.
 drop-oldest queue, never calling the recognizer) and a best-effort decode worker (offloaded, with a
 watchdog and abort token), so a hung decode cannot lose the recording.
 
-**Because:** The recognizer is the only component that can wedge; isolating it behind a bounded queue
-keeps the durable recording safe even when decoding stalls.
+**Because:** The recognizer is the only component that can wedge; isolating it behind a bounded
+queue keeps the durable recording safe even when decoding stalls.
 
 ### PT-P3-D8 · Pause cancels and requeues the in-flight diarization
 

@@ -8,10 +8,11 @@
 drop-oldest queue (`BoundedFrameQueue`), never calling the recognizer — and a best-effort decode
 worker that offloads decoding behind a decode watchdog and abort token (`AbortToken`), so a hung
 decode can no longer lose the recording. Because a native decode can wedge below the level an
-in-process abort can interrupt, inference then moved out of process: a `pulsartrace-whisper` subprocess
-hosts the recognizer over a length-prefixed IPC codec (`WhisperIPC` — `WhisperSubprocessHost`,
-`RemoteWindowTranscriber`, `RemoteRegionTranscriber`, `RemoteTranscriberCore`, `SerializingHostProxy`,
-`WhisperFrameCodec`), with parent-side wedge detection that force-kills and respawns the subprocess.
+in-process abort can interrupt, inference then moved out of process: a `pulsartrace-whisper`
+subprocess hosts the recognizer over a length-prefixed IPC codec (`WhisperIPC` —
+`WhisperSubprocessHost`, `RemoteWindowTranscriber`, `RemoteRegionTranscriber`,
+`RemoteTranscriberCore`, `SerializingHostProxy`, `WhisperFrameCodec`), with parent-side wedge
+detection that force-kills and respawns the subprocess.
 
 ## Deltas from the spec
 

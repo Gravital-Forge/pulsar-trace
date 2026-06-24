@@ -5,10 +5,11 @@
 ## What was built
 
 The live decode step and window were lengthened (step to a few seconds, window to ten) to roughly
-halve live decode load while keeping lag within bound. Per-window language detection was restricted to
-a user-configured allow-list — enforced in `WhisperTranscriber` via `WhisperOptions.allowedLanguages`
-over the `WhisperLanguageCatalog`, and surfaced through a multi-select / searchable settings picker —
-so the live pass no longer drifts between languages mid-meeting.
+halve live decode load while keeping lag within bound. Per-window language detection was restricted
+to a user-configured allow-list — enforced in `WhisperTranscriber` via
+`WhisperOptions.allowedLanguages` over the `WhisperLanguageCatalog`, and surfaced through a
+multi-select / searchable settings picker — so the live pass no longer drifts between languages
+mid-meeting.
 
 ## Deltas from the spec
 

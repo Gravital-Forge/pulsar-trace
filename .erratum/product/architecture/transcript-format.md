@@ -11,13 +11,13 @@ from provisional output (PT-R38).
 
 ## Write discipline
 
-The final transcript is written atomically — temp file, fsync, rename on the same volume — so a crash
-cannot leave a truncated file; the prior input transcript is preserved as a backup (PT-R24).
+The final transcript is written atomically — temp file, fsync, rename on the same volume — so a
+crash cannot leave a truncated file; the prior input transcript is preserved as a backup (PT-R24).
 
 ## Metadata sidecar
 
-Alongside the transcript, a JSON sidecar records the recording's id, durations, the speakers present,
-the model identities used, and a schema version (PT-R39).
+Alongside the transcript, a JSON sidecar records the recording's id, durations, the speakers
+present, the model identities used, and a schema version (PT-R39).
 
 ## Speaker labels
 
@@ -42,4 +42,3 @@ the field evolves under the contract's versioning rule (PT-R89).
 At refinement, the authoritative final transcript replaces the live transcript: the live file is
 preserved as a backup and the final transcript is written with its completion marker. Renames never
 happen in the live file — all relabelling is deferred to refinement.
-

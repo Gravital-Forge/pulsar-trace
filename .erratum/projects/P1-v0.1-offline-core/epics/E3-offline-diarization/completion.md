@@ -26,7 +26,8 @@ None.
 - **PT-P1-R5** — `Sources/PulsarTraceEngine/Diarization/` — `Diarizer.swift`,
   `DiarizationJSON.swift`, `SpeakerSpan.swift`, `DiarizedTranscript.swift`; `python/pulsartrace-ai`
   diarization script
-- **PT-P1-R11** — `python/pulsartrace-ai` telemetry-exporter guard; no off-device transmission anywhere in the engine
+- **PT-P1-R11** — `python/pulsartrace-ai` telemetry-exporter guard; no off-device transmission
+  anywhere in the engine
 - **PT-P1-R10 (PT-R67)** — `python/pulsartrace-ai` diarization-wrapper tests (pytest)
 
 ## To flow into the product layer

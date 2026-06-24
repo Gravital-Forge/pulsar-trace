@@ -2,10 +2,10 @@
 
 **Product code:** `PT` · **Erratum record opened:** 2026-06-24
 
-PulsarTrace is a local-only macOS meeting-transcription app: it captures microphone and system
-audio on the user's Mac and writes speaker-labelled, timestamped Markdown transcripts, with no audio
-or data leaving the machine. This directory is the source of truth for the product's requirements,
-its architecture, and the traceability between them.
+PulsarTrace is a local-only macOS meeting-transcription app: it captures microphone and system audio
+on the user's Mac and writes speaker-labelled, timestamped Markdown transcripts, with no audio or
+data leaving the machine. This directory is the source of truth for the product's requirements, its
+architecture, and the traceability between them.
 
 ## How this directory works
 

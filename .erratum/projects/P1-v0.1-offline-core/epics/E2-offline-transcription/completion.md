@@ -13,8 +13,8 @@ with seconds-since-start timestamps.
 
 `ModelStore` downloads recognition models with HTTP range-resume and verifies them against pinned
 SHA-256 hashes (`SHA256Verifier`) before use, deleting and retrying on mismatch, and emits a
-model-download event; `ModelCatalog` pins the multilingual default and refinement models. `WAVWriter`
-/ `WAVReader` read and write the canonical 16 kHz mono Int16 PCM WAV.
+model-download event; `ModelCatalog` pins the multilingual default and refinement models.
+`WAVWriter` / `WAVReader` read and write the canonical 16 kHz mono Int16 PCM WAV.
 
 ## Deltas from the spec
 
@@ -26,7 +26,8 @@ process-wide lock (recorded as PT-P1-D8).
 - **PT-P1-R2** — `Sources/PulsarTraceEngine/Transcription/` — `WhisperTranscriber.swift`,
   `OfflineTranscriptionPipeline.swift`, `TranscriptDocument.swift`, `BlankTokenFilter.swift`,
   `WhisperOptions.swift`; `CWhisper` interop
-- **PT-P1-R3** — `Sources/PulsarTraceEngine/Transcription/` — `ModelStore.swift`, `ModelCatalog.swift`, `SHA256Verifier.swift`
+- **PT-P1-R3** — `Sources/PulsarTraceEngine/Transcription/` — `ModelStore.swift`,
+  `ModelCatalog.swift`, `SHA256Verifier.swift`
 - **PT-P1-R4** — `Sources/PulsarTraceEngine/Audio/` — `WAVWriter.swift`, `WAVReader.swift`
 
 ## To flow into the product layer

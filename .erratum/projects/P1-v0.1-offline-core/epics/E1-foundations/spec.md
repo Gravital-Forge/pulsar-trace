@@ -4,12 +4,11 @@
 
 ## Intent
 
-Establish the package skeleton and the cross-cutting seams every later capability depends on:
-the pluggable audio-source abstraction (PT-P1-R1), the append-only events log (PT-P1-R8),
-content-safe operational logging (PT-P1-R9), the deterministic layered test strategy (PT-P1-R10),
-and the baseline constraints of open-source-only dependencies (PT-P1-R12) and versioned public
-contracts (PT-P1-R13). No domain capability ships here — this epic is the ground the others stand
-on.
+Establish the package skeleton and the cross-cutting seams every later capability depends on: the
+pluggable audio-source abstraction (PT-P1-R1), the append-only events log (PT-P1-R8), content-safe
+operational logging (PT-P1-R9), the deterministic layered test strategy (PT-P1-R10), and the
+baseline constraints of open-source-only dependencies (PT-P1-R12) and versioned public contracts
+(PT-P1-R13). No domain capability ships here — this epic is the ground the others stand on.
 
 ## Acceptance criteria
 

@@ -4,11 +4,11 @@
 
 ## Intent
 
-Rework the main window into a master–detail experience: recordings list beside an in-window transcript
-detail that renders the selected (including live) transcript, renameable recordings, find-in-transcript,
-and the refinements pane folded into the recording rows (PT-P4-R3). Also moves the compact provisional
-`?` marker to the engine source. Touches the Menubar Application (PT-C16), Recording Durability /
-live writer (PT-C14), and the Transcript Output contract (PT-C11).
+Rework the main window into a master–detail experience: recordings list beside an in-window
+transcript detail that renders the selected (including live) transcript, renameable recordings,
+find-in-transcript, and the refinements pane folded into the recording rows (PT-P4-R3). Also moves
+the compact provisional `?` marker to the engine source. Touches the Menubar Application (PT-C16),
+Recording Durability / live writer (PT-C14), and the Transcript Output contract (PT-C11).
 
 ## Acceptance criteria
 

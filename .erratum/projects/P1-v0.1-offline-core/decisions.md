@@ -8,8 +8,8 @@ The choices that shaped the offline core, recorded as each was taken. Frozen at 
 
 *2026-05-15*
 
-**Decision:** Deliver the offline pipeline as a command-line tool — no device capture, no live
-pass, no UI — as v0.1.
+**Decision:** Deliver the offline pipeline as a command-line tool — no device capture, no live pass,
+no UI — as v0.1.
 
 **Because:** The initial build host had no audio devices, display, or signing identity; the offline
 path is fully exercisable from fixtures and pipes, so it ships value first while later capabilities
@@ -30,12 +30,12 @@ only needed once there is a UI.
 *2026-05-16*
 
 **Decision:** Run diarization in a Python virtual environment built from a Homebrew `python3.12` and
-pinned by a lockfile, invoked from Swift; bundling a self-contained Python runtime is deferred to the
-distribution phase.
+pinned by a lockfile, invoked from Swift; bundling a self-contained Python runtime is deferred to
+the distribution phase.
 
-**Because:** The strongest open diarization model ships as a Python library; a Homebrew-built, pinned
-venv keeps results reproducible and the Swift side thin during development, leaving the heavier
-self-contained-runtime packaging for later.
+**Because:** The strongest open diarization model ships as a Python library; a Homebrew-built,
+pinned venv keeps results reproducible and the Swift side thin during development, leaving the
+heavier self-contained-runtime packaging for later.
 
 ### PT-P1-D4 · Tests use the small recognition model
 
@@ -83,8 +83,7 @@ no per-call process spawn, and pinning the source keeps builds reproducible.
 **Decision:** Recognizer context creation, destruction, and inference are guarded by a process-wide
 lock, and the recognition test suite runs serialized.
 
-**Because:** Concurrent GPU contexts corrupt each other; serializing access is the reliable
-remedy.
+**Because:** Concurrent GPU contexts corrupt each other; serializing access is the reliable remedy.
 
 ### PT-P1-D9 · Diarization as a one-shot subprocess
 
@@ -93,8 +92,8 @@ remedy.
 **Decision:** Offline diarization runs as a one-shot Python subprocess — WAV in, JSON out — with a
 timeout and stderr captured to the operational log.
 
-**Because:** A one-shot process is simple and crash-isolated; the JSON contract keeps the Swift/Python
-boundary explicit.
+**Because:** A one-shot process is simple and crash-isolated; the JSON contract keeps the
+Swift/Python boundary explicit.
 
 ### PT-P1-D10 · Model cache under a single product root
 
@@ -110,8 +109,8 @@ wipes and makes the footprint auditable.
 *2026-05-16*
 
 **Decision:** The diarization JSON carries a schema version; the transcript-to-turns merge
-attributes each utterance to the speaker with dominant time overlap, co-attributing a second
-speaker that covers a large minority.
+attributes each utterance to the speaker with dominant time overlap, co-attributing a second speaker
+that covers a large minority.
 
 **Because:** A versioned contract lets the wire format evolve safely, and dominant-overlap is a
 robust, explainable attribution rule.

@@ -4,12 +4,13 @@
 
 ## What was built
 
-Recording rows gained speaker pills, and merge no longer leaves duplicate speaker rows in the metadata
-sidecar. The live transcript got smart auto-scroll (`AutoScrollController`): it follows the newest line
-when scrolled to the bottom and shows a "jump to newest" pill otherwise. "Don't recognize this
-speaker" delists a speaker — removing them from people and retroactively rewriting the affected final
-transcripts — and the per-line fallback for speech overlapping no diarized turn now labels the line so
-no text is lost but earns no speaker pill or metadata entry, so it never reads as a phantom person.
+Recording rows gained speaker pills, and merge no longer leaves duplicate speaker rows in the
+metadata sidecar. The live transcript got smart auto-scroll (`AutoScrollController`): it follows the
+newest line when scrolled to the bottom and shows a "jump to newest" pill otherwise. "Don't
+recognize this speaker" delists a speaker — removing them from people and retroactively rewriting
+the affected final transcripts — and the per-line fallback for speech overlapping no diarized turn
+now labels the line so no text is lost but earns no speaker pill or metadata entry, so it never
+reads as a phantom person.
 
 ## Deltas from the spec
 

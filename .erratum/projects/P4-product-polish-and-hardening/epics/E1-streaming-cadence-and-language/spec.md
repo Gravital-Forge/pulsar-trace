@@ -5,8 +5,8 @@
 ## Intent
 
 Tune the live pass: lengthen the decode cadence to free the recognizer, and restrict per-window
-language detection to a configured allow-list (PT-P4-R1). Touches Streaming Transcription (PT-C12) and
-the Menubar settings (PT-C16).
+language detection to a configured allow-list (PT-P4-R1). Touches Streaming Transcription (PT-C12)
+and the Menubar settings (PT-C16).
 
 ## Acceptance criteria
 

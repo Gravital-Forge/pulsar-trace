@@ -5,9 +5,9 @@
 ## Intent
 
 A pure-architecture refactor with no behaviour change: unify the duplicated transcriber cores, split
-the live runner's several responsibilities into focused types, extract transcript assembly, and remove
-layering leaks. Introduces no product requirement; it edits components only — Transcription / IPC
-(PT-C2, PT-C19), the live pipeline (PT-C12, PT-C18), and the Refinement Pipeline (PT-C4).
+the live runner's several responsibilities into focused types, extract transcript assembly, and
+remove layering leaks. Introduces no product requirement; it edits components only — Transcription /
+IPC (PT-C2, PT-C19), the live pipeline (PT-C12, PT-C18), and the Refinement Pipeline (PT-C4).
 
 ## Acceptance criteria
 

@@ -6,8 +6,8 @@
 
 The main window became a master–detail split (`RecordingsSplitView`, `PersistentHSplit`,
 `RecordingsPaneModel`): a recordings list beside a transcript detail (`TranscriptDetailView`,
-`TranscriptDetailModel`) that renders the selected transcript — including the one recording live — in
-the window, with recordings grouped by day, renameable (`RecordingTitleStore`), and searchable
+`TranscriptDetailModel`) that renders the selected transcript — including the one recording live —
+in the window, with recordings grouped by day, renameable (`RecordingTitleStore`), and searchable
 (find-in-transcript). Refinement status moved onto the recording rows and the separate refinements
 pane was removed. The compact provisional `?` suffix is now emitted by the engine at the source
 (`LiveRunner.resolveSystemLabel`), replacing the verbose `(provisional)`; live transcripts written

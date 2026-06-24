@@ -6,8 +6,8 @@
 
 Add the live pass: streaming transcription that grows an append-only live transcript (PT-P2-R1),
 windowed live diarization with provisional, library-aware labels (PT-P2-R2), and microphone-echo
-dedup (PT-P2-R3). Consumes the audio sources (PT-C1) and reads the speaker library (PT-C5) read-only;
-extends the Transcript Output contract (PT-C11) with the provisional live stream.
+dedup (PT-P2-R3). Consumes the audio sources (PT-C1) and reads the speaker library (PT-C5)
+read-only; extends the Transcript Output contract (PT-C11) with the provisional live stream.
 
 ## Acceptance criteria
 

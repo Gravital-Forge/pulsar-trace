@@ -9,7 +9,8 @@ The choices behind the live pass, device capture, the CLI, and the menubar. Froz
 *2026-05-16*
 
 **Decision:** Live diarization runs the same diarization pipeline as the offline pass over a sliding
-window via a long-lived subprocess, stitching speaker identity across windows by embedding similarity.
+window via a long-lived subprocess, stitching speaker identity across windows by embedding
+similarity.
 
 **Because:** The obvious streaming-diarization library would force a downgrade of the diarization
 model that breaks the offline pass; a windowed run of the pinned model keeps one model across both
@@ -19,8 +20,8 @@ passes.
 
 *2026-05-16*
 
-**Decision:** Live transcription holds an anchored window (fixed start, growing end) and commits only
-text that two successive decodes agree on; under backpressure the anchor jumps forward.
+**Decision:** Live transcription holds an anchored window (fixed start, growing end) and commits
+only text that two successive decodes agree on; under backpressure the anchor jumps forward.
 
 **Because:** Committing only agreed text keeps the live transcript strictly append-only — no word is
 ever revised — while the anchored window bounds decode cost.
@@ -43,8 +44,8 @@ compatible.
 executable and the capture tests, depending on the engine for shared wire types; no separate IPC
 module.
 
-**Because:** A library is testable without the executable, and reusing the engine's wire types avoids
-a third module.
+**Because:** A library is testable without the executable, and reusing the engine's wire types
+avoids a third module.
 
 ### PT-P2-D5 · CLI before menubar; orchestration in the engine
 
@@ -94,8 +95,8 @@ sorted ahead of the other speaker; per-region decoding fixes the cross-turn orde
 **Decision:** Menubar logic lives in a `PulsarTraceMenuBar` library behind a thin SwiftUI executable
 (no Xcode project), and the global hotkey uses a passive event monitor.
 
-**Because:** A library keeps the UI logic testable, and a passive monitor avoids requesting the broad
-accessibility permission an active hotkey would need.
+**Because:** A library keeps the UI logic testable, and a passive monitor avoids requesting the
+broad accessibility permission an active hotkey would need.
 
 ### PT-P2-D10 · Menubar refines in-process
 

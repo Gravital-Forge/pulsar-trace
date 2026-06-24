@@ -11,7 +11,8 @@ the CLI keeps its direct one-shot refiner.
 
 ## Acceptance criteria
 
-- A finished recording enqueues its refine and returns to idle; a second recording can start at once.
+- A finished recording enqueues its refine and returns to idle; a second recording can start at
+  once.
 - A recording start pauses the queue (and the in-flight diarization), which resumes from checkpoint
   afterward.
 - Queue state survives a restart; the queue UI reflects running/queued/recent jobs.

@@ -12,8 +12,8 @@ The seam through which all audio enters the engine: the `AudioFrameSource` proto
 sequence of 16 kHz mono Float32, 20 ms frames) and its fixture, pipe, and socket implementations,
 with a uniform end-of-stream. Engine code consumes audio only through this layer.
 
-*Interactions:* feeds the Transcription Engine and the Diarization Engine; sources are constructed by
-the engine executable from its invocation mode.
+*Interactions:* feeds the Transcription Engine and the Diarization Engine; sources are constructed
+by the engine executable from its invocation mode.
 
 *Satisfies:* PT-R70, PT-R71, PT-R72, PT-R73, PT-R75, PT-R76
 
@@ -46,9 +46,9 @@ and the Speaker Library.
 The post-recording pass that produces the authoritative transcript: re-transcribe, diarize globally,
 merge by timestamp, reconcile speakers, and write the final transcript atomically with its metadata
 sidecar. Owns recording-folder input dispatch and the atomic write-with-backup process. Offline
-decoding runs per voice-activity region (escaping silence-repetition and preserving cross-turn order)
-with a phrase-plus-confidence hallucination gate. An in-process refiner shares this path with the
-menubar, and a retroactive rewriter re-renders affected final transcripts after a speaker edit.
+decoding runs per voice-activity region (escaping silence-repetition and preserving cross-turn
+order) with a phrase-plus-confidence hallucination gate. An in-process refiner shares this path with
+the menubar, and a retroactive rewriter re-renders affected final transcripts after a speaker edit.
 
 *Interactions:* drives the Transcription and Diarization engines and the Speaker Library; writes the
 Transcript Output; emits refinement, file, and speaker-rewrite events to the Events Log.
@@ -91,8 +91,8 @@ content-leak scanner and subprocess-stderr capture.
 ### PT-C8 · IPC Layer
 
 The protocol definitions for inter-process audio and control: a binary frame protocol (with in-band
-pause/resume control frames distinguished by length) and a JSON-line control protocol, used across the
-engine/capture boundary.
+pause/resume control frames distinguished by length) and a JSON-line control protocol, used across
+the engine/capture boundary.
 
 *Interactions:* underlies the socket source and the Capture Daemon's two streams.
 
@@ -100,9 +100,10 @@ engine/capture boundary.
 
 ### PT-C9 · Command-Line Interface
 
-The `pulsartrace` tool: `refine` (run the refinement pass), `speakers` (manage the library), `record`
-(run a full session via the engine orchestrator), `doctor` (environment checks and a tone-based
-capture self-test), `events tail` (stream the event log), and `install-cli` (symlink with consent).
+The `pulsartrace` tool: `refine` (run the refinement pass), `speakers` (manage the library),
+`record` (run a full session via the engine orchestrator), `doctor` (environment checks and a
+tone-based capture self-test), `events tail` (stream the event log), and `install-cli` (symlink with
+consent).
 
 *Interactions:* drives the Refinement Pipeline, the Speaker Library, and the record orchestrator;
 spawns the Capture Daemon and engine for `record`.
@@ -137,8 +138,8 @@ lag within bound while freeing the recognizer; per-window language detection is 
 configured allow-list. Owns the live commit discipline; its surrounding responsibilities are split
 into focused types (live sink, diarization state, gate).
 
-*Interactions:* reads the system source (PT-C1); commits through the Live Markdown Writer; shares the
-recognizer (PT-C2).
+*Interactions:* reads the system source (PT-C1); commits through the Live Markdown Writer; shares
+the recognizer (PT-C2).
 
 *Satisfies:* PT-R10, PT-R11, PT-R14, PT-R102
 
@@ -156,8 +157,8 @@ utterances for the Live Markdown Writer.
 ### PT-C14 · Live Markdown Writer
 
 Writes the provisional live transcript — created at session start with its marker and header,
-strictly append-only with atomic per-line writes — and drops microphone-echo duplicates. Its contract
-is part of the Transcript Output spec (`transcript-format.md`).
+strictly append-only with atomic per-line writes — and drops microphone-echo duplicates. Its
+contract is part of the Transcript Output spec (`transcript-format.md`).
 
 *Interactions:* written by Streaming Transcription and Live Diarization; its file is replaced by the
 final transcript at refinement.
@@ -168,9 +169,9 @@ final transcript at refinement.
 
 The `pulsartrace-capture` process — the only permission-gated component. Captures the microphone
 (AVFoundation) and system audio (ScreenCaptureKit), resampling and downmixing to the canonical frame
-format at the source, and delivers both over Unix sockets. Owns sleep/wake and device-change recovery
-via in-band pause/resume control frames, per-engine frame-watchdog stall detection with backoff
-restart, and microphone selection / system-audio toggling.
+format at the source, and delivers both over Unix sockets. Owns sleep/wake and device-change
+recovery via in-band pause/resume control frames, per-engine frame-watchdog stall detection with
+backoff restart, and microphone selection / system-audio toggling.
 
 *Interactions:* feeds the engine's socket sources over the IPC layer (PT-C8); emits
 recording-lifecycle and permission events (PT-C6).
@@ -195,8 +196,8 @@ edits the Speaker Library (PT-C5); surfaces the Refinement Job Queue (PT-C17).
 
 A single-worker FIFO queue, persisted as JSONL, that runs refinement off the recording path:
 per-voice-activity-region checkpointing via a resumable refiner, a pause gate that yields to a
-starting recording and resumes from checkpoint, and one recognizer reused per job. The menubar drives
-refinement through it; the CLI keeps the direct one-shot path.
+starting recording and resumes from checkpoint, and one recognizer reused per job. The menubar
+drives refinement through it; the CLI keeps the direct one-shot path.
 
 *Interactions:* drives the Refinement Pipeline (PT-C4); paused by a recording start; surfaced by the
 Menubar Application (PT-C16).
@@ -206,25 +207,25 @@ Menubar Application (PT-C16).
 ### PT-C18 · Recording Durability
 
 Keeps the recording safe under failure: incremental crash-safe WAV writing (header re-patched as it
-grows), capture stall detection driving engine rebuilds, and the live run split into a recording-safe
-drain (WAV + diarization + a bounded drop-oldest queue, never calling the recognizer) plus a
-best-effort, offloaded decode worker with a watchdog. Neither a stall nor a wedged decode loses the
-recording.
+grows), capture stall detection driving engine rebuilds, and the live run split into a
+recording-safe drain (WAV + diarization + a bounded drop-oldest queue, never calling the recognizer)
+plus a best-effort, offloaded decode worker with a watchdog. Neither a stall nor a wedged decode
+loses the recording.
 
-*Interactions:* wraps the live pass (PT-C12, PT-C14) and the Capture Daemon (PT-C15); offloads decode
-to the Out-of-Process Recognizer (PT-C19).
+*Interactions:* wraps the live pass (PT-C12, PT-C14) and the Capture Daemon (PT-C15); offloads
+decode to the Out-of-Process Recognizer (PT-C19).
 
 *Satisfies:* PT-R92, PT-R93, PT-R97
 
 ### PT-C19 · Out-of-Process Recognizer
 
-Hosts the recognizer in a separate `pulsartrace-whisper` subprocess over a length-prefixed IPC codec,
-so a wedged native decode can be force-killed and respawned from the parent without taking down the
-engine.
+Hosts the recognizer in a separate `pulsartrace-whisper` subprocess over a length-prefixed IPC
+codec, so a wedged native decode can be force-killed and respawned from the parent without taking
+down the engine.
 
-*Interactions:* invoked by the live decode worker and the refiner over the IPC layer (PT-C8); managed
-by Recording Durability (PT-C18). It shares the unified `RemoteTranscriberCore` between its live
-(`RemoteWindowTranscriber`) and refinement (`RemoteRegionTranscriber`) IPC clients, so host
+*Interactions:* invoked by the live decode worker and the refiner over the IPC layer (PT-C8);
+managed by Recording Durability (PT-C18). It shares the unified `RemoteTranscriberCore` between its
+live (`RemoteWindowTranscriber`) and refinement (`RemoteRegionTranscriber`) IPC clients, so host
 kill/respawn policy is defined once.
 
 *Satisfies:* PT-R97

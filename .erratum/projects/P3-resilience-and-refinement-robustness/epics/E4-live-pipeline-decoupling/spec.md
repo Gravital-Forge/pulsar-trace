@@ -4,10 +4,10 @@
 
 ## Intent
 
-Isolate the durable recording from a wedged transcription decode (PT-P3-R5): split the live run so the
-recognizer can never stall the recording, then make a wedged decode actually recoverable by moving
-inference into a kill-able subprocess. Touches the live pipeline (PT-C12) and the transcription path
-(PT-C2).
+Isolate the durable recording from a wedged transcription decode (PT-P3-R5): split the live run so
+the recognizer can never stall the recording, then make a wedged decode actually recoverable by
+moving inference into a kill-able subprocess. Touches the live pipeline (PT-C12) and the
+transcription path (PT-C2).
 
 ## Acceptance criteria
 
