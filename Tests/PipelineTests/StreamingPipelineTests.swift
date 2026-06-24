@@ -65,8 +65,13 @@ struct StreamingPipelineTests {
         #expect(lines[0] == "<!-- pulsartrace:live -->")
         #expect(lines[1].hasPrefix("## Transcript — "))
 
-        // R14/R16: system speakers labelled `Them …?`.
-        #expect(text.contains("Them?:"))
+        // R16/§2b: this run has no live diarizer, so the live pass has no
+        // diarization coverage for any utterance. A no-coverage utterance is
+        // labelled with the neutral provisional marker `Speaker?` — never
+        // `Them?`, which would falsely attribute it to the first tracked
+        // speaker (the §2b label-collapse bug).
+        #expect(text.contains("Speaker?:"))
+        #expect(!text.contains("Them?:"))     // no false speaker attribution
         #expect(!text.contains("Speaker_"))   // no offline-style labels
         #expect(output.utteranceLines > 0)
 

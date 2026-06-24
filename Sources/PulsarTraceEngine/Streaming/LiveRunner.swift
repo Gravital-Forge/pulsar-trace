@@ -60,6 +60,17 @@ final class LiveRunner: Sendable {
     /// reports on the first tick after it crosses 2 s.
     static let defaultPhaseHeartbeatThreshold: Duration = .seconds(2)
 
+    /// Neutral provisional label for a committed system utterance the live pass
+    /// has **no diarization coverage** for (§2b). It MUST differ from every
+    /// `LiveDiarizer.provisionalKey(index:)` — especially `index: 0` ("Them").
+    /// Earlier code fell back to `"Them"` on no coverage, which collided with
+    /// the first stitched speaker's key: the R18 library lookup then matched
+    /// that speaker's centroid and silently attributed the no-coverage
+    /// utterance to the first speaker's name. Using a distinct marker — and
+    /// skipping the R18 lookup entirely on no coverage — makes that collision
+    /// impossible. Rendered as `Speaker?` with the R16 provisional `?` suffix.
+    static let noCoverageLabel = "Speaker"
+
     private let configuration: StreamingPipeline.Configuration
     private let writer: LiveMarkdownWriter
     private let logger: Logger
@@ -694,8 +705,14 @@ final class LiveRunner: Sendable {
         phase: LiveRunnerPhaseTracker? = nil
     ) async -> String {
         phase?.set("await-diarState-dominantKey")
-        let key = await diarState.dominantKey(
-            start: utterance.start, end: utterance.end) ?? "Them"
+        // No live diarization coverage for this utterance's range (§2b): return
+        // the neutral marker and SKIP the R18 lookup. Falling back to a real
+        // provisional key here (e.g. "Them") would let the lookup inherit the
+        // first speaker's name for an utterance no speaker was tracked over.
+        guard let key = await diarState.dominantKey(
+            start: utterance.start, end: utterance.end) else {
+            return "\(Self.noCoverageLabel)?"
+        }
 
         // R18: read-only speaker-library lookup. The live pass never writes the
         // library (invariant #5) — `bestMatch` is a pure read. The lookup is

@@ -338,11 +338,10 @@ Verified: emits with sane values on a 30 s smoke run; **Streaming 19/19** and
 1. **Capture + analyse a real recording** with the tracing (§6/§7). This is the
    deliverable that turns "unknown" into a pinpointed cause. Until then, do not assume
    load vs bug.
-2. **Ship the label-fallback fix regardless of root cause (cheap, certain).** A
-   no-coverage utterance must **not** inherit the first speaker's name — the `?? "Them"`
-   fallback must resolve to a neutral/unknown marker, not run through the R18 name lookup.
-   This removes the misleading "everything is Stanisław" even while coverage is thin.
-   (See §2b; `LiveRunner.resolveSystemLabel`.)
+2. ~~**Ship the label-fallback fix regardless of root cause (cheap, certain).**~~
+   **DONE (2026-06-19).** A no-coverage utterance no longer inherits the first
+   speaker's name: the `?? "Them"` fallback now resolves to the neutral `Speaker?`
+   marker and skips the R18 name lookup. See the §10 "label collapse" follow-up.
 3. **Target the measured cause** once §1 identifies it — e.g. if it's decode contention,
    the shared `ParakeetEngine` actor serializing mic+system through a semaphore bridge is
    the first lever; if it's diar skips, make coverage resilient to a missed window.
@@ -519,15 +518,24 @@ wedge was blocking stderr, now fixed at the source. A future cleanup could
 reasonably simplify or unwind the worker/kill/respawn machinery now that the live
 diarizer no longer wedges. Not done here.
 
-### Follow-up (NOT implemented) — the label collapse (§2b)
+### Follow-up (IMPLEMENTED 2026-06-19) — the label collapse (§2b)
 
-Independent of the wedge, and still open: when the live diarizer has **no coverage**
-for an utterance, `LiveRunner.resolveSystemLabel` falls back to `?? "Them"`, and
-`"Them"` is literally the **first speaker's provisional key**
-(`LiveDiarizer.provisionalKey(index: 0)`). So a no-coverage utterance inherits the
+Independent of the wedge: when the live diarizer had **no coverage** for an
+utterance, `LiveRunner.resolveSystemLabel` fell back to `?? "Them"`, and `"Them"`
+is literally the **first speaker's provisional key**
+(`LiveDiarizer.provisionalKey(index: 0)`). So a no-coverage utterance inherited the
 first speaker's name through the R18 library lookup — which is why thin coverage
-reads as "everything is Stanisław." With diarization now healthy this is rarely
-hit, but **any** momentary gap still mislabels. The fix (deferred): a no-coverage
-utterance must resolve to a neutral/unknown marker and skip the R18 name lookup
-entirely, so it never collides with `provisionalKey(index: 0)`. Cheap and certain;
-recorded here so it is not re-chased as a diarizer bug.
+read as "everything is Stanisław." With diarization now healthy this was rarely
+hit, but **any** momentary gap still mislabelled.
+
+**Fix (shipped):** `resolveSystemLabel` now `guard`s on `dominantKey` — when it
+returns `nil` (no coverage) it returns the neutral marker `Speaker?`
+(`LiveRunner.noCoverageLabel`) and **skips the R18 lookup entirely**, so it can
+never collide with `provisionalKey(index: 0)` and never inherit a real speaker's
+name. The has-coverage path (including a genuine `"Them"` span) is unchanged.
+A side effect, by design: when live diarization is unavailable/disabled, every
+system utterance is now `Speaker?` rather than `Them?` — accurate, since nothing
+was tracked. Tests: `LiveRunnerLibraryLookupTests` (two no-coverage regressions,
+incl. the "does not inherit Dana Lee" reproduction); the no-diarizer
+`StreamingPipelineTests` case updated to assert `Speaker?` / not `Them?`.
+Docs: `docs/file-format.md` provisional-labels section gained the `Speaker?` bullet.

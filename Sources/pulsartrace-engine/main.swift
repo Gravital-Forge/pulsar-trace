@@ -88,9 +88,9 @@ struct EngineMain {
     /// folder in the cwd.
     ///
     /// Live diarization is best-effort: it runs in a separate killable worker
-    /// process (D43) and, if that worker cannot be launched, it is skipped and
-    /// system speakers stay the generic `Them?`. `--no-live-diarization` skips
-    /// it outright.
+    /// process (D43) and, if that worker cannot be launched, it is skipped — so
+    /// system utterances have no live-diarization coverage and are labelled the
+    /// neutral `Speaker?` (§2b). `--no-live-diarization` skips it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
         // --- resolve the source(s) ------------------------------------------
         let source: any AudioFrameSource

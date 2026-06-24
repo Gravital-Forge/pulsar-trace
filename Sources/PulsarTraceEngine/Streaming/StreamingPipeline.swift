@@ -14,7 +14,8 @@ import Logging
 ///   producing **committed** utterances ≤ 5 s behind real time (R10).
 /// - `LiveDiarizer` — windowed in-process (ANE) provisional speaker IDs for the
 ///   system stream (R15, R16). Optional: when unavailable the system stream is
-///   still transcribed, labelled `Them?`.
+///   still transcribed, but with no diarization coverage every system utterance
+///   is labelled the neutral `Speaker?` (§2b).
 /// - `SpeakerLibrary` — opened **read-only** (R18, R32): a provisional speaker
 ///   whose centroid matches a known library speaker is shown by name. The live
 ///   pass **never writes** to the library — invariant #5.
@@ -44,7 +45,7 @@ public struct StreamingPipeline: Sendable {
         public let transcriberConfig: StreamingTranscriber.Configuration
         /// Raw per-window diarizer for the live windowed pass — in production a
         /// `DiarWorkerClient` proxying to the killable worker process (D43).
-        /// `nil` → no live diarization (system speakers stay the generic `Them?`).
+        /// `nil` → no live diarization (no coverage → neutral `Speaker?`, §2b).
         public let liveRawDiarizer: (any RawWindowDiarizing)?
         /// How often the system stream is handed to the live diarizer, and the
         /// window length it sees.
