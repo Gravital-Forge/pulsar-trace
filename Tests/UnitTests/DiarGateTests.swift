@@ -3,11 +3,9 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Unit coverage of `DiarGate` — the single-window-in-flight bound that keeps
-/// a slow/wedged live diarizer off the run loop's critical path (Fix B).
-///
-/// `DiarGate` is a tiny actor: `tryAcquire()` succeeds only when no window is
-/// in flight, `release()` frees the slot, `drain(timeout:)` waits — bounded —
-/// for an in-flight window at end of run.
+/// a slow/wedged live diarizer off the run loop's critical path (Fix B): at
+/// most one diarization window runs at a time and a window that cannot acquire
+/// the slot is skipped.
 @Suite("DiarGate (live-diarizer decoupling bound)")
 struct DiarGateTests {
 
@@ -15,7 +13,7 @@ struct DiarGateTests {
     func secondAcquireRefused() async {
         let gate = DiarGate()
         #expect(await gate.tryAcquire() == true)
-        // A window is now in flight — the next window must be skipped.
+        // A window is now in flight — the next windows must be skipped.
         #expect(await gate.tryAcquire() == false)
         #expect(await gate.tryAcquire() == false)
         // Once released, the slot is free again.
@@ -26,7 +24,7 @@ struct DiarGateTests {
     @Test("drain returns promptly once the in-flight window is released")
     func drainReturnsAfterRelease() async {
         let gate = DiarGate()
-        #expect(await gate.tryAcquire() == true)
+        _ = await gate.tryAcquire()
 
         // Release shortly after starting the drain — drain must then return.
         Task {
@@ -43,7 +41,7 @@ struct DiarGateTests {
     @Test("drain is bounded by its timeout when the window never releases")
     func drainIsBoundedByTimeout() async {
         let gate = DiarGate()
-        #expect(await gate.tryAcquire() == true)
+        _ = await gate.tryAcquire()
         // The window is never released — simulating a wedged diarizer. drain
         // must still return, bounded by the timeout, so the run can finish.
         let start = ContinuousClock.now
@@ -56,7 +54,7 @@ struct DiarGateTests {
     @Test("drain exits promptly on task cancellation instead of spinning to the deadline")
     func drainIsCancellationAware() async {
         let gate = DiarGate()
-        #expect(await gate.tryAcquire() == true)
+        _ = await gate.tryAcquire()
 
         // A long timeout the window never releases — without cancellation
         // awareness drain would spin the full 10 s. Run it in a task and

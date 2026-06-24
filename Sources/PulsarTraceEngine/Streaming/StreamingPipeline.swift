@@ -14,7 +14,8 @@ import Logging
 ///   producing **committed** utterances ≤ 5 s behind real time (R10).
 /// - `LiveDiarizer` — windowed in-process (ANE) provisional speaker IDs for the
 ///   system stream (R15, R16). Optional: when unavailable the system stream is
-///   still transcribed, labelled `Them?`.
+///   still transcribed, but with no diarization coverage every system utterance
+///   is labelled the neutral `Speaker?` (§2b).
 /// - `SpeakerLibrary` — opened **read-only** (R18, R32): a provisional speaker
 ///   whose centroid matches a known library speaker is shown by name. The live
 ///   pass **never writes** to the library — invariant #5.
@@ -42,10 +43,11 @@ public struct StreamingPipeline: Sendable {
         public let recordingId: String
         /// Streaming-transcription tunables.
         public let transcriberConfig: StreamingTranscriber.Configuration
-        /// Resident in-process diarization engine for the live windowed pass
-        /// (D40). `nil` → no live diarization (system speakers stay the
-        /// generic `Them?`).
-        public let liveDiarizerEngine: DiarizerEngine?
+        /// Raw per-window diarizer for the live windowed pass — in production
+        /// the in-process `DiarizerEngineRawAdapter` over the shared
+        /// `DiarizerEngine` actor.
+        /// `nil` → no live diarization (no coverage → neutral `Speaker?`, §2b).
+        public let liveRawDiarizer: (any RawWindowDiarizing)?
         /// How often the system stream is handed to the live diarizer, and the
         /// window length it sees.
         public let diarizationStep: Duration
@@ -56,7 +58,7 @@ public struct StreamingPipeline: Sendable {
             recordingStart: Date,
             recordingId: String,
             transcriberConfig: StreamingTranscriber.Configuration = .init(),
-            liveDiarizerEngine: DiarizerEngine? = nil,
+            liveRawDiarizer: (any RawWindowDiarizing)? = nil,
             diarizationStep: Duration = .seconds(5),
             diarizationWindow: Duration = .seconds(10)
         ) {
@@ -64,7 +66,7 @@ public struct StreamingPipeline: Sendable {
             self.recordingStart = recordingStart
             self.recordingId = recordingId
             self.transcriberConfig = transcriberConfig
-            self.liveDiarizerEngine = liveDiarizerEngine
+            self.liveRawDiarizer = liveRawDiarizer
             self.diarizationStep = diarizationStep
             self.diarizationWindow = diarizationWindow
         }
@@ -142,8 +144,8 @@ public struct StreamingPipeline: Sendable {
 
         // --- live diarization (in-process, optional) -------------------------
         var liveDiarizer: LiveDiarizer?
-        if let engine = configuration.liveDiarizerEngine {
-            liveDiarizer = LiveDiarizer(engine: engine, logger: logger)
+        if let raw = configuration.liveRawDiarizer {
+            liveDiarizer = LiveDiarizer(rawDiarizer: raw, logger: logger)
         }
         // --- run the streams ------------------------------------------------
         let runner = LiveRunner(

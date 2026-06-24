@@ -148,6 +148,9 @@ labels:
   known speaker in the library, the library **name** is shown. The match is a
   *read-only* library lookup (the live pass never writes the library); the
   label still carries the `?` suffix.
+- `**[HH:MM:SS] Speaker?:** …` — a system utterance the live pass has no
+  diarization coverage for. It is deliberately not attributed to any tracked
+  speaker (or library name); the post-pass resolves it.
 - `**[HH:MM:SS] You:** …` — the microphone stream. Always `You`, never
   diarized, never marked provisional (the mic is the local user by
   definition — R17).

@@ -1,29 +1,34 @@
 import Foundation
 
 /// Bounds the outstanding live-diarization work to a single window in flight
-/// (Fix B).
+/// (Fix B): a slow or wedged diarizer is kept off the run loop's critical path
+/// so it can never stall transcription or `live.md`.
 ///
-/// The run loop dispatches each due diarization window to a detached task so a
-/// wedged diarizer subprocess cannot stall transcription or `live.md`. Without
-/// a bound, a slow diarizer would let detached tasks (and their captured window
-/// samples) pile up unboundedly. `DiarGate` is the bound: `tryAcquire()`
-/// succeeds only when no window is in flight; the detached task `release()`s
-/// when it finishes. A window that cannot acquire is simply skipped — live
-/// diarization is best-effort/provisional and the post-pass is the source of
-/// truth.
+/// The run loop dispatches each due diarization window to a detached task and
+/// uses this gate to keep at most one of them in flight. `tryAcquire()` grants
+/// the single slot when it is free; the detached task `release()`s when it
+/// finishes. A window that cannot acquire is simply skipped — live diarization
+/// is best-effort/provisional and the post-pass is the source of truth, so
+/// dropping a window while a slower one is still running costs nothing.
 actor DiarGate {
+
     private var inFlight = false
 
-    /// Take the single in-flight slot. `true` → caller owns it and must
-    /// eventually `release()`; `false` → a window is already in flight, skip.
+    init() {}
+
+    /// Take the single in-flight slot. Returns `true` and claims the slot when
+    /// it is free; returns `false` when a window is already in flight, meaning
+    /// the caller should skip this window.
     func tryAcquire() -> Bool {
         guard !inFlight else { return false }
         inFlight = true
         return true
     }
 
-    /// Release the in-flight slot (called by the detached diar task on finish).
-    func release() { inFlight = false }
+    /// Release the in-flight slot, freeing it for the next window.
+    func release() {
+        inFlight = false
+    }
 
     /// At end of run, wait — bounded by `timeout` — for any in-flight window to
     /// finish so a detached diar task does not outlive the run. A wedged

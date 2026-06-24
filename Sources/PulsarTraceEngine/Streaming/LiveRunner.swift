@@ -60,6 +60,17 @@ final class LiveRunner: Sendable {
     /// reports on the first tick after it crosses 2 s.
     static let defaultPhaseHeartbeatThreshold: Duration = .seconds(2)
 
+    /// Neutral provisional label for a committed system utterance the live pass
+    /// has **no diarization coverage** for (§2b). It MUST differ from every
+    /// `LiveDiarizer.provisionalKey(index:)` — especially `index: 0` ("Them").
+    /// Earlier code fell back to `"Them"` on no coverage, which collided with
+    /// the first stitched speaker's key: the R18 library lookup then matched
+    /// that speaker's centroid and silently attributed the no-coverage
+    /// utterance to the first speaker's name. Using a distinct marker — and
+    /// skipping the R18 lookup entirely on no coverage — makes that collision
+    /// impossible. Rendered as `Speaker?` with the R16 provisional `?` suffix.
+    static let noCoverageLabel = "Speaker"
+
     private let configuration: StreamingPipeline.Configuration
     private let writer: LiveMarkdownWriter
     private let logger: Logger
@@ -170,12 +181,14 @@ final class LiveRunner: Sendable {
         let systemStreamer = StreamingTranscriber(
             transcriber: systemTranscriber,
             configuration: configuration.transcriberConfig,
-            logger: logger)
+            logger: logger,
+            streamLabel: "system")
         let micStreamer = micTranscriber.map {
             StreamingTranscriber(
                 transcriber: $0,
                 configuration: configuration.transcriberConfig,
-                logger: logger)
+                logger: logger,
+                streamLabel: "mic")
         }
 
         // The full system + mic audio is streamed straight to disk as frames
@@ -420,21 +433,42 @@ final class LiveRunner: Sendable {
                 // gating, the window copy (an independent `[Float]` the
                 // detached task can safely own), and the Fix C bounded trim.
                 // A detached task runs `diarizeWindow` then `diarState.merge`;
-                // the run loop never `await`s the diarizer subprocess. At most
-                // one window is in flight — if the previous one has not
-                // finished, this window is skipped (live diarization is
-                // best-effort/provisional).
+                // the run loop never `await`s the diarizer. At most one window
+                // is in flight — if the previous one has not finished, this
+                // window is skipped (live diarization is best-effort/provisional).
                 if let liveDiarizer {
                     if let req = diarBuffers.append(frame.samples) {
                         phase.set("await-diarGate-tryAcquire")
+                        // Per-pass diagnostic state (numbers only — Hard Invariant #7).
+                        let _diarBufSec = diarBuffers.bufferedSampleCount / AudioFormat.sampleRate
+                        let _qSys = systemQueue.depth
+                        let _qMic = micQueue?.depth ?? 0
                         if await diarGate.tryAcquire() {
                             let windowStart = samplesToDuration(req.startSampleIndex)
+                            let _launchWall = (ContinuousClock.now - startWall).seconds
+                            let _lg = self.logger
                             Task.detached {
+                                let _diarT0 = ContinuousClock.now
                                 let spans = await liveDiarizer.diarizeWindow(
                                     samples: req.samples, windowStart: windowStart)
                                 await diarState.merge(spans)
                                 await diarGate.release()
+                                let _ran = (ContinuousClock.now - _diarT0).seconds * 1000
+                                let _stateSpans = await diarState.count()
+                                let _keys = await liveDiarizer.centroids().count
+                                _lg.notice("""
+                                    live trace diar: t=\(Int(windowStart.seconds))s \
+                                    launchLag=\(String(format: "%.1f", _launchWall - windowStart.seconds))s \
+                                    ran=\(Int(_ran))ms spans=\(spans.count) diarBuf=\(_diarBufSec)s \
+                                    stateSpans=\(_stateSpans) keys=\(_keys) qSys=\(_qSys) qMic=\(_qMic)
+                                    """)
                             }
+                        } else {
+                            self.logger.notice("""
+                                live trace diar SKIPPED(gate busy): \
+                                t≈\(Int((ContinuousClock.now - startWall).seconds))s \
+                                diarBuf=\(_diarBufSec)s qSys=\(_qSys) qMic=\(_qMic)
+                                """)
                         }
                     }
                 } else {
@@ -653,8 +687,14 @@ final class LiveRunner: Sendable {
         phase: LiveRunnerPhaseTracker? = nil
     ) async -> String {
         phase?.set("await-diarState-dominantKey")
-        let key = await diarState.dominantKey(
-            start: utterance.start, end: utterance.end) ?? "Them"
+        // No live diarization coverage for this utterance's range (§2b): return
+        // the neutral marker and SKIP the R18 lookup. Falling back to a real
+        // provisional key here (e.g. "Them") would let the lookup inherit the
+        // first speaker's name for an utterance no speaker was tracked over.
+        guard let key = await diarState.dominantKey(
+            start: utterance.start, end: utterance.end) else {
+            return "\(Self.noCoverageLabel)?"
+        }
 
         // R18: read-only speaker-library lookup. The live pass never writes the
         // library (invariant #5) — `bestMatch` is a pure read. The lookup is
