@@ -140,4 +140,79 @@ struct LiveRunnerLibraryLookupTests {
 
         #expect(label == "Them?")
     }
+
+    // MARK: - §2b no-coverage label-collapse regression
+
+    /// §2b regression: when the live diarizer has **no coverage** for the
+    /// committed utterance's time range, `DiarState.dominantKey` returns `nil`.
+    /// The old `?? "Them"` fallback collided with `provisionalKey(index: 0)` —
+    /// the first real speaker's stitched key — so the R18 library lookup found
+    /// that speaker's centroid and silently attributed the no-coverage
+    /// utterance to the FIRST speaker's name (in the field: "everything became
+    /// Stanisław"). A no-coverage utterance must instead surface the neutral
+    /// `Speaker?` marker and never run the R18 lookup.
+    ///
+    /// Same setup as `knownSpeakerSurfacesByName` — a `Them` span over `[0s,10s]`
+    /// whose centroid matches the library speaker "Dana Lee" — but the utterance
+    /// is at `[20s,25s]`, OUTSIDE the covered span, so there is no coverage.
+    @Test("a no-coverage utterance does not inherit the first speaker's name")
+    func noCoverageDoesNotInheritFirstSpeakerName() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let revision = "abc123revision"
+        let knownCentroid = centroid(seed: 0.5)
+
+        // A library holding "Dana Lee" recorded under `revision`.
+        let library = try await SpeakerLibrary(
+            databaseURL: dir.appendingPathComponent("speakers.sqlite"))
+        _ = try await library.createSpeaker(
+            name: "Dana Lee",
+            centroid: knownCentroid,
+            modelRevision: revision,
+            recordingId: "rec_prior",
+            recordingFolderName: "rec_prior")
+
+        // The live diarizer's first (`Them`) centroid matches "Dana Lee", and
+        // the revision matches — so IF the no-coverage key collapsed to `Them`
+        // the R18 lookup would (wrongly) surface "Dana Lee".
+        let diarizer = LiveDiarizer(testSeamLogger: .init(label: "test"))
+        await diarizer._seedForTesting(
+            speakers: [(key: "Them", centroid: knownCentroid)],
+            modelRevision: revision)
+
+        let runner = makeRunner(folder: dir, library: library)
+        // `Them` span covers only [0s, 10s] …
+        let diarState = await diarStateWithThemSpan(embedding: knownCentroid)
+        // … but the utterance is at [20s, 25s] — no coverage → dominantKey nil.
+        let utterance = CommittedUtterance(
+            start: .seconds(20), end: .seconds(25), text: "hello there")
+
+        let label = await runner.resolveSystemLabel(
+            for: utterance, diarState: diarState, diarizer: diarizer)
+
+        // The fix: neutral marker, NOT the first speaker's name.
+        #expect(label == "Speaker?")
+    }
+
+    /// §2b regression, no-library variant: a no-coverage utterance (empty
+    /// `DiarState`, so `dominantKey` returns `nil`) must surface the neutral
+    /// `Speaker?` marker — never `Them?`, which would falsely tie it to the
+    /// first provisional speaker.
+    @Test("a no-coverage utterance surfaces the neutral Speaker label, not Them")
+    func noCoverageSurfacesNeutralLabel() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let runner = makeRunner(folder: dir, library: nil)
+        // Empty state — no spans at all, so any utterance has no coverage.
+        let diarState = DiarState()
+        let utterance = CommittedUtterance(
+            start: .seconds(2), end: .seconds(5), text: "hello there")
+
+        let label = await runner.resolveSystemLabel(
+            for: utterance, diarState: diarState, diarizer: nil)
+
+        #expect(label == "Speaker?")
+    }
 }

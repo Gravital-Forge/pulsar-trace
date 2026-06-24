@@ -1064,3 +1064,22 @@ the subprocess (the dominant-overlap merge and 30% co-attribution logic in
 same way). **PRD §17's "pyannote stays in Python" is superseded** here, the
 same way D39 superseded the PRD's whisper.cpp sections. This **completes the
 diarization deferral** explicitly noted in D39.
+
+**Evolution — the live-diarizer worker detour (reverted 2026-06-23).** A later
+fix branch (`fix/live-diarizer-wedge-reclaim`) briefly moved the live windowed
+diarizer out of the engine into its own **killable worker subprocess** over a
+Unix socket, guarded by a `DiarGate` deadline that force-reclaimed a "wedged"
+slot — on the theory that the live pass froze because a synchronous FluidAudio
+ANE `prediction` hung un-cancellably and could only be released by killing the
+process. That was a misdiagnosis. `lldb` + `spindump` of the stuck worker caught
+it parked in `write()` with the ANE **idle**: FluidAudio mirrors verbose logs
+(and a per-window `[Profiling]` line) to stderr in DEBUG builds, and the engine
+drained that pipe **byte-by-byte**, so the 64 KB pipe filled and the next
+`write()` blocked forever. The real fix is a **chunked `readToEnd()` pipe drain**
+in `RecordOrchestrator` (a chatty child can no longer outrun the reader). With
+the wedge gone the worker bought nothing it could not get in-process, so the
+worker and the gate-reclaim were both removed (≈ −1180 lines) and live
+diarization runs in-process as described above; `DiarGate` is a plain
+≤1-in-flight bound again. **Do not re-introduce a diarizer subprocess for
+ANE-hang safety — the ANE never hung.** Deliberation trail:
+`docs/specs/2026-06-18-live-pass-lag-investigation.md` §10.

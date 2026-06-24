@@ -1,6 +1,11 @@
 import Foundation
 import Logging
 import PulsarTraceEngine
+#if canImport(Glibc)
+import Glibc
+#else
+import Darwin
+#endif
 
 /// `pulsartrace-engine` — the streaming engine binary.
 ///
@@ -80,9 +85,12 @@ struct EngineMain {
     /// else a sibling folder named for the fixture stem, else a timestamped
     /// folder in the cwd.
     ///
-    /// Live diarization is best-effort: if the in-process diarizer engine
-    /// (D40) cannot load it is skipped and system speakers stay the generic
-    /// `Them?`. `--no-live-diarization` skips it outright.
+    /// Live diarization is best-effort: it runs in-process via
+    /// `DiarizerEngineRawAdapter` over the shared `DiarizerEngine` actor (the
+    /// same offline stack the refine pass uses). If the diarizer models cannot
+    /// be loaded the live pass continues without it — system utterances then
+    /// have no live-diarization coverage and are labelled the neutral
+    /// `Speaker?` (§2b). `--no-live-diarization` skips it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
         // --- resolve the source(s) ------------------------------------------
         let source: any AudioFrameSource
@@ -161,23 +169,23 @@ struct EngineMain {
             ? ParakeetWindowTranscriber(engine: parakeet)
             : nil
 
-        // --- live diarization engine (resident, ANE — D40) ------------------
-        // Loaded next to Parakeet so the model download happens before audio
-        // starts. A load failure degrades to generic `Them` labels, never
-        // blocks the live pass.
-        var diarizerEngine: DiarizerEngine?
+        // --- live diarization in-process (D40 stack) -------------------------
+        // The windowed live pass runs FluidAudio's offline diarizer in-process
+        // via `DiarizerEngineRawAdapter` — the same resident `DiarizerEngine`
+        // actor the offline refine pass uses, so live and post-pass embeddings
+        // share one vector space (R29). Best-effort: a model-load failure must
+        // NOT crash the live pass — it degrades to neutral `Speaker?` labels
+        // (§2b). `--no-live-diarization` skips it entirely.
+        var liveRawDiarizer: (any RawWindowDiarizing)?
         if !args.contains("--no-live-diarization") {
             do {
-                diarizerEngine = try await DiarizerEngine.load(
+                let diarEngine = try await DiarizerEngine.load(
                     cacheRoot: AppPaths.standard.modelsCacheDirectory,
-                    events: lifecycle.events,
-                    logger: Logger(label: LogSubsystem.engine))
+                    events: lifecycle.events)
+                liveRawDiarizer = DiarizerEngineRawAdapter(engine: diarEngine)
             } catch {
                 Logger(label: LogSubsystem.engine).error(
-                    """
-                    live diarization unavailable — continuing with generic \
-                    Them labels: \(PathRedactor.redactHome("\(error)"))
-                    """)
+                    "live diarization unavailable — continuing without it: \(PathRedactor.redactHome("\(error)"))")
             }
         }
 
@@ -218,7 +226,7 @@ struct EngineMain {
                 recordingStart: recordingStart,
                 recordingId: recordingId,
                 transcriberConfig: transcriberConfig,
-                liveDiarizerEngine: diarizerEngine),
+                liveRawDiarizer: liveRawDiarizer),
             systemTranscriber: transcriber,
             micTranscriber: micTranscriber,
             systemSource: source,

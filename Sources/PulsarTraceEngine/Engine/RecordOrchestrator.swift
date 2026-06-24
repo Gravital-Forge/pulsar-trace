@@ -293,21 +293,30 @@ public actor RecordOrchestrator {
         }
     }
 
-    /// Read a file handle to EOF as a UTF-8 string.
+    /// Read a file handle to EOF as a UTF-8 string. Uses a chunked, blocking
+    /// `readToEnd()` on a background thread rather than `FileHandle.bytes`
+    /// (byte-by-byte, with per-byte async-iteration overhead) so a chatty
+    /// subprocess cannot outpace the reader.
     private static func readAll(_ handle: FileHandle) async -> String {
-        var data = Data()
-        do {
-            for try await byte in handle.bytes { data.append(byte) }
-        } catch {}
-        return String(data: data, encoding: .utf8) ?? ""
+        await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
+            DispatchQueue.global().async {
+                let data = (try? handle.readToEnd()) ?? Data()
+                cont.resume(returning: String(data: data, encoding: .utf8) ?? "")
+            }
+        }
     }
 
-    /// Drain a handle in the background so its pipe never fills.
+    /// Drain a handle so its pipe never fills and blocks the writing subprocess.
+    /// Chunked, blocking `readToEnd()` on a background thread — NOT byte-by-byte
+    /// (`FileHandle.bytes`), whose per-byte async overhead (and reliance on the
+    /// cooperative pool) can lag behind a chatty subprocess: FluidAudio mirrors
+    /// every log line to stderr in DEBUG builds, so a slow drain lets the 64 KB
+    /// pipe fill and parks the writer in `write()` — the real cause of the
+    /// live-diarizer "wedge" (see the 2026-06-19 resolution in
+    /// docs/specs/2026-06-18-live-pass-lag-investigation.md).
     private func drainToVoid(_ handle: FileHandle) {
-        Task.detached {
-            do {
-                for try await _ in handle.bytes {}
-            } catch {}
+        DispatchQueue.global().async {
+            _ = try? handle.readToEnd()
         }
     }
 }

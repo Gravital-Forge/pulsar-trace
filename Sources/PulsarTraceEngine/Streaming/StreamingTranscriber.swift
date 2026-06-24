@@ -126,6 +126,15 @@ public final class StreamingTranscriber {
     /// replace a previously-detected real language.
     private var lastDetectedLanguage: String?
 
+    /// Diagnostic ("system"/"mic"): names this transcriber's stream in the
+    /// per-pass `live trace transcriber` log line.
+    private let streamLabel: String
+    /// Diagnostic: wall-clock ms of the most recent window decode (0 when the
+    /// window was VAD-skipped or empty).
+    private var lastDecodeMS = 0.0
+    /// Diagnostic: whether the most recent window was skipped by the VAD gate.
+    private var lastVADSkipped = false
+
     /// The language of the most recently decoded window (ISO-639-1, e.g.
     /// `en`), or `nil` if no window has been decoded yet.
     public var detectedLanguage: String? { lastDetectedLanguage }
@@ -133,11 +142,13 @@ public final class StreamingTranscriber {
     public init(
         transcriber: any WindowTranscribing,
         configuration: Configuration = .init(),
-        logger: Logger = Logger(label: LogSubsystem.engine)
+        logger: Logger = Logger(label: LogSubsystem.engine),
+        streamLabel: String = "?"
     ) {
         self.transcriber = transcriber
         self.configuration = configuration
         self.logger = logger
+        self.streamLabel = streamLabel
     }
 
     private var stepSamples: Int {
@@ -232,6 +243,19 @@ public final class StreamingTranscriber {
 
             runWindow()
             lastDecodeEndSample = recordingSampleCount
+
+            // Per-pass diagnostic trace (numbers only — Hard Invariant #7).
+            let _sr = AudioFormat.sampleRate
+            let _realSample = realTimeElapsed.map { durationToSamples($0) }
+                ?? recordingSampleCount
+            let _lag = Double(_realSample - windowAnchorSample) / Double(_sr)
+            logger.notice("""
+                live trace transcriber[\(streamLabel)]: \
+                anchor=\(windowAnchorSample / _sr)s total=\(recordingSampleCount / _sr)s \
+                lag=\(String(format: "%.1f", _lag))s buf=\(samples.count / _sr)s \
+                decode=\(Int(lastDecodeMS))ms vad=\(lastVADSkipped) \
+                committedTokens=\(committer.committed.count)
+                """)
         }
         return regroupNewlyCommitted()
     }
@@ -241,6 +265,8 @@ public final class StreamingTranscriber {
     /// feed the hypothesis to the committer, and advance the anchor + trim the
     /// buffer to whatever was committed.
     private func runWindow() {
+        lastDecodeMS = 0
+        lastVADSkipped = false
         let loAbs = windowAnchorSample
         let hiAbs = min(recordingSampleCount, loAbs + windowSamples)
         let lo = loAbs - bufferBaseSample
@@ -252,10 +278,14 @@ public final class StreamingTranscriber {
         // silence hallucination, and the committer's previous tail is left
         // intact so a real word straddling the silence still commits later.
         let peak = window.reduce(Float(0)) { Swift.max($0, Swift.abs($1)) }
-        guard peak >= configuration.silencePeakThreshold else { return }
+        guard peak >= configuration.silencePeakThreshold else {
+            lastVADSkipped = true
+            return
+        }
 
         let windowStart = samplesToDuration(loAbs)
         let result: TranscriptionResult
+        let _decodeT0 = ContinuousClock.now
         do {
             result = try transcriber.transcribeWindow(
                 window,
@@ -270,6 +300,7 @@ public final class StreamingTranscriber {
             logger.error("streaming window decode failed; skipping window: \(error)")
             return
         }
+        lastDecodeMS = (ContinuousClock.now - _decodeT0).seconds * 1000
         // Record what the decoder detected so the live pass's Output.language is
         // accurate. `"unknown"` never overwrites a real language already seen.
         if result.language != "unknown" {

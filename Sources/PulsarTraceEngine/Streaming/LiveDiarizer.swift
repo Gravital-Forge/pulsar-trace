@@ -75,18 +75,6 @@ protocol LiveDiarizing: Sendable {
 /// to touch concurrently.
 public actor LiveDiarizer: LiveDiarizing {
 
-    /// Tunables. The engine (model residency) is injected, not configured —
-    /// `pulsartrace-engine` loads it once per process next to Parakeet.
-    public struct Configuration: Sendable {
-        /// Per-window decode ceiling. A window that overruns this is given up
-        /// on (the live pass stays provisional anyway).
-        public let windowTimeout: Duration
-
-        public init(windowTimeout: Duration = .seconds(30)) {
-            self.windowTimeout = windowTimeout
-        }
-    }
-
     /// Cosine-similarity threshold for stitching a window-speaker to an
     /// existing live speaker. Above → same speaker; below → a new `Them #N`.
     /// Calibrated for the WeSpeaker embedding space (D40): on the committed
@@ -94,16 +82,14 @@ public actor LiveDiarizer: LiveDiarizing {
     /// (see the DiarizationE2E calibration suite).
     public static let stitchThreshold = 0.45
 
-    /// Test-only: a diarizer with no engine — `diarizeWindow` returns `[]`;
+    /// Test seam: a diarizer with no raw backend — `diarizeWindow` returns `[]`;
     /// `_seedForTesting` + `centroids()`/`modelRevision()` only.
     init(testSeamLogger logger: Logger = Logger(label: LogSubsystem.engine)) {
-        self.engine = nil
-        self.configuration = .init()
+        self.rawDiarizer = nil
         self.logger = logger
     }
 
-    private let engine: DiarizerEngine?
-    private let configuration: Configuration
+    private let rawDiarizer: (any RawWindowDiarizing)?
     private let logger: Logger
     private var windowCounter = 0
 
@@ -117,12 +103,10 @@ public actor LiveDiarizer: LiveDiarizing {
     private var seededModelRevision: String?
 
     public init(
-        engine: DiarizerEngine,
-        configuration: Configuration = .init(),
+        rawDiarizer: any RawWindowDiarizing,
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
-        self.engine = engine
-        self.configuration = configuration
+        self.rawDiarizer = rawDiarizer
         self.logger = logger
     }
 
@@ -135,39 +119,13 @@ public actor LiveDiarizer: LiveDiarizing {
         samples: [Float],
         windowStart: Duration
     ) async -> [LiveSpeakerSpan] {
-        guard let engine else { return [] }
-        let started = ContinuousClock.now
+        guard let rawDiarizer else { return [] }
         windowCounter += 1
-
-        let work = Task { try await engine.diarize(samples: samples) }
-        let result = await withTaskGroup(of: DiarizationResult?.self) {
-            group -> DiarizationResult? in
-            group.addTask { try? await work.value }
-            group.addTask { [windowTimeout = configuration.windowTimeout] in
-                try? await Task.sleep(for: windowTimeout)
-                work.cancel()
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
-        guard let result else {
-            logger.warning("live diarization: window produced no usable result")
+        guard let raw = await rawDiarizer.diarizeRawWindow(samples: samples) else {
+            // A diarizer hiccup — this window degrades to no spans.
             return []
         }
-
-        let spans = stitch(result: result, windowStart: windowStart)
-        let roundTripMS = Int(((ContinuousClock.now - started).seconds * 1000)
-            .rounded())
-        let speakerCount = result.speakers.count
-        // `.debug`: one line per window (~every 5 s) — a performance
-        // observable, not an operational event.
-        logger.debug("""
-            live diarization: window \(windowCounter) done — \
-            \(roundTripMS) ms on ANE, \(speakerCount) speaker(s)
-            """)
-        return spans
+        return stitch(result: raw, windowStart: windowStart)
     }
 
     // MARK: - Stitching
@@ -175,7 +133,7 @@ public actor LiveDiarizer: LiveDiarizing {
     /// Turn one window's result into stable-keyed, recording-absolute
     /// `LiveSpeakerSpan`s.
     private func stitch(
-        result: DiarizationResult, windowStart: Duration
+        result: DiarWindowResult, windowStart: Duration
     ) -> [LiveSpeakerSpan] {
         let embeddingByLabel = Dictionary(
             result.embeddings.map { ($0.speaker, $0.vector) },
@@ -194,8 +152,8 @@ public actor LiveDiarizer: LiveDiarizing {
                 ?? fallbackKey(forRawLabel: span.speaker)
             out.append(LiveSpeakerSpan(
                 provisionalKey: key,
-                start: windowStart + span.start,
-                end: windowStart + span.end,
+                start: windowStart + .milliseconds(span.startMillis),
+                end: windowStart + .milliseconds(span.endMillis),
                 embedding: embeddingByLabel[span.speaker] ?? []))
         }
         return out
@@ -262,8 +220,10 @@ public actor LiveDiarizer: LiveDiarizing {
     /// keys centroid compatibility on this — `bestMatch` skips speakers
     /// recorded under a different revision. An empty revision (no engine)
     /// matches nothing in a populated library — safe degradation.
-    public func modelRevision() -> String {
-        seededModelRevision ?? engine?.modelRevision ?? ""
+    public func modelRevision() async -> String {
+        if let seededModelRevision { return seededModelRevision }
+        if let rawDiarizer { return await rawDiarizer.modelRevision() }
+        return ""
     }
 
     /// Test seam: pre-seed the running live-speaker set and the model
