@@ -52,8 +52,7 @@ struct LiveRunnerResilienceTests {
         silenceGapThreshold: Duration = .milliseconds(250),
         tickInterval: Duration = .milliseconds(40),
         queueCapacity: Duration = .seconds(30),
-        workerDrainTimeout: Duration = .seconds(10),
-        diarWedgeReclaim: Duration = .seconds(2)
+        workerDrainTimeout: Duration = .seconds(10)
     ) -> (LiveRunner, LiveMarkdownWriter, StreamingPipeline.Configuration) {
         let config = StreamingPipeline.Configuration(
             recordingFolder: folder,
@@ -70,8 +69,7 @@ struct LiveRunnerResilienceTests {
             silenceGapThreshold: silenceGapThreshold,
             tickInterval: tickInterval,
             queueCapacity: queueCapacity,
-            workerDrainTimeout: workerDrainTimeout,
-            diarWedgeReclaim: diarWedgeReclaim)
+            workerDrainTimeout: workerDrainTimeout)
         return (runner, writer, config)
     }
 
@@ -344,65 +342,6 @@ struct LiveRunnerResilienceTests {
         #expect(await diarizer.maxConcurrent <= 1)
     }
 
-    // MARK: - Fix B (D42) — a wedged window's slot is reclaimed so diarization recovers
-    //
-    // `wedgedDiarizerDoesNotStallTranscription` proves a wedged diarizer does not
-    // stall *transcription* / `live.md`. This proves the other half: a window
-    // that wedges deaf-to-cancellation (like a synchronous ANE `prediction` that
-    // hung) must not freeze *diarization itself*. Without the reclaim the single
-    // in-flight slot is held forever, every later window is skipped, and the
-    // system stream collapses to one speaker via the `?? "Them"` fallback — the
-    // reported production bug. With the reclaim, a later window runs again.
-
-    @Test("a window that wedges deaf-to-cancellation does not freeze diarization — its slot is reclaimed and a later window runs (D42)")
-    func wedgedDiarizerSlotIsReclaimed() async throws {
-        let engine = try await ParakeetTestEngine.shared()
-        let folder = tempFolder()
-        defer { try? FileManager.default.removeItem(at: folder) }
-
-        // The faithful wedge: its FIRST window never returns and is deaf to
-        // cancellation (parks on a continuation only the test resumes), so a fix
-        // that merely cancels the diar task cannot fake recovery. Later windows
-        // return normally.
-        let wedger = WedgingDiarizer()
-        let source = ControllableSource()
-
-        // A short reclaim so the test is fast: a slot held > 120 ms is presumed
-        // wedged. (Production uses 2 s — ~10× a healthy ~0.2 s window.)
-        let (runner, writer, _) = makeRunner(
-            folder: folder, diarWedgeReclaim: .milliseconds(120))
-        try await writer.start()
-
-        let runTask = Task {
-            try await runner.run(
-                systemTranscriber: ParakeetWindowTranscriber(engine: engine),
-                micTranscriber: nil,
-                systemSource: source,
-                micSource: nil,
-                liveDiarizer: wedger)
-        }
-
-        // Feed ~10 s of audio (320 samples/frame at 16 kHz ⇒ 500 frames) so the
-        // first diar window comes due, acquires the slot, and wedges.
-        for i in 0..<520 { await source.yieldFrame(.silence(sequenceIndex: i)) }
-        // Let the wedged slot age past the 120 ms reclaim deadline.
-        try await Task.sleep(for: .milliseconds(350))
-
-        // Feed another ~5 s (250 frames) so a second window comes due. Its
-        // tryAcquire finds the slot held past the deadline, reclaims it, and runs.
-        for i in 520..<800 { await source.yieldFrame(.silence(sequenceIndex: i)) }
-        try await Task.sleep(for: .milliseconds(350))
-
-        await source.finish()
-        _ = await withTimeoutOrNil(seconds: 6) { try await runTask.value }
-        await writer.finish()
-        await wedger.unwedge()   // release the parked first window at teardown
-
-        // Recovery: the wedged first window did not freeze diarization — a later
-        // window ran once its slot was reclaimed. (Pre-fix this stuck at 1.)
-        #expect(await wedger.windowsStarted >= 2)
-    }
-
     // MARK: - Fix C — diarBuffer stays bounded
 
     @Test("diarBuffer stays bounded over a long stream")
@@ -595,43 +534,6 @@ actor HangingDiarizer: LiveDiarizing {
 
     func centroids() async -> [String: [Float]] { [:] }
     func modelRevision() async -> String { "" }
-}
-
-/// A `LiveDiarizing` stub whose FIRST window wedges **forever and deaf to
-/// cancellation** — the faithful model of the production hang (a synchronous
-/// FluidAudio ANE `prediction` that wedged; `Task` cancellation cannot reclaim
-/// it). It parks on a continuation resumed only by `unwedge()` at teardown, so a
-/// fix that merely cancels the diar task cannot fake recovery. Parking (rather
-/// than blocking a thread) keeps the actor free to answer `centroids()`, which
-/// matches production: the `LiveDiarizer` actor suspends at its `await` while a
-/// worker thread deep inside FluidAudio is the one actually stuck.
-actor WedgingDiarizer: LiveDiarizing {
-    private(set) var windowsStarted = 0
-    private(set) var maxConcurrent = 0
-    private var concurrent = 0
-    private var parked: CheckedContinuation<Void, Never>?
-
-    func diarizeWindow(
-        samples: [Float], windowStart: Duration
-    ) async -> [LiveSpeakerSpan] {
-        windowsStarted += 1
-        concurrent += 1
-        maxConcurrent = max(maxConcurrent, concurrent)
-        if windowsStarted == 1 {
-            // Suspend forever, ignoring cancellation, until `unwedge()` resumes.
-            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                parked = c
-            }
-        }
-        concurrent -= 1
-        return []
-    }
-
-    func centroids() async -> [String: [Float]] { [:] }
-    func modelRevision() async -> String { "" }
-
-    /// Resume the parked window so the detached diar task unwinds at teardown.
-    func unwedge() { parked?.resume(); parked = nil }
 }
 
 /// A `LiveDiarizing` stub that returns immediately with no spans — used to

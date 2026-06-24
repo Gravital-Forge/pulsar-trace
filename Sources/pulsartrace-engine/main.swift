@@ -26,9 +26,7 @@ struct EngineMain {
 
         let exitCode: Int32
         do {
-            if args.contains("--diarizer-worker") {
-                await diarizerWorker(args: args, lifecycle: lifecycle)
-            } else if args.contains("--live") {
+            if args.contains("--live") {
                 let summary = try await live(args: args, lifecycle: lifecycle)
                 FileHandle.standardOutput.write(Data((summary + "\n").utf8))
             } else {
@@ -87,10 +85,12 @@ struct EngineMain {
     /// else a sibling folder named for the fixture stem, else a timestamped
     /// folder in the cwd.
     ///
-    /// Live diarization is best-effort: it runs in a separate killable worker
-    /// process (D43) and, if that worker cannot be launched, it is skipped — so
-    /// system utterances have no live-diarization coverage and are labelled the
-    /// neutral `Speaker?` (§2b). `--no-live-diarization` skips it outright.
+    /// Live diarization is best-effort: it runs in-process via
+    /// `DiarizerEngineRawAdapter` over the shared `DiarizerEngine` actor (the
+    /// same offline stack the refine pass uses). If the diarizer models cannot
+    /// be loaded the live pass continues without it — system utterances then
+    /// have no live-diarization coverage and are labelled the neutral
+    /// `Speaker?` (§2b). `--no-live-diarization` skips it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
         // --- resolve the source(s) ------------------------------------------
         let source: any AudioFrameSource
@@ -169,19 +169,24 @@ struct EngineMain {
             ? ParakeetWindowTranscriber(engine: parakeet)
             : nil
 
-        // --- live diarization in a separate killable worker process (D43) ----
-        // A hung ANE prediction is recovered by SIGKILL, not a permanent
-        // in-process leak that would also starve Parakeet. Best-effort — a
-        // launch failure degrades the live pass to generic `Them` labels.
-        // `--no-live-diarization` skips it entirely.
-        var diarClient: DiarWorkerClient?
+        // --- live diarization in-process (D40 stack) -------------------------
+        // The windowed live pass runs FluidAudio's offline diarizer in-process
+        // via `DiarizerEngineRawAdapter` — the same resident `DiarizerEngine`
+        // actor the offline refine pass uses, so live and post-pass embeddings
+        // share one vector space (R29). Best-effort: a model-load failure must
+        // NOT crash the live pass — it degrades to neutral `Speaker?` labels
+        // (§2b). `--no-live-diarization` skips it entirely.
+        var liveRawDiarizer: (any RawWindowDiarizing)?
         if !args.contains("--no-live-diarization") {
-            let launcher = DiarWorkerProcessLauncher(
-                socketURL: AppPaths.standard.diarizerSocketURL(recordingId: recordingId),
-                cacheRoot: AppPaths.standard.modelsCacheDirectory)
-            let client = DiarWorkerClient(launcher: launcher)
-            await client.start()
-            diarClient = client
+            do {
+                let diarEngine = try await DiarizerEngine.load(
+                    cacheRoot: AppPaths.standard.modelsCacheDirectory,
+                    events: lifecycle.events)
+                liveRawDiarizer = DiarizerEngineRawAdapter(engine: diarEngine)
+            } catch {
+                Logger(label: LogSubsystem.engine).error(
+                    "live diarization unavailable — continuing without it: \(PathRedactor.redactHome("\(error)"))")
+            }
         }
 
         // --- speaker library, READ-ONLY (R18/R32) ---------------------------
@@ -221,14 +226,12 @@ struct EngineMain {
                 recordingStart: recordingStart,
                 recordingId: recordingId,
                 transcriberConfig: transcriberConfig,
-                liveRawDiarizer: diarClient),
+                liveRawDiarizer: liveRawDiarizer),
             systemTranscriber: transcriber,
             micTranscriber: micTranscriber,
             systemSource: source,
             micSource: micSource,
             library: library)
-
-        if let diarClient { await diarClient.shutdown() }
 
         let medianLag = String(format: "%.1f", output.medianLagSeconds)
         let maxLag = String(format: "%.1f", output.maxLagSeconds)
@@ -236,46 +239,6 @@ struct EngineMain {
             + "bytes=\(output.bytesWritten) mic_echoes_dropped=\(output.micEchoesDropped) "
             + "median_lag_seconds=\(medianLag) max_lag_seconds=\(maxLag) "
             + "language=\(output.language)"
-    }
-
-    /// Worker mode (D43): connect to the engine's diarizer socket, load the
-    /// FluidAudio diarizer, and serve windows until the connection closes or the
-    /// engine SIGKILLs us. Stateless — holds no cross-window state.
-    static func diarizerWorker(args: [String], lifecycle: AppLifecycle) async {
-        guard let socketPath = value(after: "--diar-socket", in: args),
-              let cacheRootPath = value(after: "--cache-root", in: args) else {
-            FileHandle.standardError.write(Data("diar worker: missing --diar-socket/--cache-root\n".utf8))
-            return
-        }
-        let cacheRoot = URL(fileURLWithPath: cacheRootPath)
-        let engine: DiarizerEngine
-        do {
-            engine = try await DiarizerEngine.load(cacheRoot: cacheRoot, events: nil)
-        } catch {
-            FileHandle.standardError.write(Data("diar worker: model load failed: \(error)\n".utf8))
-            return
-        }
-        // Connect to the engine (it is already listening + accepting).
-        let fd = socket(AF_UNIX, sockStreamType, 0)
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        _ = socketPath.withCString { src in
-            withUnsafeMutablePointer(to: &addr.sun_path) { dst in
-                dst.withMemoryRebound(to: CChar.self, capacity: 104) { strncpy($0, src, 103) }
-            }
-        }
-        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
-        let rc = withUnsafePointer(to: &addr) { p in
-            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
-        }
-        guard rc == 0 else {
-            FileHandle.standardError.write(Data("diar worker: connect failed: \(errno)\n".utf8))
-            return
-        }
-        let connection = DiarWorkerConnection(fd: fd)
-        let server = DiarWorkerServer(connection: connection,
-                                      rawDiarizer: DiarizerEngineRawAdapter(engine: engine))
-        await server.run()
     }
 
     /// A filesystem-safe timestamp stem for a `--stdin` live recording folder.

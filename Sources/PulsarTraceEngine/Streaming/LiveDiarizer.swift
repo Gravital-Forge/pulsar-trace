@@ -122,7 +122,7 @@ public actor LiveDiarizer: LiveDiarizing {
         guard let rawDiarizer else { return [] }
         windowCounter += 1
         guard let raw = await rawDiarizer.diarizeRawWindow(samples: samples) else {
-            // Worker hung/killed/restarting — this window degrades to no spans.
+            // A diarizer hiccup — this window degrades to no spans.
             return []
         }
         return stitch(result: raw, windowStart: windowStart)

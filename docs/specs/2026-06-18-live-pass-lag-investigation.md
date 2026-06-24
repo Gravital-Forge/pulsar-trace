@@ -514,9 +514,24 @@ Both were engineered against a misdiagnosed cause (an un-cancellable ANE hang).
 They are not harmful — D43's process isolation is still a reasonable safety net and
 the D42 `DiarGate` reclaim is a harmless ≤1-window bound — but the
 **kill-respawn-to-release-a-wedged-ANE-call rationale no longer holds**: the actual
-wedge was blocking stderr, now fixed at the source. A future cleanup could
-reasonably simplify or unwind the worker/kill/respawn machinery now that the live
-diarizer no longer wedges. Not done here.
+wedge was blocking stderr, now fixed at the source.
+
+**Unwound 2026-06-23 (this branch).** Both were removed. The D43 worker
+subprocess — `DiarWorkerClient`/`Server`/`Connection`/`Protocol`/`Launcher`, the
+`--diarizer-worker` engine mode, the Unix socket + length-prefixed wire envelope,
+and the five worker test files — is deleted, and live diarization runs
+**in-process** again via `DiarizerEngineRawAdapter` over the resident
+`DiarizerEngine` (the same actor the offline refine pass uses). `DiarGate` is
+reverted to a plain ≤1-in-flight gate (`tryAcquire() -> Bool` / `release()` /
+`drain()`); the D42 reclaim and its generation token are gone. The invariant that
+matters — *a wedged diarizer never stalls transcription or `live.md`* — still
+holds via the detached-task + single-slot structure (the surviving
+`wedgedDiarizerDoesNotStallTranscription` test proves it; it now logs
+`SKIPPED(gate busy)` for every window after the first). The two real fixes are
+retained: the chunked pipe drain in `RecordOrchestrator` and the §2b neutral
+`Speaker?` label. Net ≈ −1180 lines. The durable residue is recorded as an
+Evolution note on **DECISIONS.md D40**; the worker implementation plan
+(`2026-06-19-diarizer-worker-process-plan.md`) is banner-marked superseded.
 
 ### Follow-up (IMPLEMENTED 2026-06-19) — the label collapse (§2b)
 

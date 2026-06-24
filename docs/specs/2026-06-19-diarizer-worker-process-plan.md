@@ -1,5 +1,14 @@
 # Diarizer Worker Process Implementation Plan
 
+> **SUPERSEDED — IMPLEMENTED THEN REVERTED (2026-06-23).** This worker-process
+> design shipped on `fix/live-diarizer-wedge-reclaim` and was then **removed**.
+> The un-cancellable ANE hang it defends against was a misdiagnosis: the live
+> pass was wedged by a **blocking stderr pipe**, not the ANE (proof in
+> `2026-06-18-live-pass-lag-investigation.md` §10), and that is fixed at the
+> source by a chunked pipe drain in `RecordOrchestrator`. Live diarization runs
+> **in-process** again via `DiarizerEngineRawAdapter` (DECISIONS.md D40). This
+> plan is retained for historical context only — **do not implement it.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use pulsartrace-subagent-driven-development (recommended) or pulsartrace-executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move the live windowed diarization out of the `pulsartrace-engine` process into its own killable worker process, fed audio over a Unix-domain socket, so a hung/contended ANE `prediction` becomes recoverable by `SIGKILL` (process death releases the un-cancellable leaked ANE call) instead of permanently freezing diarization and starving Parakeet transcription.

@@ -1,8 +1,8 @@
 import Foundation
 
 /// Adapts the in-process FluidAudio `DiarizerEngine` to `RawWindowDiarizing`,
-/// converting its `DiarizationResult` to the flat wire DTO. Used inside the
-/// diarizer worker process (D43), and as the in-process conformer for tests.
+/// converting its `DiarizationResult` to the flat `DiarWindowResult`. The
+/// in-process conformer the live pass uses (and tests).
 public struct DiarizerEngineRawAdapter: RawWindowDiarizing {
     private let engine: DiarizerEngine
     public init(engine: DiarizerEngine) { self.engine = engine }
@@ -25,7 +25,8 @@ public struct DiarizerEngineRawAdapter: RawWindowDiarizing {
 }
 
 extension Duration {
-    /// Whole milliseconds (truncating). Used to flatten span times for the wire.
+    /// Whole milliseconds (truncating). Used to flatten span times into
+    /// `DiarWindowResult`.
     var milliseconds: Int {
         let c = components
         return Int(c.seconds) * 1000 + Int(c.attoseconds / 1_000_000_000_000_000)
