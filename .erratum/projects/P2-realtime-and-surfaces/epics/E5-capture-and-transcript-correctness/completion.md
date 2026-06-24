@@ -23,10 +23,10 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P2-R13 | `Sources/PulsarTraceEngine/Transcription/` — `WhisperTranscriber.swift`, `RegionTranscribing.swift` (temperature ladder + per-region decode), `HallucinationFilter.swift`; `Refinement/RefinementPipeline.swift` (region merge/ordering) |
-| PT-P2-R4 (hardening) | `Sources/PulsarTraceCapture/AudioConverter.swift` — device-format downmix repair |
+- **PT-P2-R13** — `Sources/PulsarTraceEngine/Transcription/` — `WhisperTranscriber.swift`,
+  `RegionTranscribing.swift` (temperature ladder + per-region decode), `HallucinationFilter.swift`;
+  `Refinement/RefinementPipeline.swift` (region merge/ordering)
+- **PT-P2-R4 (hardening)** — `Sources/PulsarTraceCapture/AudioConverter.swift` — device-format downmix repair
 
 ## To flow into the product layer
 

@@ -22,9 +22,9 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P1-R7 | `Sources/PulsarTraceEngine/SpeakerLibrary/` — `SpeakerLibrary.swift`, `Speaker.swift`, `SQLiteDatabase.swift`, `Centroid.swift`, `SpeakerReconciler.swift`; `Sources/pulsartrace/SpeakersCommand.swift` |
+- **PT-P1-R7** — `Sources/PulsarTraceEngine/SpeakerLibrary/` — `SpeakerLibrary.swift`,
+  `Speaker.swift`, `SQLiteDatabase.swift`, `Centroid.swift`, `SpeakerReconciler.swift`;
+  `Sources/pulsartrace/SpeakersCommand.swift`
 
 ## To flow into the product layer
 

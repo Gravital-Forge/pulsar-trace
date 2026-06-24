@@ -16,9 +16,10 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P4-R1 | `Sources/PulsarTraceEngine/Transcription/WhisperTranscriber.swift`, `WhisperOptions.swift` (`allowedLanguages`), `WhisperLanguageCatalog.swift`; `Sources/PulsarTraceEngine/Streaming/StreamingTranscriber.swift` (decode cadence); `Sources/PulsarTraceMenuBar/MenuBarSettings.swift`, `Sources/pulsartrace-mac/SettingsView.swift` |
+- **PT-P4-R1** — `Sources/PulsarTraceEngine/Transcription/WhisperTranscriber.swift`,
+  `WhisperOptions.swift` (`allowedLanguages`), `WhisperLanguageCatalog.swift`;
+  `Sources/PulsarTraceEngine/Streaming/StreamingTranscriber.swift` (decode cadence);
+  `Sources/PulsarTraceMenuBar/MenuBarSettings.swift`, `Sources/pulsartrace-mac/SettingsView.swift`
 
 ## To flow into the product layer
 

@@ -21,11 +21,13 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P2-R4 | `Sources/PulsarTraceCapture/` — `DeviceCaptureSource.swift`, `MicCaptureEngine.swift`, `SystemAudioCaptureEngine.swift`, `AudioConverter.swift`, `SampleBufferConverter.swift`, `CaptureSocketServer.swift`, `AudioInputDevices.swift` |
-| PT-P2-R5 | `Sources/PulsarTraceCapture/PermissionChecker.swift` |
-| PT-P2-R6 | `Sources/PulsarTraceCapture/SleepWakeMonitor.swift` (sleep), `SampleBufferConverter.swift` (device-format change); `Sources/PulsarTraceEngine/IPC/FrameProtocol.swift` |
+- **PT-P2-R4** — `Sources/PulsarTraceCapture/` — `DeviceCaptureSource.swift`,
+  `MicCaptureEngine.swift`, `SystemAudioCaptureEngine.swift`, `AudioConverter.swift`,
+  `SampleBufferConverter.swift`, `CaptureSocketServer.swift`, `AudioInputDevices.swift`
+- **PT-P2-R5** — `Sources/PulsarTraceCapture/PermissionChecker.swift`
+- **PT-P2-R6** — `Sources/PulsarTraceCapture/SleepWakeMonitor.swift` (sleep),
+  `SampleBufferConverter.swift` (device-format change);
+  `Sources/PulsarTraceEngine/IPC/FrameProtocol.swift`
 
 ## To flow into the product layer
 

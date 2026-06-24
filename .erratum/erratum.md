@@ -46,14 +46,3 @@ in-flight branches. The following work completes adoption and is pending:
 - Bring the repository's methodology skills into agreement with this directory, so the skill set and
   the documentation describe one system rather than two.
 - Add in-source requirement links (`// PT-R…`) across the Swift and Python sources.
-
-## Framework questions surfaced during adoption
-
-Captured here because this is the product's first run on Erratum:
-
-- There is no first-class home for operational/process documents; they are kept out of scope by
-  decision (see Scope), but a documentation system that also traced them would be stronger.
-- The single-file architecture document is tight for a product with several large public contracts;
-  this product uses an architecture directory instead.
-- Establishing the product layer from an existing trunk requires the product requirements to carry
-  over their prior identifiers — a documented exception to deriving every ID as max-plus-one.

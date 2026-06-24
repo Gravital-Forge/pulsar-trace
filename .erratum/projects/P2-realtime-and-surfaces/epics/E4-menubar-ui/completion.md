@@ -23,11 +23,10 @@ The onboarding tour is stubbed (deferred), so it is not introduced as a product 
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P2-R10 | `Sources/PulsarTraceMenuBar/` — `MenuBarState.swift`, `RecordingViewModel.swift`, `MenuBarSettings.swift`, `AppEnvironment.swift`; `Sources/pulsartrace-mac/` |
-| PT-P2-R11 | `Sources/PulsarTraceMenuBar/` — `SpeakerEditorViewModel.swift`, `RecordingsScanner.swift`, `LiveTranscriptWatcher.swift` |
-| PT-P2-R12 | `Sources/PulsarTraceEngine/Refinement/FinalMarkdownRewriter.swift`; `SpeakerLibrary` mutation methods + paired events |
+- **PT-P2-R10** — `Sources/PulsarTraceMenuBar/` — `MenuBarState.swift`, `RecordingViewModel.swift`,
+  `MenuBarSettings.swift`, `AppEnvironment.swift`; `Sources/pulsartrace-mac/`
+- **PT-P2-R11** — `Sources/PulsarTraceMenuBar/` — `SpeakerEditorViewModel.swift`, `RecordingsScanner.swift`, `LiveTranscriptWatcher.swift`
+- **PT-P2-R12** — `Sources/PulsarTraceEngine/Refinement/FinalMarkdownRewriter.swift`; `SpeakerLibrary` mutation methods + paired events
 
 ## To flow into the product layer
 

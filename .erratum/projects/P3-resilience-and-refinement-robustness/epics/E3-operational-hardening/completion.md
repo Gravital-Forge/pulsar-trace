@@ -18,10 +18,8 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P3-R4 | `Sources/PulsarTraceEngine/Events/EventWriter.swift`; `Support/PathRedactor.swift` |
-| PT-P3-R3 (parity/perf) | `Sources/PulsarTraceEngine/Refinement/Jobs/SharedTranscriber.swift`, `ResumableRefiner.swift` |
+- **PT-P3-R4** — `Sources/PulsarTraceEngine/Events/EventWriter.swift`; `Support/PathRedactor.swift`
+- **PT-P3-R3 (parity/perf)** — `Sources/PulsarTraceEngine/Refinement/Jobs/SharedTranscriber.swift`, `ResumableRefiner.swift`
 
 ## To flow into the product layer
 

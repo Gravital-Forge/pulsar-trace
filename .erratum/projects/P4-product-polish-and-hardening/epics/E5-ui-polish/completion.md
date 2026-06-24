@@ -16,10 +16,8 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P4-R7 | `Sources/pulsartrace-mac/` accessibility labels; `Sources/PulsarTraceMenuBar/KeyComboFormatter.swift` |
-| PT-P4-R8 | `Sources/PulsarTraceMenuBar/RefinementNotification.swift` |
+- **PT-P4-R7** — `Sources/pulsartrace-mac/` accessibility labels; `Sources/PulsarTraceMenuBar/KeyComboFormatter.swift`
+- **PT-P4-R8** — `Sources/PulsarTraceMenuBar/RefinementNotification.swift`
 
 ## To flow into the product layer
 

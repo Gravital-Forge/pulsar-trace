@@ -19,10 +19,8 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P3-R1 | `Sources/PulsarTraceEngine/Audio/StreamingWAVWriter.swift`; `Sources/PulsarTraceEngine/Streaming/LiveRunner.swift` |
-| PT-P3-R2 | `Sources/PulsarTraceCapture/FrameWatchdog.swift`, `DeviceCaptureSource.swift` |
+- **PT-P3-R1** — `Sources/PulsarTraceEngine/Audio/StreamingWAVWriter.swift`; `Sources/PulsarTraceEngine/Streaming/LiveRunner.swift`
+- **PT-P3-R2** — `Sources/PulsarTraceCapture/FrameWatchdog.swift`, `DeviceCaptureSource.swift`
 
 ## To flow into the product layer
 

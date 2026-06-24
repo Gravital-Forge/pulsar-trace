@@ -23,9 +23,9 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P1-R6 | `Sources/PulsarTraceEngine/Refinement/` — `RefinementPipeline.swift`, `RecordingFolder.swift`, `RefinementMetadata.swift`, `TranscriptAssembly.swift`; `Support/AtomicFile.swift`; `Sources/pulsartrace/RefineCommand.swift` |
+- **PT-P1-R6** — `Sources/PulsarTraceEngine/Refinement/` — `RefinementPipeline.swift`,
+  `RecordingFolder.swift`, `RefinementMetadata.swift`, `TranscriptAssembly.swift`;
+  `Support/AtomicFile.swift`; `Sources/pulsartrace/RefineCommand.swift`
 
 ## To flow into the product layer
 

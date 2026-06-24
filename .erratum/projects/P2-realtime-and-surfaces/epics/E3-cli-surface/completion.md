@@ -24,12 +24,12 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P2-R7 | `Sources/PulsarTraceEngine/Engine/RecordOrchestrator.swift`, `Refinement/RecordPlan.swift`; `Sources/pulsartrace/RecordCommand.swift` |
-| PT-P2-R8 | `Sources/PulsarTraceEngine/Support/Doctor.swift`, `Support/ToneDetector.swift`; `Sources/pulsartrace/DoctorCommand.swift`, `CaptureTest.swift` |
-| PT-P2-R9 | `Sources/PulsarTraceEngine/Events/EventLogTail.swift`, `Support/CLIInstaller.swift`; `Sources/pulsartrace/EventsCommand.swift`, `InstallCommand.swift` |
-| PT-P2-R14 | release smoke-test checklist (operational document, outside `.erratum/`) |
+- **PT-P2-R7** — `Sources/PulsarTraceEngine/Engine/RecordOrchestrator.swift`, `Refinement/RecordPlan.swift`; `Sources/pulsartrace/RecordCommand.swift`
+- **PT-P2-R8** — `Sources/PulsarTraceEngine/Support/Doctor.swift`, `Support/ToneDetector.swift`;
+  `Sources/pulsartrace/DoctorCommand.swift`, `CaptureTest.swift`
+- **PT-P2-R9** — `Sources/PulsarTraceEngine/Events/EventLogTail.swift`,
+  `Support/CLIInstaller.swift`; `Sources/pulsartrace/EventsCommand.swift`, `InstallCommand.swift`
+- **PT-P2-R14** — release smoke-test checklist (operational document, outside `.erratum/`)
 
 ## To flow into the product layer
 

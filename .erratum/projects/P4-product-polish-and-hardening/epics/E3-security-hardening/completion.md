@@ -18,11 +18,10 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P4-R4 | `Sources/PulsarTraceEngine/Support/SecureFiles.swift` |
-| PT-P4-R5 | `Sources/PulsarTraceEngine/Support/PeerCredentials.swift`; socket servers in `PulsarTraceCapture` (`CaptureSocketServer`) and the `pulsartrace-whisper` subprocess |
-| PT-P4-R6 | `Sources/PulsarTraceEngine/Support/AtomicFile.swift`, `PathRedactor.swift` |
+- **PT-P4-R4** — `Sources/PulsarTraceEngine/Support/SecureFiles.swift`
+- **PT-P4-R5** — `Sources/PulsarTraceEngine/Support/PeerCredentials.swift`; socket servers in
+  `PulsarTraceCapture` (`CaptureSocketServer`) and the `pulsartrace-whisper` subprocess
+- **PT-P4-R6** — `Sources/PulsarTraceEngine/Support/AtomicFile.swift`, `PathRedactor.swift`
 
 ## To flow into the product layer
 

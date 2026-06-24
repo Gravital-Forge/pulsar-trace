@@ -19,9 +19,10 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P3-R3 | `Sources/PulsarTraceEngine/Refinement/Jobs/` — `RefinementJobQueue.swift`, `ResumableRefiner.swift`, `RefinementJobStore.swift`, `RefinementProgress.swift`, `PauseGate.swift`, `RefinementJob.swift`, `RefinementJobState.swift`; `Sources/PulsarTraceMenuBar/RefinementJobQueueViewModel.swift` |
+- **PT-P3-R3** — `Sources/PulsarTraceEngine/Refinement/Jobs/` — `RefinementJobQueue.swift`,
+  `ResumableRefiner.swift`, `RefinementJobStore.swift`, `RefinementProgress.swift`,
+  `PauseGate.swift`, `RefinementJob.swift`, `RefinementJobState.swift`;
+  `Sources/PulsarTraceMenuBar/RefinementJobQueueViewModel.swift`
 
 ## To flow into the product layer
 

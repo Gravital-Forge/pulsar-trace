@@ -21,9 +21,9 @@ in-process abort path proved insufficient (PT-P3-D9).
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P3-R5 | `Sources/PulsarTraceEngine/Streaming/` — `LiveRunner.swift`, `BoundedFrameQueue.swift`, `LiveSink.swift`; `Sources/PulsarTraceEngine/WhisperIPC/`; `Sources/pulsartrace-whisper/main.swift` |
+- **PT-P3-R5** — `Sources/PulsarTraceEngine/Streaming/` — `LiveRunner.swift`,
+  `BoundedFrameQueue.swift`, `LiveSink.swift`; `Sources/PulsarTraceEngine/WhisperIPC/`;
+  `Sources/pulsartrace-whisper/main.swift`
 
 ## To flow into the product layer
 

@@ -23,11 +23,11 @@ process-wide lock (recorded as PT-P1-D8).
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P1-R2 | `Sources/PulsarTraceEngine/Transcription/` — `WhisperTranscriber.swift`, `OfflineTranscriptionPipeline.swift`, `TranscriptDocument.swift`, `BlankTokenFilter.swift`, `WhisperOptions.swift`; `CWhisper` interop |
-| PT-P1-R3 | `Sources/PulsarTraceEngine/Transcription/` — `ModelStore.swift`, `ModelCatalog.swift`, `SHA256Verifier.swift` |
-| PT-P1-R4 | `Sources/PulsarTraceEngine/Audio/` — `WAVWriter.swift`, `WAVReader.swift` |
+- **PT-P1-R2** — `Sources/PulsarTraceEngine/Transcription/` — `WhisperTranscriber.swift`,
+  `OfflineTranscriptionPipeline.swift`, `TranscriptDocument.swift`, `BlankTokenFilter.swift`,
+  `WhisperOptions.swift`; `CWhisper` interop
+- **PT-P1-R3** — `Sources/PulsarTraceEngine/Transcription/` — `ModelStore.swift`, `ModelCatalog.swift`, `SHA256Verifier.swift`
+- **PT-P1-R4** — `Sources/PulsarTraceEngine/Audio/` — `WAVWriter.swift`, `WAVReader.swift`
 
 ## To flow into the product layer
 

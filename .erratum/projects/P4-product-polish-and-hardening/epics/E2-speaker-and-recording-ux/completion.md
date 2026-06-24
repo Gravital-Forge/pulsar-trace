@@ -17,9 +17,9 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P4-R2 | `Sources/PulsarTraceMenuBar/` — `SpeakerEditorViewModel.swift`, `AutoScrollController.swift`; `Sources/pulsartrace-mac/SpeakerPillsView.swift`; `Sources/PulsarTraceEngine/Refinement/FinalMarkdownRewriter.swift`, `TranscriptAssembly.swift` |
+- **PT-P4-R2** — `Sources/PulsarTraceMenuBar/` — `SpeakerEditorViewModel.swift`,
+  `AutoScrollController.swift`; `Sources/pulsartrace-mac/SpeakerPillsView.swift`;
+  `Sources/PulsarTraceEngine/Refinement/FinalMarkdownRewriter.swift`, `TranscriptAssembly.swift`
 
 ## To flow into the product layer
 

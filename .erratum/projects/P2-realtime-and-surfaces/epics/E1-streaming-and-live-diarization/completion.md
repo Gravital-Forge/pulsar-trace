@@ -22,11 +22,10 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P2-R1 | `Sources/PulsarTraceEngine/Streaming/` — `StreamingTranscriber.swift`, `LiveAgreementCommitter.swift`, `StreamingPipeline.swift`, `LiveMarkdownWriter.swift` |
-| PT-P2-R2 | `Sources/PulsarTraceEngine/Streaming/` — `LiveDiarizer.swift`, `DiarState.swift`, `DiarBufferManager.swift` |
-| PT-P2-R3 | `Sources/PulsarTraceEngine/Streaming/MicEchoDedup.swift` |
+- **PT-P2-R1** — `Sources/PulsarTraceEngine/Streaming/` — `StreamingTranscriber.swift`,
+  `LiveAgreementCommitter.swift`, `StreamingPipeline.swift`, `LiveMarkdownWriter.swift`
+- **PT-P2-R2** — `Sources/PulsarTraceEngine/Streaming/` — `LiveDiarizer.swift`, `DiarState.swift`, `DiarBufferManager.swift`
+- **PT-P2-R3** — `Sources/PulsarTraceEngine/Streaming/MicEchoDedup.swift`
 
 ## To flow into the product layer
 

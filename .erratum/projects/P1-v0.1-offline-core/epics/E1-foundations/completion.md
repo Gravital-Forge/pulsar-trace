@@ -24,14 +24,14 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P1-R1 | `Sources/PulsarTraceEngine/Audio/` — `AudioFrameSource.swift`, `AudioFrame.swift`, `FixturePlaybackSource.swift`, `PipeSource.swift`, `RawPCMPipeSource.swift`, `SocketSource.swift` |
-| PT-P1-R8 | `Sources/PulsarTraceEngine/Events/` — `Event.swift`, `EventRegistry.swift`, `EventWriter.swift`; `Support/ULID.swift` |
-| PT-P1-R9 | `Sources/PulsarTraceEngine/Logging/` — `Logging.swift`, `FileLogHandler.swift`, `LogRotator.swift`, `OSLogHandler.swift`; `Support/ContentLeakScanner.swift` |
-| PT-P1-R10 | `Tests/UnitTests/`, `Tests/PipelineTests/`, `python/pulsartrace-ai` pytest; fixtures under `Tests/Fixtures/audio/` |
-| PT-P1-R12 | package manifest `Package.swift` — open-source dependency set |
-| PT-P1-R13 | `Sources/PulsarTraceEngine/Events/` envelope `version` field (events contract); transcript contract carried by PT-P1-E4 |
+- **PT-P1-R1** — `Sources/PulsarTraceEngine/Audio/` — `AudioFrameSource.swift`, `AudioFrame.swift`,
+  `FixturePlaybackSource.swift`, `PipeSource.swift`, `RawPCMPipeSource.swift`, `SocketSource.swift`
+- **PT-P1-R8** — `Sources/PulsarTraceEngine/Events/` — `Event.swift`, `EventRegistry.swift`, `EventWriter.swift`; `Support/ULID.swift`
+- **PT-P1-R9** — `Sources/PulsarTraceEngine/Logging/` — `Logging.swift`, `FileLogHandler.swift`,
+  `LogRotator.swift`, `OSLogHandler.swift`; `Support/ContentLeakScanner.swift`
+- **PT-P1-R10** — `Tests/UnitTests/`, `Tests/PipelineTests/`, `python/pulsartrace-ai` pytest; fixtures under `Tests/Fixtures/audio/`
+- **PT-P1-R12** — package manifest `Package.swift` — open-source dependency set
+- **PT-P1-R13** — `Sources/PulsarTraceEngine/Events/` envelope `version` field (events contract); transcript contract carried by PT-P1-E4
 
 ## To flow into the product layer
 

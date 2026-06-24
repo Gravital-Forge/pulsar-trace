@@ -20,9 +20,11 @@ None.
 
 ## Requirements satisfied
 
-| Project Requirement | Where |
-| ------------------- | ----- |
-| PT-P4-R3 | `Sources/pulsartrace-mac/` — `MainWindowView.swift`, `RecordingsSplitView.swift`, `TranscriptDetailView.swift`, `PersistentHSplit.swift`; `Sources/PulsarTraceMenuBar/RecordingsPaneModel.swift`, `TranscriptDetailModel.swift`, `RecordingTitleStore.swift`; `Sources/PulsarTraceEngine/Streaming/LiveRunner.swift` (`resolveSystemLabel` — source `?` marker) |
+- **PT-P4-R3** — `Sources/pulsartrace-mac/` — `MainWindowView.swift`, `RecordingsSplitView.swift`,
+  `TranscriptDetailView.swift`, `PersistentHSplit.swift`;
+  `Sources/PulsarTraceMenuBar/RecordingsPaneModel.swift`, `TranscriptDetailModel.swift`,
+  `RecordingTitleStore.swift`; `Sources/PulsarTraceEngine/Streaming/LiveRunner.swift`
+  (`resolveSystemLabel` — source `?` marker)
 
 ## To flow into the product layer
 
