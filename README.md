@@ -160,7 +160,7 @@ Renames take effect on the next `refine` of a recording. Once a voice is named, 
 
 ## Output formats
 
-PulsarTrace's public API is three plain-text surfaces on disk. They are documented formally in [`docs/file-format.md`](docs/file-format.md) and [`docs/events-schema.md`](docs/events-schema.md), and versioned with SemVer.
+PulsarTrace's public API is three plain-text surfaces on disk. They are documented formally in [`.erratum/product/architecture/transcript-format.md`](.erratum/product/architecture/transcript-format.md) and [`events-log.md`](.erratum/product/architecture/events-log.md), and versioned with SemVer.
 
 ### `final.md` — the refined transcript (source of truth)
 

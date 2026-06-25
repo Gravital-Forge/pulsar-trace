@@ -3,7 +3,7 @@ import Testing
 @testable import PulsarTraceMenuBar
 
 /// Parser for the stable `**[HH:MM:SS] Speaker:** text` transcript line
-/// shape (live.md/final.md public contract — docs/file-format.md).
+/// shape (live.md/final.md public contract — `.erratum/product/architecture/transcript-format.md`).
 @Suite("TranscriptLine parser")
 struct TranscriptLineTests {
 

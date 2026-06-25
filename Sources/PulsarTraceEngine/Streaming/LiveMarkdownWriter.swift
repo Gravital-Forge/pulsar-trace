@@ -131,7 +131,7 @@ public actor LiveMarkdownWriter {
     /// Rendered as an italic note (`_(recording paused)_`) — the same line
     /// kind `final.md` uses for "no speech detected", clearly distinct from an
     /// utterance line. An optional annotation line is a non-breaking format
-    /// addition (`docs/file-format.md`, Versioning).
+    /// addition (`.erratum/product/architecture/transcript-format.md`, Versioning).
     public func appendGapAnnotation(_ kind: GapKind) throws {
         guard handle != nil else { throw WriteError.notStarted }
         switch kind {

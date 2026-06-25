@@ -2,7 +2,7 @@ import Foundation
 
 /// The catalogue of event types known to this build.
 ///
-/// `docs/events-schema.md` is the human-facing contract; this registry is the
+/// `.erratum/product/architecture/events-log.md` is the human-facing contract; this registry is the
 /// machine-facing one. New event types extend it by appending entries — the
 /// `EventWriter` does not need to change. Keeping every type registered in one
 /// place makes it cheap to verify "every significant operation emits exactly

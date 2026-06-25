@@ -91,7 +91,8 @@ public struct DiarizationResult: Sendable, Equatable {
     /// The transcript-facing display label for a raw pyannote label.
     ///
     /// pyannote emits `SPEAKER_00`, `SPEAKER_01`, …; PulsarTrace's transcript
-    /// format (PT-R13 / `docs/file-format.md`) uses `Speaker_0`, `Speaker_1`, …
+    /// format (PT-R13 / `.erratum/product/architecture/transcript-format.md`) uses `Speaker_0`,
+    /// `Speaker_1`, …
     /// The mapping is positional over the sorted `speakers` list, so it is
     /// stable for a given diarization result. An unknown label falls back to
     /// itself so a merge never silently drops text.

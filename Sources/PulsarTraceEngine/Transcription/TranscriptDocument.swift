@@ -23,7 +23,7 @@ import Foundation
 ///   per-segment labels instead.
 ///
 /// `live.md` / `final.md` is a public API surface; treat this format as
-/// SemVer-stable (see `docs/file-format.md`).
+/// SemVer-stable (see `.erratum/product/architecture/transcript-format.md`).
 public struct TranscriptDocument: Sendable, Equatable {
 
     /// The file marker. The offline path produces a finished transcript.

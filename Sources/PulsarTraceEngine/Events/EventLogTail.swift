@@ -2,7 +2,7 @@ import Foundation
 
 /// Reads the events log for `pulsartrace events tail` (PT-R86).
 ///
-/// The events log is a public API surface (`docs/events-schema.md`): one
+/// The events log is a public API surface (`.erratum/product/architecture/events-log.md`): one
 /// daily-rotated JSONL file per local day. This type resolves *today's* file
 /// and provides the pure line-parsing/filtering helpers the CLI's follow loop
 /// uses. The follow loop itself (poll → read appended bytes → print) lives in
