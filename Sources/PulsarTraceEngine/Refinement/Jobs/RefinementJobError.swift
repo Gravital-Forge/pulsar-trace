@@ -36,7 +36,7 @@ public enum RefinementJobError: Error {
 
     // MARK: - Stable error identifiers
 
-    /// The in-process diarization failed or timed out (D40).
+    /// The in-process diarization failed or timed out (PT-P5-D3).
     /// Transient — a retry may succeed. `retryAvailable: true`.
     case diarizeCrashed
 
@@ -45,7 +45,7 @@ public enum RefinementJobError: Error {
     /// retryable since we cannot always distinguish the two.
     case transcribeFailed
 
-    /// A required model bundle could not be loaded (D40).
+    /// A required model bundle could not be loaded (PT-P5-D3).
     /// Permanent until the model cache is repaired. `retryAvailable: false`.
     case missingDependency
 
@@ -87,7 +87,7 @@ public enum RefinementJobError: Error {
             switch de {
             case .modelLoadFailed:
                 // A missing / unloadable CoreML model bundle is a dependency
-                // problem — permanent until the cache is repaired (D40).
+                // problem — permanent until the cache is repaired (PT-P5-D3).
                 return .missingDependency
             case .wavNotFound:
                 return .transcribeFailed
@@ -129,7 +129,7 @@ public enum RefinementJobError: Error {
         }
 
         // Defensive fallback for a `CancellationError` that reaches `classify`
-        // (D39 in-process). The recording-start cancel does NOT come through here:
+        // (PT-P5-D1 in-process). The recording-start cancel does NOT come through here:
         // `RefinementJobQueue` intercepts ANY `CancellationError` unconditionally
         // and requeues the same job with its checkpoint intact (no failure, no
         // `refinement_failed`). This arm is thus unreachable from the queue path,

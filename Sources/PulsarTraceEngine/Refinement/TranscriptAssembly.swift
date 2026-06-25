@@ -39,7 +39,7 @@ enum TranscriptAssembly {
                 count: systemSegments.count)
         }
 
-        // R22: rewrite each `Speaker_N` display label to its
+        // PT-R22: rewrite each `Speaker_N` display label to its
         // reconciled library name. `DiarizationMerge` emits `Speaker_N` and
         // co-attributed `Speaker_0+Speaker_1`; build a `Speaker_N → name` map
         // (via the raw-label round-trip) and remap each `+`-joined component.
@@ -70,7 +70,7 @@ enum TranscriptAssembly {
             rows.append((seg, systemLabels[i]))
         }
         for seg in micSegments ?? [] {
-            rows.append((seg, "You"))   // R17: the mic stream is always "You".
+            rows.append((seg, "You"))   // PT-R17: the mic stream is always "You".
         }
         // Sort by start offset; ties broken by end then label for determinism.
         rows.sort { a, b in
@@ -140,7 +140,7 @@ enum TranscriptAssembly {
     ) throws -> FinalWriteResult {
         let fm = FileManager.default
 
-        // Back up a pre-existing final.md before it is replaced (R27).
+        // Back up a pre-existing final.md before it is replaced (PT-R48).
         if fm.fileExists(atPath: folder.finalURL.path) {
             let backup = folder.directory.appendingPathComponent(
                 RecordingFolder.FileName.finalBackup)
@@ -150,7 +150,7 @@ enum TranscriptAssembly {
             try fm.copyItem(at: folder.finalURL, to: backup)
         }
 
-        // Atomic write-then-rename (R24): a reader/editor sees old-or-new.
+        // Atomic write-then-rename (PT-R24): a reader/editor sees old-or-new.
         let sha = try AtomicFile.write(markdown, to: folder.finalURL)
 
         // A live.md from a recording pass is superseded by final.md: preserve
@@ -185,7 +185,7 @@ enum TranscriptAssembly {
         sourceBasename: String,
         audioDurationSeconds: Double
     ) -> RefinementMetadata {
-        // `metadata.json` records the stable `speaker_id` ↔ name mapping (R83):
+        // `metadata.json` records the stable `speaker_id` ↔ name mapping (PT-R83):
         // an agent keys off the id across renames.
         let speakerEntries = speakers.map { label in
             RefinementMetadata.Speaker(

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The fully-resolved launch plan for one `pulsartrace record` session (R47):
+/// The fully-resolved launch plan for one `pulsartrace record` session (PT-R47):
 /// the recording id, output folder, socket paths, and the exact argument
 /// vectors for the `pulsartrace-capture` and `pulsartrace-engine` subprocesses.
 ///
@@ -31,8 +31,8 @@ public struct RecordPlan: Sendable, Equatable {
     ///   - outputFolder: the recording folder; its basename names the recording.
     ///   - paths: resolves the per-session socket locations.
     ///   - micDeviceID: an `AVCaptureDevice.uniqueID`, or `nil` for the default
-    ///     microphone (R5).
-    ///   - systemAudioEnabled: `false` for a mic-only recording (R6) — the
+    ///     microphone (PT-R5).
+    ///   - systemAudioEnabled: `false` for a mic-only recording (PT-R6) — the
     ///     engine then reads a single stream from the mic socket and no system
     ///     socket is wired.
     ///   - allowedLanguages: optional ISO-639-1 allow list. When non-empty,
@@ -58,7 +58,7 @@ public struct RecordPlan: Sendable, Equatable {
             "--out", outputFolder.path,
             "--system-socket", systemSocket.path,
             "--mic-socket", micSocket.path,
-            // The live pass has exactly one backend (D39). Capture still
+            // The live pass has exactly one backend (PT-P5-D1). Capture still
             // takes `--model` because the value feeds the public
             // `recording_started` event's `model_live` field
             // (RecordingStartedEvent) — removing an event field is a

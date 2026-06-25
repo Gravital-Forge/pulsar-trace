@@ -29,7 +29,7 @@ public struct RefinementTranscriber: Sendable {
         self.transcribeRegions = transcribeRegions
     }
 
-    /// The production wiring: WhisperKit decode + FluidAudio VAD (D39).
+    /// The production wiring: WhisperKit decode + FluidAudio VAD (PT-P5-D1).
     public static func whisperKit(
         _ transcriber: WhisperKitRegionTranscriber,
         vad: FluidVADRegionDetector

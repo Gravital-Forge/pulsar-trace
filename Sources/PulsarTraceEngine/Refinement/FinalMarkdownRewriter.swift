@@ -2,9 +2,9 @@ import Foundation
 import Logging
 
 /// Retroactively rewrites past `final.md` files after a speaker rename / merge
-/// / split (project-docs/DECISIONS.md D16).
+/// / split (PT-P1-D16).
 ///
-/// A `pulsartrace speakers rename` updates the speaker library only; D16 splits
+/// A `pulsartrace speakers rename` updates the speaker library only; PT-P1-D16 splits
 /// the *retroactive* rewrite of already-refined `final.md` files into this
 /// separate step. This type is that rewrite: given a speaker's appearances (from
 /// `SpeakerLibrary.appearances(of:)`) it locates each recording folder on disk,
@@ -170,7 +170,7 @@ public struct FinalMarkdownRewriter: Sendable {
     ///     `lastPathComponent` matches an appearance's folder name.
     ///   - fallbackLabel: the sentinel label used when a solo line would
     ///     otherwise produce an empty label. Locked to `Unrecognized` for
-    ///     delist (PRD decision).
+    ///     delist.
     ///   - reason: why the rewrite is happening — the caller copies it into
     ///     the `final_md_rewritten` event it emits per `RecordingResult`.
     /// - Returns: one `RecordingResult` per recording whose `final.md` was
@@ -424,7 +424,7 @@ public struct FinalMarkdownRewriter: Sendable {
         guard rewritten != original else { return nil }
 
         // Back up the prior final.md (overwriting any stale .bak) before the
-        // atomic write — mirrors RefinementPipeline's re-refine backup (R27).
+        // atomic write — mirrors RefinementPipeline's re-refine backup (PT-R48).
         let backupURL = folder.appendingPathComponent(
             RecordingFolder.FileName.finalBackup)
         if fm.fileExists(atPath: backupURL.path) {
@@ -432,7 +432,7 @@ public struct FinalMarkdownRewriter: Sendable {
         }
         try fm.copyItem(at: finalURL, to: backupURL)
 
-        // Atomic write-then-rename (R24) — a reader/editor sees old-or-new.
+        // Atomic write-then-rename (PT-R24) — a reader/editor sees old-or-new.
         let sha = try AtomicFile.write(rewritten, to: finalURL)
 
         // Best-effort metadata.json update — a separate atomic write (v1).

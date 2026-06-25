@@ -6,26 +6,26 @@ import Logging
 /// transcription → pyannote diarization → reconciled, speaker-labelled
 /// `final.md` + `metadata.json`.
 ///
-/// Pipeline stages (R20, R21, R24, R38, R39):
+/// Pipeline stages (PT-R20, PT-R21, PT-R24, PT-R38, PT-R39):
 /// 1. Resolve the input into a `RecordingFolder` (bare-WAV vs folder dispatch).
-/// 2. Transcribe the system stream with the WhisperKit ANE backend (R20).
-/// 3. Diarize the system stream with pyannote (R21) — `Speaker_N` labels.
+/// 2. Transcribe the system stream with the WhisperKit ANE backend (PT-R20).
+/// 3. Diarize the system stream with pyannote (PT-R21) — `Speaker_N` labels.
 /// 4. If a mic stream exists, transcribe it too; its utterances are `You`,
-///    never diarized (R17). Merge the two streams by timestamp.
-/// 5. Render `final.md` with the `<!-- pulsartrace:final -->` marker (R38),
-///    written atomically (R24); back up any prior `live.md` / `final.md`.
-/// 6. Write the `metadata.json` sidecar (R39).
+///    never diarized (PT-R17). Merge the two streams by timestamp.
+/// 5. Render `final.md` with the `<!-- pulsartrace:final -->` marker (PT-R38),
+///    written atomically (PT-R24); back up any prior `live.md` / `final.md`.
+/// 6. Write the `metadata.json` sidecar (PT-R39).
 ///
 /// Events are emitted in causal order (Hard Invariant #8): `refinement_started`
 /// first, the file event after the file is durably on disk, `refinement_completed`
 /// last; any failure emits `refinement_failed`.
 ///
-/// Progress (R26): a lightweight `ProgressReporter` closure receives stage
+/// Progress (PT-R26): a lightweight `ProgressReporter` closure receives stage
 /// updates; the CLI prints them to stderr. The menubar consuming progress over
 /// `control.sock` is a future addition — not built here.
 public struct RefinementPipeline: Sendable {
 
-    /// A coarse pipeline stage, for progress reporting (R26).
+    /// A coarse pipeline stage, for progress reporting (PT-R26).
     public enum Stage: String, Sendable {
         case resolvingInput = "resolving input"
         case transcribingSystem = "transcribing system audio"
@@ -166,12 +166,12 @@ public struct RefinementPipeline: Sendable {
     ///   - library: the persistent speaker library. When supplied,
     ///     post-pass clusters are reconciled against it — known speakers get
     ///     their library name, new speakers an `Unknown #N` placeholder
-    ///     (R22, R23). `nil` keeps the no-library `Speaker_N` behaviour.
+    ///     (PT-R22, PT-R23). `nil` keeps the no-library `Speaker_N` behaviour.
     ///   - precomputedDiarization: an injected diarization result that bypasses
     ///     the `diarizer` subprocess. The seam that lets reconciliation
     ///     be tested deterministically against committed JSON fixtures without
     ///     spawning pyannote; production passes `nil`.
-    ///   - progress: optional progress sink (R26).
+    ///   - progress: optional progress sink (PT-R26).
     public func run(
         inputPath: URL,
         transcriber: RefinementTranscriber,
@@ -281,7 +281,7 @@ public struct RefinementPipeline: Sendable {
         }
 
         // --- Stage 3b: reconcile clusters against the speaker library -------
-        // (R22, R23) — known speakers get their library name, new speakers an
+        // (PT-R22, PT-R23) — known speakers get their library name, new speakers an
         // `Unknown #N` placeholder; returning-speaker centroids are refined.
         var reconciliation: SpeakerReconciler.Outcome?
         if let library, let diarization {
@@ -339,7 +339,7 @@ public struct RefinementPipeline: Sendable {
 
         // File event — `final.md` is durably on disk.
         if finalExistedBefore {
-            // Re-refine (R27): an existing final.md was replaced.
+            // Re-refine (PT-R48): an existing final.md was replaced.
             _ = try? await events?.append(FinalMDRewrittenEvent(
                 recordingId: folder.recordingId,
                 pathBasename: RecordingFolder.FileName.final,
@@ -444,7 +444,7 @@ public struct RefinementPipeline: Sendable {
             let duration = Duration.milliseconds(
                 samples.count * 1000 / AudioFormat.sampleRate)
 
-            // Region-segmented decode (D26): regions from the backend's VAD;
+            // Region-segmented decode (PT-P2-D8): regions from the backend's VAD;
             // a detection failure degrades to the backend's whole-buffer
             // decode (regions == []), never fails the refine.
             var regions: [SpeechRegion] = []
@@ -472,7 +472,7 @@ public struct RefinementPipeline: Sendable {
     ///
     /// When a `reconciliation` is supplied, each diarized speaker's
     /// `Speaker_N` label is replaced by the persistent library name
-    /// (`Steve`, `Unknown #1`) — R22. Without it, the `Speaker_N`
+    /// (`Steve`, `Unknown #1`) — PT-R22. Without it, the `Speaker_N`
     /// behaviour is kept.
     ///
     /// When there are no utterances at all, an empty-transcript `final.md` is
@@ -503,7 +503,7 @@ public struct RefinementPipeline: Sendable {
     /// caller emits the `final.md` event first and `live_md_replaced_by_final`
     /// after, so event order mirrors this disk order (Hard Invariant #8).
     ///
-    /// - `final.md` present (re-refine, R27) → copied to `final.md.bak` before
+    /// - `final.md` present (re-refine, PT-R48) → copied to `final.md.bak` before
     ///   the atomic replace.
     /// - `live.md` present → renamed to `.live.md.bak`; the caller emits
     ///   `live_md_replaced_by_final` when this returns `replacedLiveMD == true`.

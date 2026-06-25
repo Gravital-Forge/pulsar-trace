@@ -1,6 +1,6 @@
 import Foundation
 
-/// The `metadata.json` sidecar a refine pass writes next to `final.md` (R39).
+/// The `metadata.json` sidecar a refine pass writes next to `final.md` (PT-R39).
 ///
 /// `metadata.json` is the machine-readable summary of a refined recording: an
 /// AI agent or a script reads it instead of parsing `final.md` prose. It is a
@@ -13,7 +13,7 @@ import Foundation
 public struct RefinementMetadata: Codable, Equatable, Sendable {
 
     /// Current schema version. v2: `pyannote_model` → `diarization_model`
-    /// {id, revision} (D40 — diarization moved to the ANE; the pyannote.audio
+    /// {id, revision} (PT-P5-D3 — diarization moved to the ANE; the pyannote.audio
     /// library version no longer exists).
     public static let currentSchemaVersion = 2
 
@@ -24,9 +24,9 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         /// system-stream speakers; `You` for the mic stream. Without a library
         /// `final.md` files carry `Speaker_N`.
         public let label: String
-        /// True for the mic-stream speaker (`You`) — never diarized (R17).
+        /// True for the mic-stream speaker (`You`) — never diarized (PT-R17).
         public let isMicrophone: Bool
-        /// Stable library speaker id (`spk_<ulid>`, R83) — present for a
+        /// Stable library speaker id (`spk_<ulid>`, PT-R83) — present for a
         /// system-stream speaker reconciled against the library,
         /// `nil` for `You` and for a speaker not reconciled (e.g. diarization
         /// skipped, or no library configured).
@@ -49,7 +49,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
     public struct WhisperModelInfo: Codable, Equatable, Sendable {
         /// Short model name, e.g. `large-v3`, `base`.
         public let name: String
-        /// Pinned SHA-256 of the ggml model file (its version identity, R54d).
+        /// Pinned SHA-256 of the ggml model file (its version identity, PT-R109).
         public let sha256: String
 
         public init(name: String, sha256: String) {
@@ -63,7 +63,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         /// Model id, e.g. `FluidInference/speaker-diarization-coreml`.
         public let id: String
         /// Content digest of the model directory (DirectoryDigest SHA-256) —
-        /// the speaker library's centroid-compatibility key (D40).
+        /// the speaker library's centroid-compatibility key (PT-P5-D3).
         public let revision: String
 
         public init(id: String, revision: String) {
