@@ -3,12 +3,12 @@ import Logging
 
 /// The full offline refinement pass behind `pulsartrace refine` (the
 /// v0.1 ship point): an audio file (or recording folder) →
-/// whisper transcription → pyannote diarization → reconciled, speaker-labelled
+/// transcription → pyannote diarization → reconciled, speaker-labelled
 /// `final.md` + `metadata.json`.
 ///
 /// Pipeline stages (R20, R21, R24, R38, R39):
 /// 1. Resolve the input into a `RecordingFolder` (bare-WAV vs folder dispatch).
-/// 2. Transcribe the system stream with whisper (R20).
+/// 2. Transcribe the system stream with the WhisperKit ANE backend (R20).
 /// 3. Diarize the system stream with pyannote (R21) — `Speaker_N` labels.
 /// 4. If a mic stream exists, transcribe it too; its utterances are `You`,
 ///    never diarized (R17). Merge the two streams by timestamp.
@@ -77,8 +77,8 @@ public struct RefinementPipeline: Sendable {
         /// A path-free message safe for the operational log (Hard Invariant #7:
         /// no full user file paths in `~/Library/Logs/PulsarTrace/`).
         ///
-        /// `description` (and the underlying `CocoaError` / whisper errors it
-        /// wraps) can embed full Foundation paths — `.io` and
+        /// `description` (and the underlying `CocoaError` / transcription errors
+        /// it wraps) can embed full Foundation paths — `.io` and
         /// `.transcription(.modelNotFound/.modelLoadFailed)` in particular.
         /// This collapses each case to its category plus, where available, a
         /// path-stripped error code/domain. The full detail still reaches
@@ -103,12 +103,13 @@ public struct RefinementPipeline: Sendable {
         /// may embed a path — is deliberately dropped.
         private static func safeCause(_ error: Error) -> String {
             switch error {
-            case let e as WhisperTranscribeError:
+            case let e as TranscriptionError:
                 switch e {
                 case .modelNotFound: return "modelNotFound"
                 case .modelLoadFailed: return "modelLoadFailed"
                 case .transcriptionFailed(let c): return "whisperCode \(c)"
                 case .emptyAudio: return "emptyAudio"
+                case .decodeDeadlineExceeded: return "decodeDeadlineExceeded"
                 }
             default:
                 let ns = error as NSError
@@ -154,10 +155,10 @@ public struct RefinementPipeline: Sendable {
     ///
     /// - Parameters:
     ///   - inputPath: a bare `.wav` file or a recording folder.
-    ///   - transcriberFactory: builds a model-resident `WhisperTranscriber`.
-    ///     A factory (not a single instance) so the mic and system streams get
-    ///     independent transcribers — whisper.cpp keeps a per-context Metal
-    ///     residency set and one context per source is the safe usage pattern.
+    ///   - transcriber: backend-agnostic transcription closures
+    ///     (`RefinementTranscriber`) — region detection + region/whole
+    ///     decode, shared by the mic and system streams (the WhisperKit
+    ///     actor serializes).
     ///   - diarizer: the pyannote diarization driver.
     ///   - whisperModelName: model name recorded in `metadata.json` / events.
     ///   - whisperModelSHA256: pinned model hash recorded in `metadata.json`.
@@ -173,12 +174,12 @@ public struct RefinementPipeline: Sendable {
     ///   - progress: optional progress sink (R26).
     public func run(
         inputPath: URL,
-        transcriberFactory: @Sendable () throws -> WhisperTranscriber,
+        transcriber: RefinementTranscriber,
         diarizer: Diarizer,
         whisperModelName: String,
         whisperModelSHA256: String,
         recordingStart: Date = Date(),
-        whisperOptions: WhisperOptions = .init(),
+        options: TranscriptionOptions = .init(),
         library: SpeakerLibrary? = nil,
         precomputedDiarization: DiarizationResult? = nil,
         progress: ProgressReporter? = nil
@@ -207,12 +208,12 @@ public struct RefinementPipeline: Sendable {
         do {
             return try await refine(
                 folder: folder,
-                transcriberFactory: transcriberFactory,
+                transcriber: transcriber,
                 diarizer: diarizer,
                 whisperModelName: whisperModelName,
                 whisperModelSHA256: whisperModelSHA256,
                 recordingStart: recordingStart,
-                whisperOptions: whisperOptions,
+                options: options,
                 library: library,
                 precomputedDiarization: precomputedDiarization,
                 startedAt: started,
@@ -235,12 +236,12 @@ public struct RefinementPipeline: Sendable {
 
     private func refine(
         folder: RecordingFolder,
-        transcriberFactory: @Sendable () throws -> WhisperTranscriber,
+        transcriber: RefinementTranscriber,
         diarizer: Diarizer,
         whisperModelName: String,
         whisperModelSHA256: String,
         recordingStart: Date,
-        whisperOptions: WhisperOptions,
+        options: TranscriptionOptions,
         library: SpeakerLibrary?,
         precomputedDiarization: DiarizationResult?,
         startedAt: Date,
@@ -252,11 +253,11 @@ public struct RefinementPipeline: Sendable {
         progress?(.transcribingSystem)
         let systemTranscription = try await transcribe(
             wav: folder.systemStream.url,
-            transcriberFactory: transcriberFactory,
-            options: whisperOptions)
+            transcriber: transcriber,
+            options: options)
 
         // --- Stage 3: diarize the system stream -----------------------------
-        // Diarization only makes sense if whisper found speech. With no
+        // Diarization only makes sense if the decoder found speech. With no
         // utterances there is nothing to attribute, so skip pyannote entirely
         // (edge case: low-quality input / no usable speech).
         var diarization: DiarizationResult?
@@ -304,8 +305,8 @@ public struct RefinementPipeline: Sendable {
             progress?(.transcribingMic)
             micTranscription = try await transcribe(
                 wav: mic.url,
-                transcriberFactory: transcriberFactory,
-                options: whisperOptions)
+                transcriber: transcriber,
+                options: options)
         }
 
         progress?(.merging)
@@ -419,23 +420,22 @@ public struct RefinementPipeline: Sendable {
         let audioDuration: Duration
     }
 
-    /// Transcribe a single WAV through `FixturePlaybackSource` → whisper.
+    /// Transcribe a single WAV through `FixturePlaybackSource` → the backend.
     ///
     /// A partial / slightly-malformed WAV header is tolerated by `WAVReader`,
     /// which recovers what is readable rather than crashing (edge case).
     private func transcribe(
         wav: URL,
-        transcriberFactory: @Sendable () throws -> WhisperTranscriber,
-        options: WhisperOptions
+        transcriber: RefinementTranscriber,
+        options: TranscriptionOptions
     ) async throws -> StreamTranscription {
         do {
-            let transcriber = try transcriberFactory()
             let source = FixturePlaybackSource(file: wav, realtime: false)
             let pipeline = OfflineTranscriptionPipeline(logger: logger)
             let samples = try await pipeline.accumulate(source)
 
             // No usable speech at all: hand back an empty transcript rather
-            // than letting `whisper_full` throw `emptyAudio`. The pipeline then
+            // than letting the backend throw `emptyAudio`. The pipeline then
             // writes a valid, explanatory `final.md` (edge case).
             guard !samples.isEmpty else {
                 return StreamTranscription(
@@ -444,28 +444,17 @@ public struct RefinementPipeline: Sendable {
             let duration = Duration.milliseconds(
                 samples.count * 1000 / AudioFormat.sampleRate)
 
-            // VAD-segmented transcription: when a Silero VAD model is
-            // available, detect this stream's speech regions and decode each
-            // independently, so a speaker's turn ends at the pause where they
-            // stopped to listen. The time-order merge can then interleave the
-            // other stream's utterances in causal order, instead of floating
-            // one long glued-together turn ahead of them. A VAD failure is
-            // non-fatal — fall back to a whole-buffer decode.
-            let result: TranscriptionResult
-            if let vadModelURL = options.vadModelURL {
-                var regions: [SpeechRegion] = []
-                do {
-                    regions = try WhisperTranscriber.detectSpeechRegions(
-                        in: samples, vadModelURL: vadModelURL, logger: logger)
-                } catch {
-                    logger.warning(
-                        "VAD region detection failed — whole-buffer decode")
-                }
-                result = try transcriber.transcribe(
-                    samples, regions: regions, options: options)
-            } else {
-                result = try transcriber.transcribe(samples, options: options)
+            // Region-segmented decode (D26): regions from the backend's VAD;
+            // a detection failure degrades to the backend's whole-buffer
+            // decode (regions == []), never fails the refine.
+            var regions: [SpeechRegion] = []
+            do {
+                regions = try await transcriber.detectRegions(samples)
+            } catch {
+                logger.warning("VAD region detection failed — whole-buffer decode")
             }
+            let result = try await transcriber.transcribeRegions(
+                samples, regions, options)
             return StreamTranscription(
                 segments: result.segments,
                 language: result.language,

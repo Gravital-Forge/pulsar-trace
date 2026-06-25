@@ -33,20 +33,18 @@ struct SettingsView: View {
             }
 
             Section("Transcription") {
-                Picker("Live transcription model",
-                       selection: $settings.liveModelName) {
-                    ForEach(ModelCatalog.all, id: \.name) { model in
-                        Text(model.name).tag(model.name)
-                    }
-                }
                 Picker("Refinement model",
                        selection: $settings.refineModelName) {
-                    ForEach(ModelCatalog.all, id: \.name) { model in
-                        Text(model.name).tag(model.name)
+                    ForEach(WhisperKitModelCatalog.all.map(\.name), id: \.self) { name in
+                        Text(name).tag(name)
                     }
                 }
-                Text("large-v3 is higher quality and ~3 GB — it downloads on "
-                    + "first use if not already cached.")
+                Text("Runs on the Neural Engine — recording never competes "
+                    + "with Meet or screen-share for the GPU. large-v3-turbo "
+                    + "is the fast default (~626 MB download on first use); "
+                    + "large-v3-whisperkit is the slower accuracy fallback "
+                    + "(~947 MB). Live transcription always uses Parakeet v3 "
+                    + "(~0.5 GB on first recording).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -72,9 +70,14 @@ struct SettingsView: View {
                         languagePopoverContent
                     }
                 }
-                Text("Leave empty to let whisper auto-detect freely. With "
-                    + "a selection, every window's language is forced to "
-                    + "the highest-probability code from your list.")
+                Text("Applies to both passes. Pick exactly one language to "
+                    + "pin refinement to it and steer live transcription "
+                    + "toward its script. Pick several and refinement "
+                    + "detects the best match among them per turn (live "
+                    + "stays auto). Leave empty for full auto-detect. "
+                    + "Live picks up changes at the next recording; "
+                    + "refinements run with the languages in effect at the "
+                    + "last app launch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -169,12 +172,12 @@ struct SettingsView: View {
     /// Languages that pass the current `languageFilter`. The match is a
     /// case-insensitive substring on the display name **or** the
     /// short code, so typing "pol" or "pl" both surface Polish.
-    private var filteredLanguages: [WhisperLanguageCatalog.Language] {
+    private var filteredLanguages: [LanguageCatalog.Language] {
         let needle = languageFilter
             .trimmingCharacters(in: .whitespaces)
             .lowercased()
-        if needle.isEmpty { return WhisperLanguageCatalog.all }
-        return WhisperLanguageCatalog.all.filter {
+        if needle.isEmpty { return LanguageCatalog.all }
+        return LanguageCatalog.all.filter {
             $0.displayName.lowercased().contains(needle)
                 || $0.code.contains(needle)
         }
@@ -190,7 +193,7 @@ struct SettingsView: View {
             set: { isOn in
                 var selected = Set(settings.allowedLanguages)
                 if isOn { selected.insert(code) } else { selected.remove(code) }
-                settings.allowedLanguages = WhisperLanguageCatalog.all
+                settings.allowedLanguages = LanguageCatalog.all
                     .map(\.code)
                     .filter { selected.contains($0) }
             })
@@ -201,7 +204,7 @@ struct SettingsView: View {
     private var allowedLanguagesSummary: String {
         let selected = Set(settings.allowedLanguages)
         if selected.isEmpty { return "any (auto-detect)" }
-        let names = WhisperLanguageCatalog.all
+        let names = LanguageCatalog.all
             .filter { selected.contains($0.code) }
             .map(\.displayName)
         return names.joined(separator: ", ")

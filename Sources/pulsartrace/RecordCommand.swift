@@ -3,17 +3,13 @@ import PulsarTraceCapture
 import PulsarTraceEngine
 
 /// `pulsartrace record [--output PATH] [--duration MIN] [--mic INDEX]
-/// [--no-system-audio] [--model MODEL] [--list-mics]` — headless recording
-/// (R47).
+/// [--no-system-audio] [--refine-model large-v3-turbo|large-v3-whisperkit]
+/// [--list-mics]` — headless recording (R47).
 ///
 /// `record` spawns `pulsartrace-capture` (the TCC-gated daemon, R4) and
 /// `pulsartrace-engine --live`, runs the live pass for `--duration` minutes
 /// (or until Ctrl-C), then refines the recording into `final.md`. It produces
 /// the same recording folder a menubar recording would, with no UI involved.
-///
-/// `--model` applies to *both* the live pass and the post-pass refine — a
-/// headless `record` should not surprise the user with a 3 GB `large-v3`
-/// download it never asked for; the default is `base` (project-docs/DECISIONS.md D24).
 enum RecordCommand {
 
     /// Parsed `record` options.
@@ -22,7 +18,7 @@ enum RecordCommand {
         let durationMinutes: Int?
         let micIndex: Int?
         let systemAudioEnabled: Bool
-        let modelName: String
+        let refineModelName: String
         let listMics: Bool
     }
 
@@ -52,13 +48,13 @@ enum RecordCommand {
         if !DoctorCommand.isAppleSilicon() {
             err("record: warning — Intel Mac; transcription will be slow.")
         }
-        guard ModelCatalog.model(named: options.modelName) != nil else {
-            err("record: unknown model '\(options.modelName)' "
-                + "(expected: base, large-v3)")
-            return 2
-        }
         if let minutes = options.durationMinutes, minutes <= 0 {
             err("record: --duration must be a positive number of minutes")
+            return 2
+        }
+        guard WhisperKitModelCatalog.model(named: options.refineModelName) != nil else {
+            err("record: unknown --refine-model '\(options.refineModelName)' (expected: "
+                + WhisperKitModelCatalog.all.map(\.name).joined(separator: ", ") + ")")
             return 2
         }
 
@@ -97,23 +93,14 @@ enum RecordCommand {
             outputFolder: outputFolder,
             paths: .standard,
             micDeviceID: micDeviceID,
-            systemAudioEnabled: options.systemAudioEnabled,
-            modelName: options.modelName)
+            systemAudioEnabled: options.systemAudioEnabled)
 
         // --- run the capture + live-engine session -------------------------
-        // `engineEnvironment` threads `PULSARTRACE_WHISPER_BINARY` to the
-        // engine subprocess so it can locate `pulsartrace-whisper` without
-        // relying on the resolver's `argv[0]` sibling lookup — the CLI knows
-        // the correct sibling already.
         let orchestrator = RecordOrchestrator(configuration: .init(
             captureBinary: binDir.appendingPathComponent("pulsartrace-capture"),
             captureArguments: plan.captureArguments,
             engineBinary: binDir.appendingPathComponent("pulsartrace-engine"),
-            engineArguments: plan.engineArguments,
-            engineEnvironment: [
-                "PULSARTRACE_WHISPER_BINARY":
-                    binDir.appendingPathComponent("pulsartrace-whisper").path,
-            ]))
+            engineArguments: plan.engineArguments))
 
         do {
             err("record: starting capture…")
@@ -151,7 +138,7 @@ enum RecordCommand {
         // --- refine into final.md ------------------------------------------
         err("record: refining…")
         let refineCode = await RefineCommand.run(
-            [outputFolder.path, "--model", options.modelName], events: events)
+            [outputFolder.path, "--model", options.refineModelName], events: events)
         if refineCode != 0 {
             err("record: refinement failed — `live.md` is preserved; "
                 + "re-run `pulsartrace refine \(outputFolder.path)`")
@@ -244,7 +231,7 @@ enum RecordCommand {
         var durationMinutes: Int?
         var micIndex: Int?
         var systemAudioEnabled = true
-        var modelName = "base"
+        var refineModelName = WhisperKitModelCatalog.defaultModel.name
         var listMics = false
 
         var i = 0
@@ -271,11 +258,11 @@ enum RecordCommand {
                     throw ArgError.notANumber(flag: "--mic", value: raw)
                 }
                 micIndex = index
-            case "--model":
-                modelName = try value("--model")
             case "--no-system-audio":
                 systemAudioEnabled = false
                 i += 1
+            case "--refine-model":
+                refineModelName = try value("--refine-model")
             case "--list-mics":
                 listMics = true
                 i += 1
@@ -288,7 +275,7 @@ enum RecordCommand {
             durationMinutes: durationMinutes,
             micIndex: micIndex,
             systemAudioEnabled: systemAudioEnabled,
-            modelName: modelName,
+            refineModelName: refineModelName,
             listMics: listMics)
     }
 
@@ -305,8 +292,8 @@ enum RecordCommand {
 
     static let usage =
         "usage: pulsartrace record [--output PATH] [--duration MIN] "
-        + "[--mic INDEX] [--no-system-audio] [--model base|large-v3] "
-        + "[--list-mics]"
+        + "[--mic INDEX] [--no-system-audio] "
+        + "[--refine-model large-v3-turbo|large-v3-whisperkit] [--list-mics]"
 
     private static func out(_ s: String) {
         FileHandle.standardOutput.write(Data((s + "\n").utf8))

@@ -9,6 +9,9 @@ actor DiarState {
         spans.append(contentsOf: newSpans)
     }
 
+    /// Diagnostic: total spans accumulated so far (the `live trace diar` log).
+    func count() -> Int { spans.count }
+
     /// The provisional key whose spans overlap `[start, end]` the most.
     func dominantKey(start: Duration, end: Duration) -> String? {
         let range = start.seconds...max(start.seconds, end.seconds)

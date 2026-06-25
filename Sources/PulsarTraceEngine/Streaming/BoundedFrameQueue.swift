@@ -1,7 +1,7 @@
 import Foundation
 
 /// A bounded hand-off buffer from the recording-safe drain (producer) to the
-/// whisper worker (consumer), one instance per stream.
+/// decode worker (consumer), one instance per stream.
 ///
 /// `enqueue` never blocks the producer: when the buffer is full it drops the
 /// **oldest** frame so the live transcript tracks *now* rather than replaying
@@ -39,6 +39,10 @@ public final class BoundedFrameQueue: @unchecked Sendable {
 
     /// Total frames dropped over the queue's lifetime.
     public var droppedFrameCount: Int { lock.withLock { _droppedFrameCount } }
+
+    /// Diagnostic: current buffered (un-dequeued) frame count — the worker
+    /// backlog, surfaced in the `live trace diar` log.
+    public var depth: Int { lock.withLock { buffer.count } }
 
     /// Non-suspending dequeue for a worker that parks on an external wakeup
     /// instead of `dequeue()`. Returns nil when momentarily empty.

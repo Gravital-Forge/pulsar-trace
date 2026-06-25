@@ -20,7 +20,6 @@ struct DiarizationMergeTests {
     ) -> DiarizationResult {
         DiarizationResult(
             model: "pyannote/speaker-diarization-community-1",
-            modelVersion: "4.0.4",
             audioDuration: .seconds(60),
             speakers: speakers,
             spans: spans.map {
@@ -29,7 +28,6 @@ struct DiarizationMergeTests {
                     start: .milliseconds(Int($0.1 * 1000)),
                     end: .milliseconds(Int($0.2 * 1000)))
             },
-            exclusiveSpans: [],
             embeddings: []
         )
     }
@@ -115,7 +113,7 @@ struct DiarizationMergeTests {
 
     @Test("Merge is deterministic: same inputs → identical labels")
     func mergeIsDeterministic() throws {
-        let diar = try DiarizationDecoder.decode(
+        let diar = try DiarizationFixtureDecoder.decode(
             DiarizationFixtureLocator.data("two-speakers-alternating.json"))
         let segments = [
             segment(1, 5, "a"), segment(10, 12, "b"), segment(14, 20, "c"),
@@ -127,7 +125,7 @@ struct DiarizationMergeTests {
 
     @Test("Diarized document carries real Speaker_N labels, not the placeholder")
     func diarizedDocumentReplacesPlaceholder() throws {
-        let diar = try DiarizationDecoder.decode(
+        let diar = try DiarizationFixtureDecoder.decode(
             DiarizationFixtureLocator.data("two-speakers-alternating.json"))
         // Spans: SPEAKER_00 ~0–12.5, SPEAKER_01 ~13–24.
         let segments = [

@@ -84,8 +84,4 @@ public enum LogSubsystem {
     public static let ipc = "ipc"
     public static let events = "events"
     public static let menubar = "menubar"
-    /// `pulsartrace-whisper` subprocess (spec §5). One per recording or
-    /// per refinement; logs to stderr so the parent can ingest its line
-    /// stream alongside its own logger.
-    public static let whisperSubprocess = "whisper"
 }

@@ -35,7 +35,9 @@ struct CaptureMain {
             ?? RecordingFolder.recordingId(forName: "capture-" + timestampStem())
         let systemAudioEnabled = !args.contains("--no-system-audio")
         let micDeviceID = value(of: "--mic-device", in: args)
-        let modelLive = value(of: "--model", in: args) ?? "base"
+        // Default must match ParakeetEngine.modelName — the only live model
+        // (D39). Capture can't import the engine target, so it's a literal.
+        let modelLive = value(of: "--model", in: args) ?? "parakeet-v3"
 
         let paths = AppPaths.standard
         let systemSocket = value(of: "--system-socket", in: args)

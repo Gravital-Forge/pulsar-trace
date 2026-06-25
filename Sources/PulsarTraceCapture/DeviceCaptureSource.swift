@@ -29,7 +29,8 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         public let systemSocketPath: URL
         /// Where the microphone socket is bound.
         public let micSocketPath: URL
-        /// Whisper model name the live pass will use (recorded in the event).
+        /// Live model name (recorded in `recording_started.model_live`; fixed
+        /// to parakeet-v3).
         public let modelLive: String
         /// Events-log writer, or `nil` to skip event emission.
         public let events: EventWriter?

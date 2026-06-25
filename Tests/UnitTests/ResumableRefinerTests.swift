@@ -33,14 +33,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(1),
                     speakers: ["SPEAKER_00"],
                     spans: [SpeakerSpan(
-                        speaker: "SPEAKER_00",
-                        start: .seconds(0),
-                        end: .seconds(1))],
-                    exclusiveSpans: [SpeakerSpan(
                         speaker: "SPEAKER_00",
                         start: .seconds(0),
                         end: .seconds(1))],
@@ -114,11 +109,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(3),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
@@ -188,11 +181,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(2),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: gate,
@@ -266,10 +257,10 @@ struct ResumableRefinerTests {
     /// `handleHostError` SIGKILLed + respawned the subprocess (the
     /// respawn was confirmed healthy by the next "subprocess ready" log
     /// line), but the wedged region itself surfaced as
-    /// `WhisperTranscribeError.transcriptionFailed(-1)` and killed the
+    /// `TranscriptionError.transcriptionFailed(-1)` and killed the
     /// whole job. With per-region retry, the second attempt runs on the
     /// freshly respawned subprocess and succeeds.
-    @Test("a region transcribe that throws WhisperTranscribeError once recovers on the next attempt")
+    @Test("a region transcribe that throws TranscriptionError once recovers on the next attempt")
     func transientWhisperFailureIsRetried() async throws {
         let folder = tempDir()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -280,7 +271,7 @@ struct ResumableRefinerTests {
             transcribe: { _, region, _ in
                 let n = await attempts.increment()
                 if n == 1 {
-                    throw WhisperTranscribeError.transcriptionFailed(-1)
+                    throw TranscriptionError.transcriptionFailed(-1)
                 }
                 return TranscriptionResult(
                     segments: [TranscriptSegment(
@@ -292,13 +283,11 @@ struct ResumableRefinerTests {
             },
             diarize: { _ in
                 DiarizationResult(
-                    model: "stub", modelVersion: "stub",
+                    model: "stub",
                     audioDuration: .seconds(1),
                     speakers: ["SPEAKER_00"],
                     spans: [SpeakerSpan(speaker: "SPEAKER_00",
                                         start: .seconds(0), end: .seconds(1))],
-                    exclusiveSpans: [SpeakerSpan(speaker: "SPEAKER_00",
-                                                 start: .seconds(0), end: .seconds(1))],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
@@ -327,7 +316,7 @@ struct ResumableRefinerTests {
         let refiner = ResumableRefiner(
             transcribe: { _, _, _ in
                 _ = await attempts.increment()
-                throw WhisperTranscribeError.transcriptionFailed(-1)
+                throw TranscriptionError.transcriptionFailed(-1)
             },
             detectRegions: { _ in
                 [SpeechRegion(start: .seconds(0), end: .seconds(1))]
@@ -343,7 +332,7 @@ struct ResumableRefinerTests {
             modelName: "stub", modelSHA256: "stub",
             trigger: .manual, enqueuedAt: Date(), state: .queued)
 
-        await #expect(throws: WhisperTranscribeError.self) {
+        await #expect(throws: TranscriptionError.self) {
             try await refiner.run(job: job)
         }
         // Retried at least once; bounded so we don't loop forever.
@@ -432,11 +421,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(1),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
@@ -544,14 +531,9 @@ struct ResumableRefinerTests {
                 }
                 return DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(1),
                     speakers: ["speaker_0"],
                     spans: [SpeakerSpan(
-                        speaker: "speaker_0",
-                        start: .seconds(0),
-                        end: .seconds(1))],
-                    exclusiveSpans: [SpeakerSpan(
                         speaker: "speaker_0",
                         start: .seconds(0),
                         end: .seconds(1))],
@@ -599,11 +581,9 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(1),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
@@ -619,13 +599,13 @@ struct ResumableRefinerTests {
             atPath: folder.appendingPathComponent("metadata.json").path))
     }
 
-    /// The `whisperOptions` passed to init must reach every region's
+    /// The `options` passed to init must reach every region's
     /// `transcribe` closure unchanged. This pins the language allow-list
     /// plumbing: previously `iterateRegions` hardcoded `.init()`, so
     /// refinement decoded each region with unrestricted auto-detect even
     /// when the user had restricted the language set in Settings.
-    @Test("whisperOptions threaded through to every transcribe call")
-    func whisperOptionsThreadedThrough() async throws {
+    @Test("options threaded through to every transcribe call")
+    func optionsThreadedThrough() async throws {
         let folder = tempDir()
         defer { try? FileManager.default.removeItem(at: folder) }
         try FixtureRecording.minimal(at: folder)
@@ -649,16 +629,14 @@ struct ResumableRefinerTests {
             diarize: { _ in
                 DiarizationResult(
                     model: "stub",
-                    modelVersion: "stub",
                     audioDuration: .seconds(2),
                     speakers: [],
                     spans: [],
-                    exclusiveSpans: [],
                     embeddings: [])
             },
             pauseGate: PauseGate(initiallyOpen: true),
             events: nil,
-            whisperOptions: WhisperOptions(allowedLanguages: ["pl", "en"]))
+            options: TranscriptionOptions(allowedLanguages: ["pl", "en"]))
 
         let job = RefinementJob(
             id: "job_opts", recordingId: "rec_opts", folderURL: folder,

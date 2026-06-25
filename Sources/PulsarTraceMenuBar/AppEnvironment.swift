@@ -88,13 +88,6 @@ public final class AppEnvironment {
         let queueHandle = RefinementQueueHandle(settings: settings)
         self.queueHandle = queueHandle
 
-        // Phase 6 / Layer B: probe the binary-level `whisper.lock` between
-        // pauseRefinement and the orchestrator's start. `pauseRefinement`
-        // terminates the refinement-whisper subprocess (Layer A); this
-        // probe is the defence-in-depth that catches the rare slow-teardown
-        // window before the engine subprocess hits the flock.
-        let lockProbePath = paths.applicationSupport
-            .appendingPathComponent("whisper.lock", isDirectory: false)
         self.recording = RecordingViewModel(
             settings: settings, paths: paths, events: events,
             enqueueAutoRefine: { url, recordingId in
@@ -104,12 +97,7 @@ public final class AppEnvironment {
                     folderURL: url, recordingId: recordingId)
             },
             pauseRefinement: { await queueHandle.pauseForRecording() },
-            resumeRefinement: { await queueHandle.resumeAfterRecording() },
-            waitForWhisperLockFree: {
-                try await WhisperLockProbe.waitUntilFree(
-                    lockPath: lockProbePath,
-                    timeout: .seconds(5))
-            })
+            resumeRefinement: { await queueHandle.resumeAfterRecording() })
         let scanner = RecordingsScanner(settings: settings)
         let liveWatcher = LiveTranscriptWatcher()
         let navigation = AppNavigation()
@@ -155,27 +143,17 @@ public final class AppEnvironment {
         // `LoggingTests.bootstrapIsIdempotent`.
         _ = await LogSystem.bootstrap(paths: paths)
 
-        // Resolve the whisper binary once, from the mac-app's known
-        // `.build/debug/...` layout (via `#filePath`). The same resolver is
-        // threaded into the engine subprocess as `PULSARTRACE_WHISPER_BINARY`
-        // by `defaultOrchestratorFactory`, so refinement and live decode
-        // share a single source of truth for the binary path — and the
-        // resolver's `argv[0]`-sibling fallback never gets a chance to
-        // silently mis-locate it in the mac-app process.
-        let whisperBinaryURL =
-            RecordingViewModel.defaultBinaryURLResolver("pulsartrace-whisper")
         // Mirror the live path's language allow-list into refinement
         // (R-streaming-lang). Without this, refinement decoded each region
         // with unrestricted auto-detect, so a quiet/ambiguous stretch in a
         // Polish meeting could drift to Spanish or Russian even when the
         // user had restricted the language set in Settings.
-        let refineWhisperOptions = WhisperOptions(
+        let refineOptions = TranscriptionOptions(
             allowedLanguages: settings.allowedLanguages)
         let q = await RefinementJobQueue.makeStandard(
             events: events,
-            whisperBinaryURL: whisperBinaryURL,
             paths: paths,
-            whisperOptions: refineWhisperOptions)
+            options: refineOptions)
         await queueVM.setQueue(q)
         queueVM.onJobsTerminated = { [weak self] jobs in
             self?.detailModel.noteJobsTerminated(jobs)

@@ -26,15 +26,15 @@ public struct CommittedUtterance: Sendable, Equatable {
 /// realtime mode) and emits **committed** utterances within ~one `stepInterval`
 /// of real time, plus per-window decode latency.
 ///
-/// ## Anchored-window whisper + LocalAgreement-2
+/// ## Anchored-window decode + LocalAgreement-2
 ///
-/// whisper has no true streaming mode; it transcribes a buffer. The streaming
-/// approach here (the `whisper_streaming` design):
+/// The transcriber has no true streaming mode; it decodes a buffer. The
+/// streaming approach here (the `whisper_streaming` design):
 ///
 ///  1. **Accumulate** incoming 20 ms frames into a rolling sample buffer.
 ///  2. The decode window is **anchored at the last committed audio position**
 ///     — *not* a free-sliding window. Every `stepInterval` of new audio, run
-///     whisper on `[committedAudioEnd, committedAudioEnd + windowDuration]`.
+///     the transcriber on `[committedAudioEnd, committedAudioEnd + windowDuration]`.
 ///     Because consecutive windows share the same start, two consecutive
 ///     hypotheses share a *prefix*, which is exactly what LocalAgreement-2
 ///     compares. (A freely-sliding window would share only a middle and never
@@ -54,46 +54,46 @@ public struct CommittedUtterance: Sendable, Equatable {
 ///
 /// ## Backpressure
 ///
-/// whisper on a window must finish before the next window is due, or the
+/// The decode of a window must finish before the next window is due, or the
 /// sample buffer grows unbounded. The transcriber tracks how far decoding lags
 /// real audio; if a window decode overruns it **skips** windows to catch up
 /// (coarser commits, but bounded memory and bounded lag) and logs the overrun.
 /// It never blocks the source or crashes.
 ///
-/// Not `Sendable` by construction — it owns a non-`Sendable` `WhisperTranscriber`.
-/// Drive it from one task.
+/// Not `Sendable` by construction — it owns a non-`Sendable`
+/// `WindowTranscribing` conformer. Drive it from one task.
 public final class StreamingTranscriber {
 
     /// Tunables for the sliding-window streaming loop.
     public struct Configuration: Sendable {
-        /// Length of the audio window each whisper run sees. Long enough for
-        /// whisper to have useful context, short enough to decode fast.
+        /// Length of the audio window each decode sees. Long enough for the
+        /// transcriber to have useful context, short enough to decode fast.
         public var windowDuration: Duration
         /// How much *new* audio accumulates before the next window is decoded.
         /// `windowDuration − stepInterval` is the overlap that catches
         /// chunk-boundary words.
         public var stepInterval: Duration
         /// Per-window VAD gate: a window whose peak |sample| is below this is
-        /// treated as silence and skipped (no whisper run, no hallucination).
+        /// treated as silence and skipped (no decode, no hallucination).
         public var silencePeakThreshold: Float
         /// Silence gap between two committed tokens above which they are split
         /// into separate utterances.
         public var utteranceGap: Duration
-        /// whisper decode options for each window.
-        public var whisperOptions: WhisperOptions
+        /// Decode options for each window.
+        public var options: TranscriptionOptions
 
         public init(
             windowDuration: Duration = .seconds(10),
             stepInterval: Duration = .seconds(4),
             silencePeakThreshold: Float = 0.01,
             utteranceGap: Duration = .milliseconds(800),
-            whisperOptions: WhisperOptions = .init()
+            options: TranscriptionOptions = .init()
         ) {
             self.windowDuration = windowDuration
             self.stepInterval = stepInterval
             self.silencePeakThreshold = silencePeakThreshold
             self.utteranceGap = utteranceGap
-            self.whisperOptions = whisperOptions
+            self.options = options
         }
     }
 
@@ -119,12 +119,21 @@ public final class StreamingTranscriber {
     /// Committer tokens already grouped into delivered utterances, so a flush
     /// or re-group never re-emits one.
     private var deliveredTokenCount = 0
-    /// The language whisper detected on the most recent decoded window — `nil`
-    /// until the first non-silent window decodes. Surfaced so the live pass's
-    /// `Output.language` reflects what whisper actually heard, not a hardcoded
-    /// guess. A window whose detected language is `"unknown"` does not replace
-    /// a previously-detected real language.
+    /// The language the decoder detected on the most recent decoded window —
+    /// `nil` until the first non-silent window decodes. Surfaced so the live
+    /// pass's `Output.language` reflects what the decoder actually heard, not a
+    /// hardcoded guess. A window whose detected language is `"unknown"` does not
+    /// replace a previously-detected real language.
     private var lastDetectedLanguage: String?
+
+    /// Diagnostic ("system"/"mic"): names this transcriber's stream in the
+    /// per-pass `live trace transcriber` log line.
+    private let streamLabel: String
+    /// Diagnostic: wall-clock ms of the most recent window decode (0 when the
+    /// window was VAD-skipped or empty).
+    private var lastDecodeMS = 0.0
+    /// Diagnostic: whether the most recent window was skipped by the VAD gate.
+    private var lastVADSkipped = false
 
     /// The language of the most recently decoded window (ISO-639-1, e.g.
     /// `en`), or `nil` if no window has been decoded yet.
@@ -133,11 +142,13 @@ public final class StreamingTranscriber {
     public init(
         transcriber: any WindowTranscribing,
         configuration: Configuration = .init(),
-        logger: Logger = Logger(label: LogSubsystem.engine)
+        logger: Logger = Logger(label: LogSubsystem.engine),
+        streamLabel: String = "?"
     ) {
         self.transcriber = transcriber
         self.configuration = configuration
         self.logger = logger
+        self.streamLabel = streamLabel
     }
 
     private var stepSamples: Int {
@@ -148,35 +159,29 @@ public final class StreamingTranscriber {
     }
 
     /// Ingest one 20 ms frame. When enough new audio has accumulated for the
-    /// next window, runs whisper and returns any utterances newly committed by
-    /// LocalAgreement-2. Most calls return `[]`.
+    /// next window, runs the transcriber and returns any utterances newly
+    /// committed by LocalAgreement-2. Most calls return `[]`.
     ///
     /// - Parameter realTimeElapsed: wall-clock elapsed since the stream began,
     ///   used only for the backpressure check / lag logging. Pass `nil` to
     ///   disable backpressure handling (offline/fast callers).
-    /// - Parameter abort: a watchdog cancellation token threaded into each
-    ///   window decode so a hung/runaway window can be interrupted (Phase 2).
-    ///   `nil` disables it.
     public func ingest(
         frame: AudioFrame,
-        realTimeElapsed: Duration? = nil,
-        abort: AbortToken? = nil
+        realTimeElapsed: Duration? = nil
     ) -> [CommittedUtterance] {
         samples.append(contentsOf: frame.samples)
-        return drainWindows(realTimeElapsed: realTimeElapsed, abort: abort)
+        return drainWindows(realTimeElapsed: realTimeElapsed)
     }
 
     /// End-of-stream: decode any remaining tail audio and flush the committer
     /// (the final hypothesis has no successor to agree with, so its tail is
     /// committed unconditionally — see `LiveAgreementCommitter.flush`).
     public func finish() -> [CommittedUtterance] {
-        // The end-of-stream flush is bounded by the worker-drain teardown, not
-        // the per-decode watchdog, so it passes no abort token.
-        var out = drainWindows(realTimeElapsed: nil, abort: nil)
+        var out = drainWindows(realTimeElapsed: nil)
         // One last anchored window covering everything from the commit point
         // to end-of-stream, so no tail audio is missed.
         if recordingSampleCount > windowAnchorSample {
-            runWindow(abort: nil)
+            runWindow()
         }
         _ = committer.flush()
         out.append(contentsOf: regroupNewlyCommitted())
@@ -196,8 +201,7 @@ public final class StreamingTranscriber {
 
     /// Decode every window that is now "due" given the accumulated audio.
     private func drainWindows(
-        realTimeElapsed: Duration?,
-        abort: AbortToken?
+        realTimeElapsed: Duration?
     ) -> [CommittedUtterance] {
         // A window is due once `stepSamples` of new audio have arrived since
         // the last decode AND there is at least one step of audio past the
@@ -206,8 +210,8 @@ public final class StreamingTranscriber {
             && recordingSampleCount - windowAnchorSample >= stepSamples {
 
             // Backpressure: if real time has run far past
-            // the anchor — whisper cannot keep up — skip the anchor forward so
-            // the buffer and the lag stay bounded. The skipped audio is lost
+            // the anchor — the decoder cannot keep up — skip the anchor forward
+            // so the buffer and the lag stay bounded. The skipped audio is lost
             // to the live pass (coarser commits); the post-pass recovers it.
             //
             // Cap the backpressure target at `recordingSampleCount −
@@ -218,12 +222,12 @@ public final class StreamingTranscriber {
             // `recordingSampleCount`, which empties the sample buffer;
             // `runWindow` then hits its `guard hi > lo` and returns
             // without calling `transcribeWindow`. The streamer keeps
-            // logging backpressure but never asks whisper to decode
-            // anything, so a transient subprocess failure permanently
+            // logging backpressure but never asks the decoder to decode
+            // anything, so a transient decode failure permanently
             // silences live (2026-05-28 incident). With the cap the
             // next `runWindow` always has the most recent `windowSamples`
-            // of audio to decode, so the next attempt re-enters whisper
-            // and can recover the moment the subprocess does.
+            // of audio to decode, so the next attempt re-enters the decoder
+            // and can recover the moment it catches up.
             if let realTimeElapsed {
                 let realSample = durationToSamples(realTimeElapsed)
                 let lagSamples = realSample - windowAnchorSample
@@ -237,16 +241,32 @@ public final class StreamingTranscriber {
                 }
             }
 
-            runWindow(abort: abort)
+            runWindow()
             lastDecodeEndSample = recordingSampleCount
+
+            // Per-pass diagnostic trace (numbers only — Hard Invariant #7).
+            let _sr = AudioFormat.sampleRate
+            let _realSample = realTimeElapsed.map { durationToSamples($0) }
+                ?? recordingSampleCount
+            let _lag = Double(_realSample - windowAnchorSample) / Double(_sr)
+            logger.notice("""
+                live trace transcriber[\(streamLabel)]: \
+                anchor=\(windowAnchorSample / _sr)s total=\(recordingSampleCount / _sr)s \
+                lag=\(String(format: "%.1f", _lag))s buf=\(samples.count / _sr)s \
+                decode=\(Int(lastDecodeMS))ms vad=\(lastVADSkipped) \
+                committedTokens=\(committer.committed.count)
+                """)
         }
         return regroupNewlyCommitted()
     }
 
-    /// Run whisper on the anchored window `[windowAnchorSample, +windowDuration]`
-    /// (clamped to available audio), feed the hypothesis to the committer, and
-    /// advance the anchor + trim the buffer to whatever was committed.
-    private func runWindow(abort: AbortToken?) {
+    /// Run the transcriber on the anchored window
+    /// `[windowAnchorSample, +windowDuration]` (clamped to available audio),
+    /// feed the hypothesis to the committer, and advance the anchor + trim the
+    /// buffer to whatever was committed.
+    private func runWindow() {
+        lastDecodeMS = 0
+        lastVADSkipped = false
         let loAbs = windowAnchorSample
         let hiAbs = min(recordingSampleCount, loAbs + windowSamples)
         let lo = loAbs - bufferBaseSample
@@ -254,30 +274,34 @@ public final class StreamingTranscriber {
         guard hi > lo, lo >= 0, hi <= samples.count else { return }
         let window = Array(samples[lo..<hi])
 
-        // VAD gate: skip an essentially-silent window. No whisper run means no
+        // VAD gate: skip an essentially-silent window. No decode means no
         // silence hallucination, and the committer's previous tail is left
         // intact so a real word straddling the silence still commits later.
         let peak = window.reduce(Float(0)) { Swift.max($0, Swift.abs($1)) }
-        guard peak >= configuration.silencePeakThreshold else { return }
+        guard peak >= configuration.silencePeakThreshold else {
+            lastVADSkipped = true
+            return
+        }
 
         let windowStart = samplesToDuration(loAbs)
         let result: TranscriptionResult
+        let _decodeT0 = ContinuousClock.now
         do {
             result = try transcriber.transcribeWindow(
                 window,
                 windowStart: windowStart,
-                options: configuration.whisperOptions,
-                abort: abort)
+                options: configuration.options)
         } catch {
             // Interpolate the underlying error so log-greppers see the
-            // real cause (model_load_failed, subprocess wedge, etc.).
+            // real cause (model load failure, decode deadline, etc.).
             // Before 2026-05-27 this catch dropped the payload and any
             // diagnostic chain that ran into it dead-ended at "skipping
             // window" with no further context.
             logger.error("streaming window decode failed; skipping window: \(error)")
             return
         }
-        // Record what whisper detected so the live pass's Output.language is
+        lastDecodeMS = (ContinuousClock.now - _decodeT0).seconds * 1000
+        // Record what the decoder detected so the live pass's Output.language is
         // accurate. `"unknown"` never overwrites a real language already seen.
         if result.language != "unknown" {
             lastDetectedLanguage = result.language

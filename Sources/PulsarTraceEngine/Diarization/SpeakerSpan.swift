@@ -32,16 +32,17 @@ public struct SpeakerSpan: Sendable, Equatable {
     }
 }
 
-/// A speaker embedding from pyannote's pipeline (R29).
+/// A 256-d speaker embedding from the diarization backend's embedding model
+/// (R29).
 ///
-/// 256-dimensional in pyannote community-1. The embedding is in pyannote's own
-/// vector space so it is directly comparable with the live pass and the
-/// persistent speaker library — provided the `modelRevision` matches (the
-/// speaker library refuses cross-checkpoint matches; Open Question #3).
+/// The embedding is in the backend's own vector space so it is directly
+/// comparable with the live pass and the persistent speaker library — but only
+/// within one `modelRevision` (the speaker library refuses cross-checkpoint
+/// matches; Open Question #3).
 public struct SpeakerEmbedding: Sendable, Equatable {
     /// Raw pyannote speaker label this embedding belongs to.
     public let speaker: String
-    /// The embedding vector (256 floats for community-1).
+    /// The embedding vector (256 floats).
     public let vector: [Float]
 
     public init(speaker: String, vector: [Float]) {
@@ -50,49 +51,40 @@ public struct SpeakerEmbedding: Sendable, Equatable {
     }
 }
 
-/// The full result of an offline diarization run — the Swift decoding of the
-/// JSON the Python `pulsartrace_ai.diarize` module emits.
+/// The full result of an offline diarization run — produced in-process by
+/// `DiarizationResultMapper` from FluidAudio's CoreML/ANE pipeline (D40).
 public struct DiarizationResult: Sendable, Equatable {
-    /// pyannote model identifier (`pyannote/speaker-diarization-community-1`).
+    /// Diarization model identifier
+    /// (`FluidInference/speaker-diarization-coreml`).
     public let model: String
-    /// Hugging Face hub commit SHA of the model *checkpoint*. This is the
-    /// authoritative model identity — the speaker library refuses to
-    /// match embeddings across a different `modelRevision` (Open Question #3).
-    /// Empty when an older Python build produced the JSON.
+    /// Content digest (DirectoryDigest SHA-256) of the model directory. This
+    /// is the authoritative model identity — the speaker library refuses to
+    /// match embeddings across a different `modelRevision` (Open Question #3
+    /// / D40). Empty only in frozen test fixtures predating the digest.
     public let modelRevision: String
-    /// pyannote.audio *library* version string. A secondary identity field —
-    /// the library version is not a reliable proxy for checkpoint identity,
-    /// so `modelRevision` is preferred for cross-match decisions.
-    public let modelVersion: String
     /// Duration of the diarized WAV.
     public let audioDuration: Duration
-    /// Raw pyannote speaker labels, sorted (`SPEAKER_00`, `SPEAKER_01`, …).
+    /// Raw per-run speaker labels, natural-sorted (`S1`, `S2`, …).
     public let speakers: [String]
     /// Speaker turns, overlap-preserving: when two speakers talk at once both
     /// attributions appear with overlapping time ranges.
     public let spans: [SpeakerSpan]
-    /// Overlap-resolved turns — never two speakers active at the same instant.
-    public let exclusiveSpans: [SpeakerSpan]
-    /// Per-speaker embeddings (R29), keyed by raw pyannote label.
+    /// Per-speaker embeddings (R29), keyed by raw speaker label.
     public let embeddings: [SpeakerEmbedding]
 
     public init(
         model: String,
         modelRevision: String = "",
-        modelVersion: String,
         audioDuration: Duration,
         speakers: [String],
         spans: [SpeakerSpan],
-        exclusiveSpans: [SpeakerSpan],
         embeddings: [SpeakerEmbedding]
     ) {
         self.model = model
         self.modelRevision = modelRevision
-        self.modelVersion = modelVersion
         self.audioDuration = audioDuration
         self.speakers = speakers
         self.spans = spans
-        self.exclusiveSpans = exclusiveSpans
         self.embeddings = embeddings
     }
 

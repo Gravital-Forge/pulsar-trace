@@ -75,7 +75,7 @@ struct StreamingTranscriberUnitTests {
     @Test("runWindow catch logs the underlying error message, not just 'skipping window'")
     func runWindowLogsUnderlyingError() {
         let throwing = ThrowingWindowTranscriber(
-            error: WhisperTranscribeError.modelLoadFailed(
+            error: TranscriptionError.modelLoadFailed(
                 "spawn failed: subprocess exited 75 before handshake"))
         let capture = CapturingLogHandler()
         let logger = Logger(label: "test") { _ in capture }
@@ -123,7 +123,7 @@ struct StreamingTranscriberUnitTests {
     @Test("backpressure clamp does not permanently silence the streamer when realTime runs past available audio")
     func backpressureClampDoesNotSilenceStreamer() {
         let tracker = TrackingWindowTranscriber(
-            alwaysThrowing: WhisperTranscribeError.modelLoadFailed("simulated wedge"))
+            alwaysThrowing: TranscriptionError.modelLoadFailed("simulated wedge"))
         let runner = StreamingTranscriber(
             transcriber: tracker,
             configuration: .init(
@@ -183,8 +183,7 @@ private final class ThrowingWindowTranscriber: WindowTranscribing, @unchecked Se
     func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: WhisperOptions,
-        abort: AbortToken?
+        options: TranscriptionOptions
     ) throws -> TranscriptionResult {
         throw error
     }
@@ -205,8 +204,7 @@ private final class TrackingWindowTranscriber: WindowTranscribing, @unchecked Se
     func transcribeWindow(
         _ samples: [Float],
         windowStart: Duration,
-        options: WhisperOptions,
-        abort: AbortToken?
+        options: TranscriptionOptions
     ) throws -> TranscriptionResult {
         lock.withLock { _callCount += 1 }
         if let alwaysThrowing { throw alwaysThrowing }

@@ -10,8 +10,8 @@ import Darwin
 
 /// `pulsartrace doctor [--capture-test]` — environment self-check (R50, R68).
 ///
-/// `doctor` gathers facts about the host (macOS version, CPU, model cache,
-/// Python runtime, speaker library, TCC permissions, writable directories) and
+/// `doctor` gathers facts about the host (macOS version, CPU, diarization
+/// model cache, speaker library, TCC permissions, writable directories) and
 /// runs each through `EnvironmentDoctor`'s pure decision logic, then prints an
 /// actionable report. `--capture-test` additionally runs a sine sweep through
 /// the real capture path (R68).
@@ -51,19 +51,16 @@ enum DoctorCommand {
         checks.append(EnvironmentDoctor.architectureCheck(
             isAppleSilicon: isAppleSilicon()))
 
-        // --- whisper model cache -------------------------------------------
-        let modelDir = ModelStore.defaultCacheDirectory()
-        for model in ModelCatalog.all {
-            let url = modelDir.appendingPathComponent(model.fileName)
-            checks.append(EnvironmentDoctor.modelCheck(
-                name: model.name,
-                present: modelFilePresent(url, expectedSize: model.sizeBytes)))
-        }
-
-        // --- Python diarization runtime ------------------------------------
-        checks.append(EnvironmentDoctor.pythonRuntimeCheck(
-            interpreterPresent: FileManager.default.fileExists(
-                atPath: venvPythonURL().path)))
+        // --- diarization models (ANE, D40) ----------------------------------
+        let diarizerModelDir = AppPaths.standard.modelsCacheDirectory
+            .appendingPathComponent(DiarizerEngine.repoFolderName, isDirectory: true)
+        let diarizerCached = ["Segmentation.mlmodelc", "FBank.mlmodelc",
+                              "Embedding.mlmodelc", "PldaRho.mlmodelc"]
+            .allSatisfy {
+                FileManager.default.fileExists(
+                    atPath: diarizerModelDir.appendingPathComponent($0).path)
+            }
+        checks.append(EnvironmentDoctor.diarizerModelsCheck(cached: diarizerCached))
 
         // --- speaker library ------------------------------------------------
         let dbURL = AppPaths.standard.speakersDatabaseURL
@@ -110,15 +107,6 @@ enum DoctorCommand {
         return rc == 0 && value == 1
     }
 
-    /// A cheap "model present" probe: the file exists and is the expected size.
-    /// Full SHA-256 verification happens at load time (R54d) — too slow for a
-    /// diagnostic over a multi-GB model.
-    private static func modelFilePresent(_ url: URL, expectedSize: Int) -> Bool {
-        guard let attrs = try? FileManager.default.attributesOfItem(
-            atPath: url.path), let size = attrs[.size] as? Int else { return false }
-        return size == expectedSize
-    }
-
     /// True when `directory` can be created and written. Probes by creating the
     /// directory and writing (then removing) a hidden marker file.
     private static func isWritable(_ directory: URL) -> Bool {
@@ -131,26 +119,6 @@ enum DoctorCommand {
         guard (try? Data().write(to: probe)) != nil else { return false }
         try? fm.removeItem(at: probe)
         return true
-    }
-
-    /// Resolve the Python diarization interpreter, mirroring
-    /// `OfflineRefiner.makeDiarizer` (`PULSARTRACE_VENV_PYTHON`, else the
-    /// repo-tree venv — project-docs/DECISIONS.md D3).
-    static func venvPythonURL() -> URL {
-        let env = ProcessInfo.processInfo.environment
-        if let p = env["PULSARTRACE_VENV_PYTHON"], !p.isEmpty {
-            return URL(fileURLWithPath: p)
-        }
-        let repoRoot: URL
-        if let root = env["PULSARTRACE_REPO_ROOT"], !root.isEmpty {
-            repoRoot = URL(fileURLWithPath: root)
-        } else {
-            repoRoot = URL(fileURLWithPath: #filePath)   // …/Sources/pulsartrace/DoctorCommand.swift
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-        }
-        return repoRoot.appendingPathComponent("python/pulsartrace-ai/.venv/bin/python")
     }
 
     private static func out(_ s: String) {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Carries the whisper worker's end-of-stream detected language back to the run
+/// Carries the decode worker's end-of-stream detected language back to the run
 /// teardown, and a liveness timestamp the teardown uses to bound the wait.
 ///
 /// The worker calls `noteProgress()` after every decoded window and
@@ -9,7 +9,7 @@ import Foundation
 /// uncancellable, so awaiting it could hang the run forever). The bound is on
 /// *inactivity*, not total time: the run stops waiting once the worker has made
 /// no progress for the drain timeout. So a slow-but-progressing decode (e.g. a
-/// fast-fed fixture, or CPU whisper catching up on a backlog) runs to
+/// fast-fed fixture, or a decoder catching up on a backlog) runs to
 /// completion, while a genuinely wedged decode — no progress at all — releases
 /// the run after the timeout. The recording is already safe on disk regardless.
 actor WorkerLanguageResult {

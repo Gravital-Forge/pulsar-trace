@@ -5,10 +5,6 @@
 *.xcodeproj
 .swiftpm/
 
-# Vendored whisper.cpp: cloned + built by scripts/build-whisper.sh,
-# pinned by commit in project-docs/DECISIONS.md (D7). Reproducible, not committed.
-vendor/
-
 # Developer audio preflight artifacts (scripts/audio-loopback-check.sh)
 .preflight/
 

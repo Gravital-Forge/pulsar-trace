@@ -13,7 +13,8 @@ import Foundation
 ///    the audio stream (capture daemon sleep/wake, R7) reaches `live.md` as a
 ///    gap annotation.
 ///
-/// `.serialized`: whisper.cpp is single-context per process (D8).
+/// `.serialized`: one resident ANE model serves the whole process
+/// (`ParakeetTestEngine`).
 @Suite("Capture IPC integration", .serialized)
 struct IPCTwoDaemonTests {
 
@@ -41,7 +42,6 @@ struct IPCTwoDaemonTests {
 
     @Test("the live pass consumes a system socket and a paired mic socket")
     func twoSocketLivePass() async throws {
-        let modelURL = try await WhisperTestGate.model(ModelCatalog.base)
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -62,21 +62,17 @@ struct IPCTwoDaemonTests {
         try await systemSource.start()
         try await micSource.start()
 
-        let output = try await WhisperTestGate.run {
-            let systemTranscriber = try WhisperTestTranscriber.make(modelURL: modelURL)
-            let micTranscriber = try WhisperTestTranscriber.make(modelURL: modelURL)
-            return try await StreamingPipeline().run(
-                configuration: .init(
-                    recordingFolder: folder,
-                    recordingStart: fixedStart,
-                    recordingId: "rec_ipc-two-socket",
-                    liveDiarizerConfig: nil),
-                systemTranscriber: systemTranscriber,
-                micTranscriber: micTranscriber,
-                systemSource: systemSource,
-                micSource: micSource,
-                library: nil)
-        }
+        let engine = try await ParakeetTestEngine.shared()
+        let output = try await StreamingPipeline().run(
+            configuration: .init(
+                recordingFolder: folder,
+                recordingStart: fixedStart,
+                recordingId: "rec_ipc-two-socket"),
+            systemTranscriber: ParakeetWindowTranscriber(engine: engine),
+            micTranscriber: ParakeetWindowTranscriber(engine: engine),
+            systemSource: systemSource,
+            micSource: micSource,
+            library: nil)
 
         // The engine read both sockets and produced a well-formed live.md.
         let text = try String(contentsOf: output.liveURL, encoding: .utf8)
@@ -90,7 +86,6 @@ struct IPCTwoDaemonTests {
 
     @Test("a paused/resumed control event in the stream annotates live.md (R7)")
     func pauseResumeGapAnnotation() async throws {
-        let modelURL = try await WhisperTestGate.model(ModelCatalog.base)
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
@@ -108,18 +103,15 @@ struct IPCTwoDaemonTests {
         events.append(.resumed(gap: .seconds(125)))
         events += silence(50, from: 50)
 
-        let output = try await WhisperTestGate.run {
-            let transcriber = try WhisperTestTranscriber.make(modelURL: modelURL)
-            return try await StreamingPipeline().run(
-                configuration: .init(
-                    recordingFolder: folder,
-                    recordingStart: fixedStart,
-                    recordingId: "rec_ipc-pause-resume",
-                    liveDiarizerConfig: nil),
-                systemTranscriber: transcriber,
-                systemSource: ScriptedSource(events),
-                library: nil)
-        }
+        let engine = try await ParakeetTestEngine.shared()
+        let output = try await StreamingPipeline().run(
+            configuration: .init(
+                recordingFolder: folder,
+                recordingStart: fixedStart,
+                recordingId: "rec_ipc-pause-resume"),
+            systemTranscriber: ParakeetWindowTranscriber(engine: engine),
+            systemSource: ScriptedSource(events),
+            library: nil)
 
         let text = try String(contentsOf: output.liveURL, encoding: .utf8)
         #expect(text.contains("_(recording paused)_"))

@@ -34,23 +34,31 @@ Frames are 16 kHz mono Float32, 20 ms (320 samples).
 
 ## Transcription
 
-### PT-R9 · Functional — Resident-model transcription
+### PT-R107 · Functional — Resident ANE transcription
 
-The engine transcribes a complete audio stream with a recognition model held resident in memory.
-*Acceptance:* a fixture transcribes to a snapshot-matched transcript without per-call model load.
+The engine transcribes a complete audio stream with recognition models held resident on the Apple
+Neural Engine — a fixed live model for the streaming pass and a refinement model chosen from a small
+fixed catalog for the post pass — without a per-call model load. *Acceptance:* a fixture transcribes
+through the resident ANE backends with no native GPU recognizer; the live model is fixed and the
+refine model is a settings/flag choice.
 
 ### PT-R13 · Functional — Transcript line format
 
 A transcript is a header followed by per-utterance lines `**[HH:MM:SS] Speaker:** text`, timestamped
 in seconds since recording start.
 
-### PT-R54c · Technical — Resumable model download
+### PT-R108 · Technical — SDK-managed model acquisition
 
-Model downloads use HTTP range requests and resume from a partial transfer.
+Recognition and diarization models are bundles acquired by their managing SDKs into a single
+product-owned cache root; the product owns no separate model downloader. *Acceptance:* models
+download via the SDKs into the product cache root on first use.
 
-### PT-R54d · Technical — Model integrity verification
+### PT-R109 · Technical — Content-digest model integrity
 
-Downloaded models are verified against pinned content hashes; a mismatch deletes and retries.
+A model bundle's identity is a deterministic content digest — a tree hash of the bundle directory —
+recorded when the bundle is acquired, rather than a verification against a pinned hash; an upstream
+revision changes the digest, not a hard failure. *Acceptance:* the model-download event carries the
+bundle's content digest, and downstream identity checks key on it.
 
 ### PT-R54e · Technical — Canonical audio storage
 
@@ -58,17 +66,29 @@ Stored audio is 16 kHz mono 16-bit PCM WAV.
 
 ## Diarization
 
-### PT-R15a · Functional — Offline diarization of the system stream
+### PT-R111 · Functional — In-process offline diarization of the system stream
 
-The system stream is diarized offline into speaker turns.
+The system stream is diarized offline, in-process on the Apple Neural Engine, into speaker turns.
+*Acceptance:* a refine diarizes the system stream in-process with no diarization subprocess.
 
 ### PT-R17 · Functional — Microphone is never diarized
 
 Microphone-origin speech is always attributed to the local speaker, never sent to diarization.
 
-### PT-R29 · Technical — Speaker embeddings from the diarization pipeline
+### PT-R112 · Technical — Unified speaker-embedding space
 
-Per-speaker voice embeddings are produced by the same diarization pipeline used for turns.
+Per-speaker voice embeddings are produced by one diarization model shared across the live pass, the
+offline pass, and the speaker library — a single embedding space by construction — with match and
+stitch thresholds calibrated to that space. *Acceptance:* live, offline, and library embeddings come
+from one model; the thresholds are pinned by a calibration test.
+
+### PT-R113 · Technical — Diarization schema migration
+
+A change of diarization model that moves the embedding space migrates persisted data one way: the
+speaker library archives and resets a database carrying centroids from the prior space, and the
+metadata sidecar records the diarization model's identity and revision. *Acceptance:* opening a
+library from an incompatible prior space archives and resets it; a fresh refine records the
+diarization model id and revision in the metadata sidecar.
 
 ## Refinement
 
@@ -226,10 +246,6 @@ Pipeline tests are deterministic via seeded RNG, fixed decode settings, and pinn
 ### PT-R65 · Technical — Snapshot-tested artifacts
 
 Generated text artifacts are snapshot-tested.
-
-### PT-R67 · Technical — Diarization wrapper tests
-
-The diarization wrapper layer is covered by a Python test layer.
 
 ### PT-R67a · Technical — IPC integration test
 
@@ -446,10 +462,13 @@ afterward.
 
 Concurrent appends to the shared event log are serialized so records never interleave.
 
-### PT-R97 · Functional — Recording isolated from decode hangs
+### PT-R110 · Functional — In-process decode-hang recovery
 
 A stuck transcription decode cannot stall or lose the recording, the live transcript, or the audio
-file; a wedged decode is recoverable.
+file, and is recovered in-process: a wedged refinement decode is cancelled at a token boundary and
+resumes from its checkpoint, and a wedged live window is bounded by a deadline and skipped,
+recovered by the post pass. *Acceptance:* a hung refine decode resumes from checkpoint after
+cancellation; a hung live window is skipped without stalling the recording.
 
 ## Security, privacy & accessibility
 

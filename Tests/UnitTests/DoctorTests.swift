@@ -29,24 +29,19 @@ struct DoctorTests {
             isAppleSilicon: false).status == .warn)
     }
 
-    // MARK: - whisper models
+    // MARK: - diarization models
 
-    @Test("a missing model is a warning — it auto-downloads on first use")
-    func modelPresence() {
-        #expect(EnvironmentDoctor.modelCheck(
-            name: "base", present: true).status == .ok)
-        #expect(EnvironmentDoctor.modelCheck(
-            name: "large-v3", present: false).status == .warn)
+    @Test("cached diarization models pass")
+    func diarizerModelsCachedIsOK() {
+        let check = EnvironmentDoctor.diarizerModelsCheck(cached: true)
+        #expect(check.status == .ok)
     }
 
-    // MARK: - Python runtime
-
-    @Test("a missing diarization runtime is a warning")
-    func pythonRuntime() {
-        #expect(EnvironmentDoctor.pythonRuntimeCheck(
-            interpreterPresent: true).status == .ok)
-        #expect(EnvironmentDoctor.pythonRuntimeCheck(
-            interpreterPresent: false).status == .warn)
+    @Test("missing diarization models are an informational warning")
+    func diarizerModelsMissingIsInformationalWarn() {
+        let check = EnvironmentDoctor.diarizerModelsCheck(cached: false)
+        #expect(check.status == .warn)
+        #expect(check.detail.contains("first"))
     }
 
     // MARK: - speaker library

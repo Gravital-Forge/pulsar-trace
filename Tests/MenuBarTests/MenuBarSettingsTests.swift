@@ -25,8 +25,7 @@ struct MenuBarSettingsTests {
         do {
             let settings = MenuBarSettings(defaults: defaults)
             settings.selectedMicDeviceID = "BuiltInMic-7F3A"
-            settings.liveModelName = "base"
-            settings.refineModelName = "large-v3"
+            settings.refineModelName = "large-v3-whisperkit"
             settings.outputFolderPath = folderPath
             settings.systemAudioEnabled = false
             settings.globalHotkey = KeyCombo(keyCode: 15, modifiers: 1_048_576)
@@ -36,8 +35,7 @@ struct MenuBarSettingsTests {
         // A fresh instance reading the same suite sees the persisted values.
         let reloaded = MenuBarSettings(defaults: defaults)
         #expect(reloaded.selectedMicDeviceID == "BuiltInMic-7F3A")
-        #expect(reloaded.liveModelName == "base")
-        #expect(reloaded.refineModelName == "large-v3")
+        #expect(reloaded.refineModelName == "large-v3-whisperkit")
         #expect(reloaded.outputFolderPath == folderPath)
         #expect(reloaded.outputFolderURL?.path == folderPath)
         #expect(reloaded.systemAudioEnabled == false)
@@ -52,7 +50,6 @@ struct MenuBarSettingsTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let settings = MenuBarSettings(defaults: defaults)
-        #expect(settings.liveModelName == MenuBarSettings.defaultLiveModelName)
         #expect(settings.refineModelName == MenuBarSettings.defaultRefineModelName)
         #expect(settings.systemAudioEnabled == true)
         #expect(settings.selectedMicDeviceID == nil)
@@ -94,32 +91,27 @@ struct MenuBarSettingsTests {
         #expect(defaults.string(forKey: "outputFolderPath") == nil)
     }
 
-    @Test("a legacy `modelName` key migrates into `liveModelName` (D29)")
-    func legacyModelNameMigrates() {
-        let (defaults, suiteName) = tempSuite()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+    @Test("legacy live-model keys are removed on load (D39)")
+    func legacyLiveModelKeysRemoved() {
+        let (suite, suiteName) = tempSuite()
+        defer { suite.removePersistentDomain(forName: suiteName) }
 
-        // Simulate a pre-D29 store: only the legacy single `modelName` key.
-        defaults.set("large-v3", forKey: "modelName")
-
-        let settings = MenuBarSettings(defaults: defaults)
-        // The legacy value seeds the live model; refine falls back to default.
-        #expect(settings.liveModelName == "large-v3")
+        suite.set("large-v3", forKey: "modelName")      // pre-D29 single knob
+        suite.set("base", forKey: "liveModelName")      // pre-D39 live knob
+        let settings = MenuBarSettings(defaults: suite)
+        #expect(suite.object(forKey: "modelName") == nil)
+        #expect(suite.object(forKey: "liveModelName") == nil)
         #expect(settings.refineModelName == MenuBarSettings.defaultRefineModelName)
     }
 
-    @Test("the new keys win over a stale legacy `modelName` key")
-    func newKeysWinOverLegacy() {
-        let (defaults, suiteName) = tempSuite()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+    @Test("a persisted pre-D39 refine model name re-defaults to the ANE catalog")
+    func staleRefineModelNameRedefaults() {
+        let (suite, suiteName) = tempSuite()
+        defer { suite.removePersistentDomain(forName: suiteName) }
 
-        defaults.set("large-v3", forKey: "modelName")    // legacy
-        defaults.set("base", forKey: "liveModelName")     // new
-        defaults.set("large-v3", forKey: "refineModelName")
-
-        let settings = MenuBarSettings(defaults: defaults)
-        #expect(settings.liveModelName == "base")
-        #expect(settings.refineModelName == "large-v3")
+        suite.set("large-v3", forKey: "refineModelName")   // retired ggml name
+        let settings = MenuBarSettings(defaults: suite)
+        #expect(settings.refineModelName == "large-v3-turbo")
     }
 
     @Test("clearing the hotkey removes it from the store")

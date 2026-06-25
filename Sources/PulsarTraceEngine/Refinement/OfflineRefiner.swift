@@ -12,16 +12,9 @@ import Logging
 /// `TranscriptAssembly.assembleAndWrite`.
 ///
 /// `OfflineRefiner` owns everything `RefinementPipeline` needs but does not
-/// build itself: ensuring the whisper + VAD models are available, wiring the
-/// dev-environment `Diarizer` (venv interpreter, repo root, `.env`), opening
-/// the persistent speaker library, and constructing the `WhisperTranscriber`
-/// factory.
-///
-/// Robustness overrides (D3): the repo root is otherwise the `#filePath`
-/// dev-tree path baked into the binary at build time.
-/// `PULSARTRACE_REPO_ROOT`, `PULSARTRACE_VENV_PYTHON` and `HF_TOKEN`
-/// environment variables take precedence so a binary can run off a machine
-/// that is not the build host, ahead of full app packaging.
+/// build itself: wiring the in-process `Diarizer` (FluidAudio CoreML/ANE,
+/// D40 — no venv, no token, no IPC), opening the persistent speaker library,
+/// and constructing the WhisperKit transcriber + FluidVAD wiring.
 public struct OfflineRefiner: Sendable {
 
     /// A lightweight progress line — the CLI prints these to stderr, the
@@ -39,41 +32,58 @@ public struct OfflineRefiner: Sendable {
         self.paths = paths
     }
 
+    /// Setup failures that precede the pipeline (so they are never confused
+    /// with a `RefineError.input` path problem — verified:
+    /// `RecordingFolder.InputError` only has path-shaped cases).
+    public enum SetupError: Error, CustomStringConvertible, Equatable {
+        case unknownModel(String)
+
+        public var description: String {
+            switch self {
+            case .unknownModel(let name):
+                return "unknown refine model '\(name)' (expected: "
+                    + WhisperKitModelCatalog.all.map(\.name).joined(separator: ", ")
+                    + ")"
+            }
+        }
+    }
+
     /// Run the offline refine pass over one audio file or recording folder.
     ///
     /// - Parameters:
     ///   - inputPath: audio file or recording folder.
-    ///   - model: the whisper model (e.g. `ModelCatalog.base`).
+    ///   - modelName: a `WhisperKitModelCatalog` name
+    ///     (`large-v3-turbo` | `large-v3-whisperkit`).
+    ///   - language: ISO-639-1 code pinning the decode language
+    ///     (`refine --language`), or `nil` → the allowed-languages policy /
+    ///     auto-detect (`WhisperKitLanguagePolicy`).
     ///   - progress: optional human-readable progress callback.
     /// - Returns: the `RefinementPipeline.Output`.
-    /// - Throws: `RefinementPipeline.RefineError` (or a model-fetch error) on
-    ///   failure — callers must propagate it, never swallow it.
+    /// - Throws: `SetupError`, or `RefinementPipeline.RefineError` — callers
+    ///   must propagate, never swallow.
     @discardableResult
     public func refine(
         inputPath: URL,
-        model: WhisperModel,
+        modelName: String,
+        language: String? = nil,
         progress: ProgressReporter? = nil
     ) async throws -> RefinementPipeline.Output {
-        // The whisper model must be present and verified before transcription
-        // (R54c/R54d). Cached after the first run.
-        progress?("ensuring whisper model '\(model.name)' is available…")
-        let modelStore = ModelStore(events: events)
-        let modelURL = try await modelStore.ensureAvailable(model)
-
-        // The Silero VAD model gates the offline transcription. A VAD-model
-        // fetch failure must not lose a refine: fall back to a no-VAD decode.
-        var vadModelURL: URL?
-        do {
-            progress?("ensuring VAD model is available…")
-            vadModelURL = try await modelStore
-                .ensureAvailable(ModelCatalog.sileroVAD)
-        } catch {
-            progress?("VAD model unavailable (\(error)) — transcribing without VAD")
-            vadModelURL = nil
+        guard let model = WhisperKitModelCatalog.model(named: modelName) else {
+            throw SetupError.unknownModel(modelName)
         }
-        let whisperOptions = WhisperOptions(vadModelURL: vadModelURL)
 
-        let diarizer = try Self.makeDiarizer()
+        progress?("preparing \(model.name) (ANE)…")
+        let whisperKit = WhisperKitRegionTranscriber(
+            configuration: .init(
+                model: model,
+                downloadBase: paths.modelsCacheDirectory
+                    .appendingPathComponent("whisperkit", isDirectory: true)),
+            events: events)
+        let transcriber: RefinementTranscriber = .whisperKit(
+            whisperKit, vad: FluidVADRegionDetector())
+        let options = TranscriptionOptions(language: language)
+
+        let diarizer = Self.makeDiarizer(events: events)
 
         // The persistent speaker library at the standard location. A failure
         // to open it is non-fatal — refine continues with `Speaker_N` labels.
@@ -90,98 +100,22 @@ public struct OfflineRefiner: Sendable {
 
         return try await pipeline.run(
             inputPath: inputPath,
-            transcriberFactory: { try WhisperTranscriber(modelURL: modelURL) },
+            transcriber: transcriber,
             diarizer: diarizer,
             whisperModelName: model.name,
-            whisperModelSHA256: model.sha256,
+            whisperModelSHA256: "",   // SDK-managed CoreML bundle (D39)
             recordingStart: Date(),
-            whisperOptions: whisperOptions,
+            options: options,
             library: library,
             progress: stageProgress)
     }
 
-    // MARK: - Diarizer wiring (dev environment)
+    // MARK: - Diarizer wiring
 
-    /// Build a `Diarizer` against the dev venv + repo `.env` (D3/D9).
-    ///
-    /// Packaging will later swap this for the bundled `python-build-standalone`
-    /// runtime; the IPC boundary is identical, only this wiring changes.
-    public static func makeDiarizer() throws -> Diarizer {
-        let repoRoot = repoRootURL()
-        let pythonWorkingDir = repoRoot
-            .appendingPathComponent("python/pulsartrace-ai")
-
-        // `PULSARTRACE_VENV_PYTHON` overrides the venv interpreter outright;
-        // otherwise it is resolved under the (possibly overridden) repo root.
-        let venvPython: URL
-        if let p = ProcessInfo.processInfo.environment["PULSARTRACE_VENV_PYTHON"],
-           !p.isEmpty {
-            venvPython = URL(fileURLWithPath: p)
-        } else {
-            venvPython = repoRoot
-                .appendingPathComponent("python/pulsartrace-ai/.venv/bin/python")
-        }
-
-        var env = dotEnv(repoRoot: repoRoot)
-        // A `HF_TOKEN` from the real process environment wins over the `.env`
-        // file (dev convenience vs. an explicit caller-supplied token).
-        if let token = ProcessInfo.processInfo.environment["HF_TOKEN"],
-           !token.isEmpty {
-            env["HF_TOKEN"] = token
-        }
-        // Cache the pyannote model under PulsarTrace's own cache dir (D10).
-        if let caches = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask).first {
-            env["HF_HOME"] = caches
-                .appendingPathComponent("PulsarTrace/huggingface").path
-        }
-
-        let config = Diarizer.Configuration(
-            pythonExecutable: venvPython,
-            workingDirectory: pythonWorkingDir,
-            environment: env)
-        return Diarizer(configuration: config)
-    }
-
-    /// Repo root.
-    ///
-    /// `PULSARTRACE_REPO_ROOT` (if set) takes precedence — a cheap robustness
-    /// override so the binary can be run off the build host ahead of full
-    /// app packaging (D3). The `#filePath`-derived path is the dev-tree
-    /// fallback: a build-machine path baked into the binary.
-    private static func repoRootURL() -> URL {
-        if let root = ProcessInfo.processInfo.environment["PULSARTRACE_REPO_ROOT"],
-           !root.isEmpty {
-            return URL(fileURLWithPath: root)
-        }
-        return URL(fileURLWithPath: #filePath)  // …/Sources/PulsarTraceEngine/Refinement/OfflineRefiner.swift
-            .deletingLastPathComponent()        // …/Refinement
-            .deletingLastPathComponent()        // …/PulsarTraceEngine
-            .deletingLastPathComponent()        // …/Sources
-            .deletingLastPathComponent()        // repo root
-    }
-
-    /// Load `KEY=VALUE` pairs from the repo `.env` (dev-only, D9).
-    private static func dotEnv(repoRoot: URL) -> [String: String] {
-        let envFile = repoRoot.appendingPathComponent(".env")
-        guard let text = try? String(contentsOf: envFile, encoding: .utf8) else {
-            return [:]
-        }
-        var out: [String: String] = [:]
-        for raw in text.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#"),
-                  let eq = line.firstIndex(of: "=") else { continue }
-            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: eq)...])
-                .trimmingCharacters(in: .whitespaces)
-            if value.count >= 2,
-               (value.hasPrefix("\"") && value.hasSuffix("\""))
-                || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                value = String(value.dropFirst().dropLast())
-            }
-            out[key] = value
-        }
-        return out
+    /// Build a `Diarizer` over the FluidAudio ANE backend (D40). Models load
+    /// lazily from the shared cache root (D10) on the first diarize call;
+    /// `events` receives `model_downloaded` after a fresh download.
+    public static func makeDiarizer(events: EventWriter? = nil) -> Diarizer {
+        Diarizer(configuration: .init(), events: events)
     }
 }

@@ -280,13 +280,15 @@ struct RecordingViewModelTests {
         #expect(vm.liveMarkdownURL == nil)
     }
 
-    @Test("the live pass receives liveModelName, enqueue is called after stop (FIX 4)")
-    func liveAndRefineModelsAreSeparate() async throws {
+    @Test("live model is fixed to parakeet-v3; refine model comes from settings; enqueue after stop")
+    func liveModelIsFixedRefineComesFromSettings() async throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let settings = try settings(outputRoot: root)
-        settings.liveModelName = "base"
+        // The live pass has exactly one backend (D39) and takes no model
+        // knob; `refineModelName` is the only model the user still chooses,
+        // and it must never leak into the live argv.
         settings.refineModelName = "large-v3"
 
         // Capture the RecordPlan the live pass is launched with.
@@ -299,8 +301,9 @@ struct RecordingViewModelTests {
                 Task { await planBox.set(plan) }
                 return stub
             },
-            // Assert the VM hands the live pass `liveModelName` via the plan
-            // and that the enqueue path is taken after stop.
+            // Assert the live argv carries the fixed live model (not the
+            // refine model) and that the enqueue path is taken after stop —
+            // the refine model flows separately, resolved at enqueue time.
             enqueueAutoRefine: { url, recordingId in
                 await enqueued.record(url: url, recordingId: recordingId)
             },
@@ -308,11 +311,13 @@ struct RecordingViewModelTests {
 
         await vm.startRecording()
         let plan = try #require(await planBox.value())
-        // The live pass's argv carries `--model base` (liveModelName), not
-        // `large-v3` (which is the refine model).
-        #expect(plan.captureArguments.contains("base"))
+        // Capture argv carries the fixed live model `parakeet-v3` (the only
+        // live backend), never the refine model `large-v3` and never a
+        // legacy whisper name. The engine takes no `--model` flag at all.
+        #expect(plan.captureArguments.contains("parakeet-v3"))
         #expect(!plan.captureArguments.contains("large-v3"))
-        #expect(plan.engineArguments.contains("base"))
+        #expect(!plan.captureArguments.contains("base"))
+        #expect(!plan.engineArguments.contains("--model"))
 
         await vm.stopRecording()
         #expect(await enqueued.entries.count == 1)
@@ -383,116 +388,6 @@ struct RecordingViewModelTests {
         }
         #expect(await counter.pauseCount == 1)
         #expect(await counter.resumeCount == 1)
-    }
-
-    // MARK: - Phase 6: whisper-lock probe (Layer B)
-
-    /// A lock-probe timeout error used to drive the failure path in tests
-    /// — same shape `WhisperLockProbe.ProbeError.timeout` produces in
-    /// production, but defined here so the menubar test target doesn't
-    /// need internal access to that enum.
-    private struct ProbeTimeoutError: Error {}
-
-    @Test("lock-probe timeout surfaces .error and resumes refinement")
-    func lockProbeTimeoutSurfacesError() async throws {
-        let root = MenuBarFixtures.tempDir()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let stub = StubOrchestrator()
-        let counter = CallCounter()
-
-        // Inject a probe closure that always throws (simulating the
-        // refinement-whisper subprocess still holding the binary lock
-        // past the 5s deadline). Phase 6 / Layer B: the VM must
-        // surface a user-facing error and resume the refinement queue.
-        let vm = RecordingViewModel(
-            settings: try settings(outputRoot: root),
-            orchestratorFactory: { _, _ in stub },
-            pauseRefinement: { await counter.incrementPause() },
-            resumeRefinement: { await counter.incrementResume() },
-            waitForWhisperLockFree: { throw ProbeTimeoutError() },
-            preflight: .granted)
-
-        await vm.startRecording()
-        guard case .error(let message) = vm.status else {
-            Issue.record("expected .error, got \(vm.status)")
-            return
-        }
-        // The user-readable message is exactly the one specified in the
-        // task — clearly distinct from the generic start-failure message.
-        #expect(message.contains("Refinement is still finishing up"))
-        // Pause was attempted, resume was called as cleanup.
-        #expect(await counter.pauseCount == 1)
-        #expect(await counter.resumeCount == 1)
-    }
-
-    @Test("lock-probe failure does NOT call orchestrator.start")
-    func lockProbeFailureSkipsStart() async throws {
-        let root = MenuBarFixtures.tempDir()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        // Spy orchestrator that flips a flag if `start` is ever called.
-        actor StartObserver { var startCalled = false
-            func note() { startCalled = true } }
-        let observer = StartObserver()
-        final class WatchingOrchestrator: RecordingOrchestrating, @unchecked Sendable {
-            let observer: StartObserver
-            init(observer: StartObserver) { self.observer = observer }
-            func start(readyTimeout: Duration) async throws {
-                await observer.note()
-            }
-            func waitForEngineExit() async {}
-            func isEngineRunning() async -> Bool { false }
-            func stop() async {}
-        }
-
-        let vm = RecordingViewModel(
-            settings: try settings(outputRoot: root),
-            orchestratorFactory: { _, _ in
-                WatchingOrchestrator(observer: observer)
-            },
-            waitForWhisperLockFree: { throw ProbeTimeoutError() },
-            preflight: .granted)
-
-        await vm.startRecording()
-        guard case .error = vm.status else {
-            Issue.record("expected .error, got \(vm.status)")
-            return
-        }
-        // The probe gate is enforced *before* `start` — the orchestrator
-        // should never have been called.
-        let called = await observer.startCalled
-        #expect(called == false)
-    }
-
-    @Test("lock-probe success flows through to .recording (happy path)")
-    func lockProbeSuccessReachesRecording() async throws {
-        let root = MenuBarFixtures.tempDir()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let stub = StubOrchestrator()
-        let counter = CallCounter()
-        let probeCalls = CallCounter()
-
-        let vm = RecordingViewModel(
-            settings: try settings(outputRoot: root),
-            orchestratorFactory: { _, _ in stub },
-            pauseRefinement: { await counter.incrementPause() },
-            resumeRefinement: { await counter.incrementResume() },
-            waitForWhisperLockFree: {
-                // Default-happy probe: returns cleanly. Increment a
-                // counter so we can assert the probe was actually
-                // invoked (Layer B is wired in, not a no-op).
-                await probeCalls.incrementPause()
-            },
-            preflight: .granted)
-
-        await vm.startRecording()
-        if case .recording = vm.status {} else {
-            Issue.record("expected .recording, got \(vm.status)")
-        }
-        #expect(await probeCalls.pauseCount == 1)
-        #expect(await counter.pauseCount == 1)
-        // No resume yet — we're still recording.
-        #expect(await counter.resumeCount == 0)
     }
 
     // MARK: - Permission preflight

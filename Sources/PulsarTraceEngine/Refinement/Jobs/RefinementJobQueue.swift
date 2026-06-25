@@ -32,10 +32,12 @@ public actor RefinementJobQueue {
     private var worker: Task<Void, Never>?
     private var inflightCancellable: RefinementCancellable?
     /// A hook the in-flight worker registers (via `setInflightTranscriberRelease`)
-    /// pointing at its `SharedTranscriberBox.release`. `pauseForRecording`
-    /// fires it after cancelling the diarizer so the refinement-whisper
-    /// subprocess terminates *before* the engine starts (Phase 6). Cleared
-    /// synchronously alongside `inflightCancellable` after each job runs.
+    /// that cancels the live `WhisperKitRegionTranscriber`'s in-flight decode
+    /// (`cancelPending`) and then drops the `SharedTranscriberBox`.
+    /// `pauseForRecording` fires it after cancelling the diarizer so the
+    /// in-flight decode unwinds and the resident WhisperKit models are freed
+    /// (ARC on the dropped actor) *before* the live pass loads its own model.
+    /// Cleared synchronously alongside `inflightCancellable` after each job runs.
     private var inflightTranscriberRelease: (@Sendable () -> Void)?
 
     /// Cap on the in-memory `recent` list. Older terminal jobs still exist
@@ -68,13 +70,12 @@ public actor RefinementJobQueue {
         inflightCancellable = cancellable
     }
 
-    /// Register a hook for releasing the in-flight job's shared transcriber.
-    /// `pauseForRecording` invokes it after cancelling the diarizer so the
-    /// refinement-whisper subprocess (`RemoteRegionTranscriber`) terminates
-    /// promptly, releasing the binary-level `whisper.lock` before the
-    /// engine's whisper subprocess tries to acquire it (Phase 6 /
-    /// `docs/specs/2026-05-26-whisper-subprocess-design.md` §4 Layer 2).
-    /// Production `runJob` binds it to `SharedTranscriberBox.release`;
+    /// Register a hook for cancelling + releasing the in-flight job's shared
+    /// transcriber. `pauseForRecording` invokes it after cancelling the diarizer
+    /// so the in-flight decode stops (`cancelPending`) and the resident
+    /// `WhisperKitRegionTranscriber`'s CoreML models are freed (ARC on the
+    /// dropped actor) before the live pass loads its own model. Production
+    /// `runJob` binds it to `box.peek()?.cancelPending(); box.release()`;
     /// tests pass a spy. Pass `nil` to clear.
     func setInflightTranscriberRelease(_ release: (@Sendable () -> Void)?) {
         inflightTranscriberRelease = release
@@ -197,28 +198,61 @@ public actor RefinementJobQueue {
     /// stale "Diarizing 2/7" text. Also signals the diarizer to terminate its
     /// subprocess if one is currently running (D-Q7 / Task D3).
     ///
-    /// **Phase 6 behaviour change.** Previously this method only closed the
-    /// pause gate (the in-flight region decode ran to completion before the
-    /// refiner stalled at the next checkpoint). With the refinement path now
-    /// going through a `pulsartrace-whisper` subprocess, "complete the current
-    /// region" can be many seconds, during which the subprocess holds the
-    /// binary-level `whisper.lock` (spec §4 Layer 2). A recording-start
-    /// arriving in that window would race the lock and the engine's whisper
-    /// subprocess would exit 75. To prevent that, this method now:
+    /// **Why this does more than close the gate.** Closing the gate only stops
+    /// the refiner *between* regions — an in-flight WhisperKit decode runs to
+    /// completion first (its budget is `max(120 s, slice duration)`, so a
+    /// whole-stream fallback region could be the entire recording length),
+    /// holding the ANE/memory the live pass is about to want. So this method
+    /// also:
     ///
-    /// 1. Fires the in-flight transcriber-release hook (if registered),
-    ///    which drops the `SharedTranscriberBox`'s cached
-    ///    `RemoteRegionTranscriber`. ARC + `deinit` terminate the subprocess
-    ///    and the lock is released within sub-second.
-    /// 2. Awaits the worker task's exit (the in-flight `transcribeRegion`
-    ///    throws once the subprocess dies; `ResumableRefiner.run` propagates
-    ///    the throw; the worker exits). A 5-second timeout caps the wait —
-    ///    if exceeded, a warning is logged and the method returns; the
-    ///    caller's lock probe (Layer B) provides the final guard.
+    /// 1. Fires the in-flight transcriber-release hook (if registered), which
+    ///    calls `cancelPending()` on the live `WhisperKitRegionTranscriber` —
+    ///    stopping the decode at the next token boundary — then drops the
+    ///    `SharedTranscriberBox`'s cached instance so ARC frees the CoreML
+    ///    models.
+    /// 2. Waits (bounded, 5 s) for the worker task to exit. When a decode WAS
+    ///    in flight, the cancelled decode throws `CancellationError`;
+    ///    `ResumableRefiner.run` propagates it (the per-region retry loop catches
+    ///    only `TranscriptionError`); the worker finishes `runNext` and clears
+    ///    itself within the wait. When the pause lands in a non-decode window
+    ///    there is nothing to throw during the wait — the worker stays parked and
+    ///    exits only after resume; see "Width of the residual 5 s wait" below.
     ///
-    /// The killed region is *not* lost: `ResumableRefiner` resumes from the
-    /// previous completed checkpoint on the next `resumeAfterRecording`,
-    /// repeating the killed region. A few seconds of recompute, no data loss.
+    /// **Recovery contract — the cancelled job requeues, it does not fail.**
+    /// Whenever a `CancellationError` surfaces in `runNext`'s catch — whether the
+    /// in-flight decode was cancelled mid-region OR the worker's next `box.get()`
+    /// threw because a non-decode-window pause POISONED the box (see below) — that
+    /// path does NOT mark the job `.failed`; instead it requeues the *same* job
+    /// (same id, state `.queued`) at the head of the queue and writes no
+    /// `refinement_failed` / `lastError` (neither here nor in
+    /// `ResumableRefiner.run`, which skips both for `CancellationError`). On the
+    /// next `resumeAfterRecording`, `pumpIfIdle` re-runs that job; because its id
+    /// is unchanged, `ResumableRefiner.loadOrInitProgress` matches
+    /// `p.jobId == job.id` and honors the on-disk checkpoint, recomputing only
+    /// the cancelled region. A few seconds of recompute, no data loss, and no
+    /// terminal failure entry in `recent`.
+    ///
+    /// **Width of the residual 5 s wait (be honest).** The release hook only
+    /// cancels an *active WhisperKit decode*. Any pause that lands during the
+    /// diarize stage (long — a whole subprocess run), VAD region detection, WAV
+    /// load, or parked between regions — i.e. anywhere the worker is NOT inside
+    /// `pipe.transcribe` — has no decode to cancel, so `cancelPending()` is a
+    /// no-op while `box.release()` still POISONS the box (terminal release). The
+    /// worker does NOT unwind here: `pauseGate.waitOpen()` PARKS, it does not
+    /// throw. So this method waits the full 5 s poll, then lets recording proceed
+    /// with the worker still parked. The worker only exits LATER — at its next
+    /// `box.get()` AFTER `resumeAfterRecording` reopens the gate — when that
+    /// `get()` throws `CancellationError` off the poisoned box; `runNext`'s catch
+    /// then requeues the job (per the recovery contract above) and `pumpIfIdle`
+    /// re-runs it. Note that by then `resumeAfterRecording` has already cleared
+    /// `pausedForRecording`, which is exactly why the requeue arm matches
+    /// `CancellationError` unconditionally rather than gating on that flag. The
+    /// 5 s is a ceiling on recording-start latency in those non-decode windows,
+    /// not a between-regions-only cost. One nuance on the diarize window: on a
+    /// system-only recording the diarize pass can run through to completion
+    /// without ever reaching a `box.get()` (a correct outcome — nothing to
+    /// requeue), whereas with a mic stream the worker exits at the mic-pass
+    /// `get()` and requeues per the recovery contract.
     public func pauseForRecording() async {
         pausedForRecording = true
         await pauseGate.close()
@@ -231,48 +265,52 @@ public actor RefinementJobQueue {
         }
         if let c = inflightCancellable { await c.cancel() }
 
-        // Phase 6: fire the transcriber-release hook so the refinement
-        // `pulsartrace-whisper` subprocess terminates promptly. The hook
-        // calls `SharedTranscriberBox.release`; the box's `deinit`-driven
-        // tear-down (`RemoteRegionTranscriber.shutdown`) SIGTERMs the host
-        // with a 2s grace and the kernel releases the `whisper.lock`.
+        // Fire the transcriber-release hook so the in-flight decode is
+        // cancelled (the hook calls `cancelPending()` on the live
+        // `WhisperKitRegionTranscriber`, then drops the box) and the resident
+        // CoreML models are freed promptly (ARC on the dropped actor) before
+        // the live pass loads its own model.
         //
-        // Only if a release hook was registered do we then await the
-        // worker's exit: the await is a "I expect the in-flight decode to
-        // throw and the worker to unwind because I just terminated its
-        // subprocess." Without a release hook, there's no such signal —
-        // historical tests with `gate.waitOpen()` + `Task.sleep(60s)`
-        // runJobs would otherwise pay a needless 5s timeout on every
-        // pauseForRecording. Production wires the hook in `makeStandard`.
+        // Only if a release hook was registered do we then wait for the
+        // worker's exit: that wait is "I expect the in-flight decode to throw
+        // `CancellationError` and the worker to unwind because I just cancelled
+        // it." Without a release hook there's no such signal — historical tests
+        // with `gate.waitOpen()` + `Task.sleep(60s)` runJobs would otherwise
+        // pay a needless 5s timeout on every pauseForRecording. Production
+        // wires the hook in `makeStandard`.
         let hadRelease = inflightTranscriberRelease != nil
         if let release = inflightTranscriberRelease {
             release()
         }
 
-        // Phase 6: wait for the worker task to actually exit so the
-        // caller has happens-before with "the refinement subprocess is
-        // gone". The transcriber release above unwedges the in-flight
-        // decode (the IPC read sees EOF / subprocessGone, the
-        // `RemoteRegionTranscriber` throws `transcriptionFailed`, the
-        // refiner surfaces the throw, the worker exits). 5s is generous
-        // — subprocess teardown is normally sub-second.
-        if hadRelease, let w = worker {
-            let exited = await withTaskGroup(of: Bool.self) { group in
-                group.addTask {
-                    await w.value
-                    return true
-                }
-                group.addTask {
-                    try? await Task.sleep(for: .seconds(5))
-                    return false
-                }
-                let first = await group.next() ?? false
-                group.cancelAll()
-                return first
+        // Wait for the worker task to actually exit so the caller has
+        // happens-before with "the resident refine model is gone" before the
+        // live pass loads its own. The release above cancels the in-flight
+        // decode: the per-token callback returns `false`, `decode` throws
+        // `CancellationError` (not a `TranscriptionError`, so the per-region
+        // retry loop doesn't swallow it), `ResumableRefiner.run` propagates it,
+        // and `runNext` runs to completion — clearing `worker` to nil. With the
+        // cancel flag this normally settles in well under a second.
+        //
+        // Bounded, abandonable wait: poll `worker` for nil. (A TaskGroup racing
+        // `await worker.value` against a sleep cannot time out — the group
+        // drains all children before returning, and a `Task<Void, Never>.value`
+        // await is itself uncancellable, so `cancelAll()` after the sleep is a
+        // no-op.) Polling actor state sidesteps both.
+        if hadRelease {
+            let deadline = ContinuousClock.now + .seconds(5)
+            // Break on caller cancellation too: a cancelled `pauseForRecording`
+            // caller should not busy-spin the actor for the remaining deadline
+            // (the `Task.sleep` already throws on cancel, so the loop would
+            // otherwise spin tight). The job still requeues via runNext's own
+            // unwind; this just stops *us* from holding the actor.
+            while worker != nil, ContinuousClock.now < deadline {
+                if Task.isCancelled { break }
+                try? await Task.sleep(for: .milliseconds(50))
             }
-            if !exited {
+            if worker != nil {
                 logger.warning(
-                    "pauseForRecording: refinement worker did not exit within 5s; recording will rely on lock probe")
+                    "pauseForRecording: refinement worker did not exit within 5s; recording will proceed regardless")
             }
         }
     }
@@ -345,6 +383,53 @@ public actor RefinementJobQueue {
                 job.state = .completed(durationSeconds: 0.0, speakerCount: 0)
             }
         } catch {
+            // A `CancellationError` here is NEVER a job failure — it can only
+            // originate from the pause/release machinery: either the in-flight
+            // WhisperKit decode being cancelled mid-region (the transcriber-
+            // release hook calls `cancelPending()`, `decode` throws), or the
+            // worker's next `box.get()` throwing after the box was POISONED by a
+            // terminal `box.release()` during a pause that landed in a NON-decode
+            // window (VAD / WAV-load / parked-between-regions — no decode to
+            // cancel, so the worker doesn't unwind at `pauseForRecording` and
+            // instead exits at its next `get()` AFTER `resumeAfterRecording`).
+            // Either way the on-disk `refine-progress.json` still holds every
+            // region completed before the cancel, keyed by THIS job's id, so the
+            // correct outcome is identical: requeue the SAME job (same id,
+            // `.queued`) at the HEAD of the queue and let `pumpIfIdle` re-run it.
+            // `ResumableRefiner.loadOrInitProgress` matches `p.jobId == job.id`
+            // and honors the checkpoint, recomputing only the cancelled region.
+            // Marking it `.failed` instead would strand the checkpoint (the UI
+            // Retry enqueues a FRESH id, whose progress won't match) and force a
+            // full recompute, and it would leave an unpaired `refinement_failed`
+            // gap (ResumableRefiner suppresses that event for CancellationError).
+            //
+            // Matched UNCONDITIONALLY (no `pausedForRecording` precondition):
+            // when the cancel surfaces via the poisoned `get()`, the worker may
+            // not resume and re-throw until AFTER `resumeAfterRecording` has
+            // already cleared `pausedForRecording` — gating on it would miss that
+            // interleave and misclassify to `.transcribeFailed`. Requeueing is
+            // also safe in any hypothetical un-paused arrival (the job just
+            // re-runs from its checkpoint). The defensive `is CancellationError →
+            // .transcribeFailed` branch in `RefinementJobError.classify` is thus
+            // unreachable from this queue path but kept (harmless, still right
+            // for any other caller).
+            if error is CancellationError {
+                // Clear the per-job slots first (same happens-before reasoning
+                // as the terminal path below), then requeue at the head.
+                inflightCancellable = nil
+                inflightTranscriberRelease = nil
+                job.state = .queued
+                // Defensive: never double-insert. The job was removed from
+                // `queued` at the top of runNext and is not terminal, so it
+                // exists in neither list now; the filter is belt-and-suspenders.
+                queued.removeAll { $0.id == job.id }
+                queued.insert(job, at: 0)
+                try? await store.upsert(job)
+                current = nil
+                self.worker = nil      // clear BEFORE pumpIfIdle so guard passes
+                pumpIfIdle()           // no-op while paused; resume re-pumps
+                return                 // do NOT add a `recent` failure entry
+            }
             let classified = RefinementJobError.classify(error)
             job.state = .failed(
                 errorClass: classified.errorClass,
@@ -384,8 +469,9 @@ public actor RefinementJobQueue {
 // MARK: - Production factory
 
 extension RefinementJobQueue {
-    /// Production wiring: real `WhisperTranscriber` + production
-    /// `Diarizer` + the process-wide `EventWriter`.
+    /// Production wiring: in-process `WhisperKitRegionTranscriber` (ANE) +
+    /// `FluidVADRegionDetector` + production `Diarizer` + the process-wide
+    /// `EventWriter`.
     ///
     /// Used by `AppEnvironment` in `pulsartrace-mac`. The CLI's
     /// `OfflineRefiner` path stays unchanged (one-shot, no queue).
@@ -394,21 +480,10 @@ extension RefinementJobQueue {
     /// `modelName` and `modelSHA256` to `enqueueManualRefine` /
     /// `enqueueAutoRefine` / `enqueueCrashRecovery`. The queue reads these
     /// fields from each `RefinementJob` at run time.
-    ///
-    /// `whisperBinaryURL` must be resolved by the caller — this method does
-    /// **not** consult `WhisperBinaryResolver.defaultBinaryURL()` itself.
-    /// The mac-app process's `argv[0]` is the mac-app's own launch path
-    /// (Xcode DerivedData etc.), so the resolver's sibling lookup would
-    /// silently fall through to its `/usr/local/bin/` last-resort branch
-    /// and refinement would fail at decode time with
-    /// `WhisperTranscribeError.modelLoadFailed`. The caller (e.g.
-    /// `AppEnvironment.bootstrap()`) passes the same path it threads to
-    /// the engine subprocess via `PULSARTRACE_WHISPER_BINARY`.
     public static func makeStandard(
         events: EventWriter,
-        whisperBinaryURL: URL,
         paths: AppPaths = .standard,
-        whisperOptions: WhisperOptions = .init()
+        options: TranscriptionOptions = .init()
     ) async -> RefinementJobQueue {
         let store = RefinementJobStore.standard(paths: paths)
         let gate = PauseGate(initiallyOpen: true)
@@ -434,66 +509,83 @@ extension RefinementJobQueue {
 
         let runJob: RunJob = { [weak queue] job in
             guard let queue else { return }
-            let modelStore = ModelStore(events: events)
-            let modelURL = try await modelStore.ensureAvailable(
-                ModelCatalog.model(named: job.modelName) ?? ModelCatalog.base)
+            // ANE refine (D39): in-process WhisperKit + FluidAudio VAD. The
+            // job's model name resolves against the WhisperKit catalog; an
+            // unknown name (e.g. a job enqueued by an older build) falls
+            // back to the default rather than failing the job.
+            let model = WhisperKitModelCatalog.model(named: job.modelName)
+                ?? WhisperKitModelCatalog.defaultModel
 
-            // VAD failure is non-fatal: fall back to whole-buffer transcription
-            // (matches OfflineRefiner.refine behaviour for consistency).
-            let vadURL = try? await modelStore.ensureAvailable(ModelCatalog.sileroVAD)
+            // Normalize retired model names (e.g. a pre-D39 "base" enqueued by an
+            // older build) so the events/metadata path downstream reports the
+            // model actually used for the decode, not the stale enqueue-time name.
+            // `RefinementJob.modelName` is a `let`, so reconstruct via the
+            // initializer when it diverges from the resolved model.
+            let job: RefinementJob = model.name == job.modelName ? job : RefinementJob(
+                id: job.id,
+                recordingId: job.recordingId,
+                folderURL: job.folderURL,
+                modelName: model.name,
+                // D39 — SDK-managed bundle, no pin; clears the retired ggml digest.
+                modelSHA256: "",
+                trigger: job.trigger,
+                enqueuedAt: job.enqueuedAt,
+                state: job.state)
 
-            let diarizer = try OfflineRefiner.makeDiarizer()
+            let diarizer = OfflineRefiner.makeDiarizer(events: events)
 
-            // Register the diarizer so pauseForRecording() can cancel it mid-run
-            // (D-Q7). Clearing the slot is the queue's responsibility (done
-            // synchronously in runNext() after _runJob returns), which guarantees
-            // the cancellable is nil before the next job can register its own —
-            // eliminating the lost-cancel race that a fire-and-forget Task cleanup
-            // would have introduced.
+            // Register the diarizer so pauseForRecording() can cancel it
+            // mid-run (D-Q7). Clearing the slot is the queue's
+            // responsibility (done synchronously in runNext() after _runJob
+            // returns).
             await queue.setInflightCancellable(diarizer)
 
-            // One transcriber per *job*, not per region. The historical
-            // cost driver was `whisper_init_from_file_with_params` rebuilding
-            // the Metal pipeline state on every call (DECISIONS.md D36,
-            // reopened); the remote variant keeps the same shape — one
-            // subprocess spawned on first region, reused across every region
-            // of the job. The queue's single-worker invariant + the host's
-            // single-connection lifecycle together serialise every touch.
-            //
-            // Phase 5 (docs/specs/2026-05-26-whisper-subprocess-design.md
-            // §6/§7): the in-process `WhisperTranscriber` is replaced by
-            // `RemoteRegionTranscriber` so a wedged refinement decode is
-            // recoverable via SIGKILL + respawn without losing already-
-            // checkpointed regions.
-            let sharedTranscriber = SharedTranscriberBox<any RegionTranscribing> {
-                let remoteConfig = RemoteRegionTranscriber.Configuration(
-                    binaryURL: whisperBinaryURL,
-                    modelURL: modelURL,
-                    socketDirectory: AppPaths.standard.socketDirectory)
-                return RemoteRegionTranscriber(
-                    configuration: remoteConfig,
-                    logger: Logger(label: LogSubsystem.engine))
+            // One transcriber per *job*, not per region — the model loads
+            // once on the first region decode and stays resident across the
+            // job. The release hook below lets pauseForRecording() cancel the
+            // in-flight decode and drop the box's actor: the cancel unwedges
+            // the decode and ARC frees the CoreML models — the in-process
+            // analogue of SIGTERMing the old `pulsartrace-whisper` subprocess
+            // before a recording starts.
+            let box = SharedTranscriberBox<WhisperKitRegionTranscriber> {
+                WhisperKitRegionTranscriber(
+                    configuration: .init(
+                        model: model,
+                        downloadBase: paths.modelsCacheDirectory
+                            .appendingPathComponent("whisperkit", isDirectory: true)),
+                    events: events)
+            }
+            let vad = FluidVADRegionDetector()
+            // Release hook (fired by pauseForRecording on a recording start):
+            // first signal the live transcriber to stop its in-flight decode at
+            // the next token boundary (`cancelPending` throws CancellationError
+            // out of the worker), then drop the box so ARC frees the resident
+            // CoreML models. `peek()` reaches the instance without building one
+            // — a job that never decoded has nothing to cancel.
+            await queue.setInflightTranscriberRelease { [box] in
+                box.peek()?.cancelPending()
+                box.release()
             }
 
-            // Phase 6: register a release hook so pauseForRecording() can
-            // terminate the refinement-whisper subprocess (and free the
-            // binary-level `whisper.lock`) before the engine subprocess
-            // starts. Dropping the box's cached instance is enough —
-            // `RemoteRegionTranscriber.deinit` calls `shutdown()`, which
-            // SIGTERMs the host. The hook is cleared in `runNext`'s cleanup
-            // path so it does not leak across jobs.
-            await queue.setInflightTranscriberRelease { [sharedTranscriber] in
-                sharedTranscriber.release()
-            }
             let refiner = ResumableRefiner(
                 transcribe: { samples, region, options in
-                    let t = try sharedTranscriber.get()
-                    return try t.transcribeRegion(samples, region: region, options: options)
+                    let t = try box.get()
+                    return try await t.transcribeRegion(
+                        samples, region: region, options: options)
                 },
                 detectRegions: { samples in
-                    guard let vadURL else { return [] }
-                    return try WhisperTranscriber.detectSpeechRegions(
-                        in: samples, vadModelURL: vadURL)
+                    do {
+                        return try await vad.detectRegions(samples)
+                    } catch {
+                        // VAD failure must not lose a refine: one region
+                        // spanning the whole stream — WhisperKit's internal
+                        // seek loop handles the length. (The old path's
+                        // equivalent fallback was the whole-buffer decode.)
+                        return [SpeechRegion(
+                            start: .zero,
+                            end: .milliseconds(
+                                samples.count * 1000 / AudioFormat.sampleRate))]
+                    }
                 },
                 diarize: { wav in
                     try await diarizer.diarizeSystemStream(wavPath: wav)
@@ -501,7 +593,7 @@ extension RefinementJobQueue {
                 pauseGate: gate,
                 events: events,
                 library: library,
-                whisperOptions: whisperOptions,
+                options: options,
                 onStageUpdate: { [weak queue] state in
                     guard let queue else { return }
                     await queue.reportStage(state)

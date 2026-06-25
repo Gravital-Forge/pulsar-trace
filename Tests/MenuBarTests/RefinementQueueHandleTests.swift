@@ -135,22 +135,22 @@ struct RefinementQueueHandleTests {
 
         // Changed AFTER the handle was created — the handle must read the
         // value at enqueue time, exactly like the old EnqueueBox impl.
-        settings.refineModelName = ModelCatalog.largeV3.name
+        settings.refineModelName = WhisperKitModelCatalog.largeV3.name
         await handle.enqueueAutoRefine(
             folderURL: URL(fileURLWithPath: "/tmp/live-settings"),
             recordingId: "rec_live")
         let live = try await waitForRecent(queue, recordingId: "rec_live")
-        #expect(live?.modelName == ModelCatalog.largeV3.name)
-        #expect(live?.modelSHA256 == ModelCatalog.largeV3.sha256)
+        #expect(live?.modelName == "large-v3-whisperkit")
+        #expect(live?.modelSHA256 == "")   // CoreML bundles carry no pin (D39)
 
-        // An unknown model name falls back to the catalog's base model.
+        // An unknown model name falls back to the catalog default.
         settings.refineModelName = "no-such-model"
         await handle.enqueueAutoRefine(
             folderURL: URL(fileURLWithPath: "/tmp/fallback"),
             recordingId: "rec_fallback")
         let fallback = try await waitForRecent(queue, recordingId: "rec_fallback")
-        #expect(fallback?.modelName == ModelCatalog.base.name)
-        #expect(fallback?.modelSHA256 == ModelCatalog.base.sha256)
+        #expect(fallback?.modelName == "large-v3-turbo")
+        #expect(fallback?.modelSHA256 == "")
     }
 
     @Test("pause and resume after install forward to the queue")

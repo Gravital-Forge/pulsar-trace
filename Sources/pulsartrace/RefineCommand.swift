@@ -1,8 +1,9 @@
 import Foundation
 import PulsarTraceEngine
 
-/// `pulsartrace refine PATH [--model base|large-v3]` — the v0.1 offline command
-/// (R48). Drives `RefinementPipeline`: an audio file or recording folder →
+/// `pulsartrace refine PATH [--model large-v3-turbo|large-v3-whisperkit]
+/// [--language CODE]` — the v0.1 offline command (R48). Drives
+/// `RefinementPipeline`: an audio file or recording folder →
 /// `final.md` + `metadata.json`.
 ///
 /// Progress (R26) is reported as lightweight stderr lines. The menubar
@@ -14,11 +15,14 @@ enum RefineCommand {
     struct Options {
         let inputPath: URL
         let modelName: String
+        let language: String?
     }
 
     enum ArgError: Error, CustomStringConvertible {
         case missingPath
         case unknownModel(String)
+        case unknownLanguage(String)
+        case missingLanguageValue
         case unexpectedArgument(String)
         case missingModelValue
 
@@ -27,11 +31,17 @@ enum RefineCommand {
             case .missingPath:
                 return "refine: missing PATH argument"
             case .unknownModel(let m):
-                return "refine: unknown --model '\(m)' (expected: base, large-v3)"
+                return "refine: unknown --model '\(m)' (expected: "
+                    + WhisperKitModelCatalog.all.map(\.name).joined(separator: ", ") + ")"
+            case .unknownLanguage(let c):
+                return "refine: unknown --language '\(c)' (ISO-639-1, e.g. en, pl)"
+            case .missingLanguageValue:
+                return "refine: --language needs a value (ISO-639-1, e.g. en, pl)"
             case .unexpectedArgument(let a):
                 return "refine: unexpected argument '\(a)'"
             case .missingModelValue:
-                return "refine: --model needs a value (base or large-v3)"
+                return "refine: --model needs a value ("
+                    + WhisperKitModelCatalog.all.map(\.name).joined(separator: "|") + ")"
             }
         }
     }
@@ -47,24 +57,20 @@ enum RefineCommand {
             options = try parse(args)
         } catch {
             err("\(error)")
-            err("usage: pulsartrace refine PATH [--model base|large-v3]")
-            return 2
-        }
-
-        guard let model = ModelCatalog.model(named: options.modelName) else {
-            err("refine: unknown model '\(options.modelName)'")
+            err("usage: pulsartrace refine PATH [--model large-v3-turbo|large-v3-whisperkit] [--language CODE]")
             return 2
         }
 
         do {
-            // The whole refine orchestration — model fetch, VAD, diarizer
+            // The whole refine orchestration — model prep, VAD, diarizer
             // wiring, speaker library, pipeline — lives in `OfflineRefiner`
             // so the menubar can run an identical refine in-process
             // without shelling to this CLI (D23).
             let refiner = OfflineRefiner(events: events, paths: .standard)
             let output = try await refiner.refine(
                 inputPath: options.inputPath,
-                model: model,
+                modelName: options.modelName,
+                language: options.language,
                 progress: { err("refine: \($0)") })
 
             out("refine: wrote \(output.finalURL.path)")
@@ -86,7 +92,8 @@ enum RefineCommand {
 
     static func parse(_ args: [String]) throws -> Options {
         var path: String?
-        var model = "large-v3"   // PRD default for the refine pass (R20).
+        var model = WhisperKitModelCatalog.defaultModel.name
+        var language: String?
 
         var i = 0
         while i < args.count {
@@ -98,6 +105,13 @@ enum RefineCommand {
                 i += 2
             case let a where a.hasPrefix("--model="):
                 model = String(a.dropFirst("--model=".count))
+                i += 1
+            case "--language":
+                guard i + 1 < args.count else { throw ArgError.missingLanguageValue }
+                language = args[i + 1]
+                i += 2
+            case let a where a.hasPrefix("--language="):
+                language = String(a.dropFirst("--language=".count))
                 i += 1
             case let a where a.hasPrefix("-"):
                 throw ArgError.unexpectedArgument(a)
@@ -112,12 +126,18 @@ enum RefineCommand {
         }
 
         guard let path else { throw ArgError.missingPath }
-        guard ModelCatalog.model(named: model) != nil else {
+        guard WhisperKitModelCatalog.model(named: model) != nil else {
             throw ArgError.unknownModel(model)
+        }
+        // Validated against the language catalog.
+        if let language,
+           LanguageCatalog.language(forCode: language) == nil {
+            throw ArgError.unknownLanguage(language)
         }
         return Options(
             inputPath: URL(fileURLWithPath: path),
-            modelName: model)
+            modelName: model,
+            language: language?.lowercased())
     }
 
     // MARK: - Output helpers

@@ -58,12 +58,13 @@ final class RefinementQueueHandle {
                 Data("pulsartrace-mac: auto-refine dropped — queue gone after bootstrap\n".utf8))
             return
         }
-        let model = ModelCatalog.model(named: settings.refineModelName)
-            ?? ModelCatalog.base
+        let model = WhisperKitModelCatalog.model(named: settings.refineModelName)
+            ?? WhisperKitModelCatalog.defaultModel
         do {
             try await queue.enqueueAutoRefine(
                 folderURL: folderURL, recordingId: recordingId,
-                modelName: model.name, modelSHA256: model.sha256)
+                modelName: model.name,
+                modelSHA256: "")   // SDK-managed CoreML bundle (D39)
         } catch {
             let raw = "pulsartrace-mac: auto-refine enqueue failed: \(error)\n"
             let msg = PathRedactor.redactHome(raw)

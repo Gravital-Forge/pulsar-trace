@@ -6,6 +6,14 @@ work inside the Claude Code Bash sandbox, which must run outside it, and why.
 
 Work done: 2026-05-16, on the first real-audio-capable host.
 
+> **Retired (D39):** transcription has moved to the Apple Neural Engine (Parakeet
+> live / WhisperKit refine) and whisper.cpp is removed — there is no longer a
+> native whisper build to set up, and the CoreML model bundles download
+> automatically on first use. The whisper-specific setup and CPU-toggle notes
+> below are kept as a historical record of the pre-ANE dev host; ignore them for
+> a current checkout. The audio stack, sandbox model, and Python/pyannote setup
+> are unchanged.
+
 ## Host
 
 Apple M2 MacBook Air, macOS 26 (Darwin 25.x), in a cmux terminal. BlackHole 2ch
@@ -66,7 +74,11 @@ latter after a one-time model prefetch); `swift build` / `swift test`, GPU
 transcription, ScreenCaptureKit, and the model prefetch run unsandboxed +
 allowlisted. Metal (IOKit) and ScreenCaptureKit could not be made sandbox-safe.
 
-## whisper CPU toggle
+## whisper CPU toggle (retired — D39)
+
+This whole section is retired: `WhisperTranscriber`, `useGPU`, and the
+`PULSARTRACE_WHISPER_CPU` env var no longer exist (transcription runs on the ANE
+— D39). Kept as a historical record of the pre-ANE dev host.
 
 `WhisperTranscriber.useGPU` defaults to an environment-aware value: set
 `PULSARTRACE_WHISPER_CPU=1` to force whisper's CPU backend process-wide. It is

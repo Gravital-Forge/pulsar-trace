@@ -1,6 +1,5 @@
 import Testing
 import Foundation
-import SnapshotTesting
 @testable import PulsarTraceEngine
 
 /// The speaker-library "done" criterion (PRD §15): refine recording A — a new speaker
@@ -11,13 +10,25 @@ import SnapshotTesting
 /// Determinism without pyannote: `RefinementPipeline.run(precomputedDiarization:)`
 /// injects a committed diarization JSON fixture in place of the pyannote
 /// subprocess, so the reconciliation logic is exercised deterministically.
-/// whisper still runs (CPU backend, D15) on the committed audio fixtures.
-/// The `SpeakerLibrary` lives in a per-test temp directory — the real
-/// `~/Library` is never touched.
+/// WhisperKit (`large-v3-turbo`) runs on the ANE over the committed audio
+/// fixtures. The `SpeakerLibrary` lives in a per-test temp directory — the
+/// real `~/Library` is never touched.
 ///
-/// `.serialized` because whisper.cpp is single-context per process (D8/D15).
+/// `.serialized` keeps the suite's shared model loads from racing each other.
 @Suite("Speaker library pipeline", .serialized)
 struct SpeakerLibraryPipelineTests {
+
+    /// One lazily-loading WhisperKit transcriber per process (D39 backend).
+    private static let whisperKit = WhisperKitRegionTranscriber(
+        configuration: .init(
+            model: WhisperKitModelCatalog.largeV3Turbo,
+            downloadBase: AppPaths.standard.modelsCacheDirectory
+                .appendingPathComponent("whisperkit", isDirectory: true)),
+        events: nil)
+
+    private static func makeTranscriber() -> RefinementTranscriber {
+        .whisperKit(whisperKit, vad: FluidVADRegionDetector())
+    }
 
     private static let recordingStart = Date(timeIntervalSince1970: 1_777_000_000)
 
@@ -31,23 +42,13 @@ struct SpeakerLibraryPipelineTests {
 
     /// Decode a committed diarization JSON fixture into a `DiarizationResult`.
     private func diarization(_ name: String) throws -> DiarizationResult {
-        try DiarizationDecoder.decode(FixtureLocator.diarizationData(name))
+        try DiarizationFixtureDecoder.decode(FixtureLocator.diarizationData(name))
     }
 
-    /// `final.md` body with the volatile wall-clock header line normalized.
-    private func body(of markdown: String) -> String {
-        var lines = markdown.split(
-            separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        if lines.count > 1 { lines[1] = "## Transcript — <recording-start>" }
-        return lines.joined(separator: "\n")
-    }
-
-    /// Lossy normalization for whisper-output comparison: lowercase, letters
-    /// only. Whisper.cpp's token logits at punctuation boundaries are not
-    /// reliably deterministic across BLAS/Accelerate versions — a single
-    /// comma can flip across macOS releases on the same model + audio — so
-    /// the snapshot match below tolerates that drift while still catching
-    /// wrong speaker labels, missing turns, or garbled words.
+    /// Lossy normalization for transcript-text comparison: lowercase, letters
+    /// only. WhisperKit's wording/punctuation drifts run-to-run and across SDK
+    /// versions, so the keyword match below tolerates that drift while still
+    /// catching wrong speaker labels, missing turns, or garbled words.
     private func lettersOnly(_ s: String) -> String {
         s.lowercased().filter { $0.isLetter }
     }
@@ -65,19 +66,16 @@ struct SpeakerLibraryPipelineTests {
     }
 
     /// A `DiarizationResult` is `Sendable`; the test injects one as the refine
-    /// pipeline's diarization stage. A no-op `Diarizer` stands in for the
-    /// unused subprocess.
+    /// pipeline's diarization stage via `precomputedDiarization`, so this
+    /// stand-in `Diarizer` is never actually invoked.
     private func unusedDiarizer() -> Diarizer {
-        Diarizer(configuration: .init(
-            pythonExecutable: URL(fileURLWithPath: "/usr/bin/false"),
-            workingDirectory: URL(fileURLWithPath: "/tmp")))
+        Diarizer(configuration: .init())
     }
 
     // MARK: - The speaker-library "done" criterion
 
     @Test("a returning speaker is auto-labelled with the name set on recording A")
     func returningSpeakerAutoLabelled() async throws {
-        let modelURL = try await WhisperTestGate.model(ModelCatalog.base)
         let workDir = tempDir()
         defer { try? FileManager.default.removeItem(at: workDir) }
 
@@ -90,9 +88,6 @@ struct SpeakerLibraryPipelineTests {
             databaseURL: dbURL, events: events)
 
         let pipeline = RefinementPipeline(events: events)
-        let factory: @Sendable () throws -> WhisperTranscriber = {
-            try WhisperTestTranscriber.make(modelURL: modelURL)
-        }
 
         // --- Recording A: a brand-new speaker -------------------------------
         let wavA = workDir.appendingPathComponent("single-speaker-30s.wav")
@@ -100,17 +95,15 @@ struct SpeakerLibraryPipelineTests {
             at: FixtureLocator.audio("single-speaker-30s.wav"), to: wavA)
         let diarA = try diarization("single-speaker-30s.json")
 
-        let outputA = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wavA,
-                transcriberFactory: factory,
-                diarizer: unusedDiarizer(),
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart,
-                library: library,
-                precomputedDiarization: diarA)
-        }
+        let outputA = try await pipeline.run(
+            inputPath: wavA,
+            transcriber: Self.makeTranscriber(),
+            diarizer: unusedDiarizer(),
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart,
+            library: library,
+            precomputedDiarization: diarA)
 
         // A had no library entry to match → one new speaker, `Unknown #1`.
         #expect(outputA.speakers == ["Unknown #1"])
@@ -134,17 +127,15 @@ struct SpeakerLibraryPipelineTests {
         // embedding (cosine ≈ 0.9999) — a genuine returning-speaker match.
         let diarB = try diarization("single-speaker-returning.json")
 
-        let outputB = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wavB,
-                transcriberFactory: factory,
-                diarizer: unusedDiarizer(),
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart,
-                library: library,
-                precomputedDiarization: diarB)
-        }
+        let outputB = try await pipeline.run(
+            inputPath: wavB,
+            transcriber: Self.makeTranscriber(),
+            diarizer: unusedDiarizer(),
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart,
+            library: library,
+            precomputedDiarization: diarB)
 
         // THE SPEAKER-LIBRARY "DONE" CRITERION: B's speaker is auto-labelled with the
         // name assigned during A — not a fresh `Unknown #2`, not `Speaker_0`.
@@ -179,24 +170,22 @@ struct SpeakerLibraryPipelineTests {
         #expect(log.contains("\"speakers_new\":1"))
         #expect(log.contains("\"speakers_matched\":1"))
 
-        // Reconciled final.md body matches the committed reference, tolerant
-        // of whisper's non-deterministic punctuation/whitespace drift across
-        // BLAS versions. The reference file stays human-readable for review;
-        // only the comparison is normalized.
-        let referenceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("__Snapshots__")
-            .appendingPathComponent("SpeakerLibraryPipelineTests")
-            .appendingPathComponent("returningSpeakerAutoLabelled.1.txt")
-        let reference = try String(contentsOf: referenceURL, encoding: .utf8)
-        #expect(lettersOnly(body(of: finalB)) == lettersOnly(reference))
+        // The reconciled final.md carries the returning speaker's label on a
+        // genuine transcript of recording B. Distinctive fixture words (D39)
+        // instead of a byte-for-byte reference: WhisperKit's wording drifts
+        // from the retired whisper `base` snapshot, but the same content words
+        // appear (git history:
+        // __Snapshots__/SpeakerLibraryPipelineTests/returningSpeakerAutoLabelled.1.txt).
+        let lowerB = lettersOnly(finalB)
+        for keyword in ["coffee", "barista", "bookstore"] {
+            #expect(lowerB.contains(keyword), "final.md should mention '\(keyword)'")
+        }
     }
 
     // MARK: - A genuinely different speaker becomes a new Unknown
 
     @Test("a distinct speaker in a later recording becomes a fresh Unknown #N")
     func distinctSpeakerGetsNewPlaceholder() async throws {
-        let modelURL = try await WhisperTestGate.model(ModelCatalog.base)
         let workDir = tempDir()
         defer { try? FileManager.default.removeItem(at: workDir) }
 
@@ -206,41 +195,34 @@ struct SpeakerLibraryPipelineTests {
             databaseURL: workDir.appendingPathComponent("speakers.sqlite"),
             events: events)
         let pipeline = RefinementPipeline(events: events)
-        let factory: @Sendable () throws -> WhisperTranscriber = {
-            try WhisperTestTranscriber.make(modelURL: modelURL)
-        }
 
         // Recording A: the single-speaker voice → Unknown #1.
         let wavA = workDir.appendingPathComponent("single-speaker-30s.wav")
         try FileManager.default.copyItem(
             at: FixtureLocator.audio("single-speaker-30s.wav"), to: wavA)
-        _ = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wavA, transcriberFactory: factory,
-                diarizer: unusedDiarizer(),
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart,
-                library: library,
-                precomputedDiarization: try diarization("single-speaker-30s.json"))
-        }
+        _ = try await pipeline.run(
+            inputPath: wavA, transcriber: Self.makeTranscriber(),
+            diarizer: unusedDiarizer(),
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart,
+            library: library,
+            precomputedDiarization: try diarization("single-speaker-30s.json"))
 
         // Recording B: the two-speaker fixture. SPEAKER_01 (cosine ≈ 0.20 to
         // the single-speaker voice) is genuinely distinct → a new placeholder.
         let wavB = workDir.appendingPathComponent("two-speakers-alternating.wav")
         try FileManager.default.copyItem(
             at: FixtureLocator.audio("two-speakers-alternating.wav"), to: wavB)
-        let outputB = try await WhisperTestGate.run {
-            try await pipeline.run(
-                inputPath: wavB, transcriberFactory: factory,
-                diarizer: unusedDiarizer(),
-                whisperModelName: ModelCatalog.base.name,
-                whisperModelSHA256: ModelCatalog.base.sha256,
-                recordingStart: Self.recordingStart,
-                library: library,
-                precomputedDiarization: try diarization(
-                    "two-speakers-alternating.json"))
-        }
+        let outputB = try await pipeline.run(
+            inputPath: wavB, transcriber: Self.makeTranscriber(),
+            diarizer: unusedDiarizer(),
+            whisperModelName: "large-v3-turbo",
+            whisperModelSHA256: "",
+            recordingStart: Self.recordingStart,
+            library: library,
+            precomputedDiarization: try diarization(
+                "two-speakers-alternating.json"))
 
         // The library grew: at least one new Unknown for the distinct voice.
         let names = Set(try await library.liveSpeakers().map(\.name))

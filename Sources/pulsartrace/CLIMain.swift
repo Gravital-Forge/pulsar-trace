@@ -58,10 +58,12 @@ struct CLIMain {
             subcommands:
               record             Record a meeting headlessly
                                  [--output PATH] [--duration MIN] [--mic INDEX]
-                                 [--no-system-audio] [--model base|large-v3]
+                                 [--no-system-audio]
+                                 [--refine-model large-v3-turbo|large-v3-whisperkit]
                                  [--list-mics]
               refine <audio>     Transcribe + diarize a recording
-                                 [--model base|large-v3]
+                                 [--model large-v3-turbo|large-v3-whisperkit]
+                                 [--language CODE]
               speakers           Manage the speaker library
                                  list | rename | merge | delete
               events tail        Tail the events log [--type TYPE] [--no-follow]

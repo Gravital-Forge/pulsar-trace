@@ -120,23 +120,22 @@ Emitted once when a PulsarTrace process exits cleanly. Same payload shape as
 
 #### `model_downloaded` (version 1)
 
-Emitted once after a whisper model file is downloaded **and** its SHA-256
-verified against the pinned hash (R54c, R54d). Category: `system`.
+Emitted once after a model bundle finishes downloading.
+Category: `system`.
 
-A download that fails or fails verification emits **nothing** — the partial /
-corrupt file is deleted and the download retried (resuming via HTTP Range); only
-a fully-verified model produces this event. So one `model_downloaded` line means
-exactly one model is now cached and trustworthy.
+Downloads are SDK-managed. A download that fails emits **nothing** — only a
+fully-downloaded model produces this event. So one `model_downloaded` line means
+exactly one model is now cached and ready.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `model_name` | string | Short model name, e.g. `base`, `large-v3`. |
-| `size_bytes` | integer | Verified file size in bytes. |
-| `sha256` | string | Lowercase-hex SHA-256 the file was verified against. |
+| `model_name` | string | Short model name, e.g. `parakeet-v3`, `large-v3-turbo`, `speaker-diarization-coreml`. |
+| `size_bytes` | integer | Total size of the model bundle in bytes. |
+| `sha256` | string | Lowercase-hex SHA-256 — a computed directory digest of the model bundle (deterministic hash over relative paths + per-file hashes, D39/D40). |
 | `source_host` | string | Bare hostname the model came from, e.g. `huggingface.co`. Never a full URL — no query params, no path (privacy + no-telemetry). |
 
 ```jsonl
-{"id":"evt_01KR...","model_name":"base","sha256":"60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe","size_bytes":147951465,"source_host":"huggingface.co","ts":"2026-05-16T01:59:45Z","type":"model_downloaded","version":1}
+{"id":"evt_01KR...","model_name":"parakeet-v3","sha256":"a3f1c92b7e0d4856f2c1b9047e63da815c4f0982ab7d3e16c850f72bd419e0af","size_bytes":498238464,"source_host":"huggingface.co","ts":"2026-05-16T01:59:45Z","type":"model_downloaded","version":1}
 ```
 
 ### Refinement lifecycle
@@ -154,10 +153,10 @@ Category: `refinement_lifecycle`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `recording_id` | string | The recording being refined (`rec_<short>`). |
-| `model_refine` | string | Whisper model used for the refine pass, e.g. `large-v3`, `base`. |
+| `model_refine` | string | Refine model name (e.g. `large-v3-turbo`, `large-v3-whisperkit`). |
 
 ```jsonl
-{"id":"evt_01KRQD...","model_refine":"base","recording_id":"rec_two-speakers-alternating","ts":"2026-05-16T03:26:32Z","type":"refinement_started","version":1}
+{"id":"evt_01KRQD...","model_refine":"large-v3-turbo","recording_id":"rec_two-speakers-alternating","ts":"2026-05-16T03:26:32Z","type":"refinement_started","version":1}
 ```
 
 #### `refinement_completed` (version 1)
@@ -412,10 +411,10 @@ reacting to this event knows audio is genuinely flowing. Category:
 | `output_dir_basename` | string | Basename of the recording's output folder — never a full path. |
 | `mic_device` | string | The microphone in use (its localized name), or `none`. |
 | `system_audio_enabled` | boolean | Whether system-audio capture is on for this session (R6). |
-| `model_live` | string | Whisper model name used for the live pass, e.g. `base`. |
+| `model_live` | string | Model name used for the live pass; fixed to `parakeet-v3` (the only live backend, D39). |
 
 ```jsonl
-{"id":"evt_01KR...","mic_device":"MacBook Air Microphone","model_live":"base","output_dir_basename":"meeting-2026-05-16","recording_id":"rec_4f2a","system_audio_enabled":true,"ts":"2026-05-16T14:30:05Z","type":"recording_started","version":1}
+{"id":"evt_01KR...","mic_device":"MacBook Air Microphone","model_live":"parakeet-v3","output_dir_basename":"meeting-2026-05-16","recording_id":"rec_4f2a","system_audio_enabled":true,"ts":"2026-05-16T14:30:05Z","type":"recording_started","version":1}
 ```
 
 #### `recording_paused` (version 1)

@@ -12,8 +12,10 @@ import Foundation
 /// is byte-deterministic.
 public struct RefinementMetadata: Codable, Equatable, Sendable {
 
-    /// Current schema version. Bumped only on a breaking change to this shape.
-    public static let currentSchemaVersion = 1
+    /// Current schema version. v2: `pyannote_model` → `diarization_model`
+    /// {id, revision} (D40 — diarization moved to the ANE; the pyannote.audio
+    /// library version no longer exists).
+    public static let currentSchemaVersion = 2
 
     /// One speaker in the refined transcript.
     public struct Speaker: Codable, Equatable, Sendable {
@@ -56,25 +58,17 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         }
     }
 
-    /// Identity of the pyannote model used for diarization.
-    public struct PyannoteModelInfo: Codable, Equatable, Sendable {
-        /// Model id, e.g. `pyannote/speaker-diarization-community-1`.
+    /// Identity of the diarization model used for the refine pass.
+    public struct DiarizationModelInfo: Codable, Equatable, Sendable {
+        /// Model id, e.g. `FluidInference/speaker-diarization-coreml`.
         public let id: String
-        /// Hugging Face hub commit SHA of the model checkpoint (D11/D12).
+        /// Content digest of the model directory (DirectoryDigest SHA-256) —
+        /// the speaker library's centroid-compatibility key (D40).
         public let revision: String
-        /// pyannote.audio library version string.
-        public let libraryVersion: String
 
-        public init(id: String, revision: String, libraryVersion: String) {
+        public init(id: String, revision: String) {
             self.id = id
             self.revision = revision
-            self.libraryVersion = libraryVersion
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case id
-            case revision
-            case libraryVersion = "library_version"
         }
     }
 
@@ -94,8 +88,8 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
     public let speakers: [Speaker]
     /// Whisper model identity.
     public let whisperModel: WhisperModelInfo
-    /// pyannote model identity (nil if diarization was skipped, e.g. no speech).
-    public let pyannoteModel: PyannoteModelInfo?
+    /// Diarization model identity (nil if diarization was skipped, e.g. no speech).
+    public let diarizationModel: DiarizationModelInfo?
     /// Detected/used transcription language (ISO-639-1).
     public let language: String
     /// Basename of the user-supplied input (never a full path — Invariant #7).
@@ -109,7 +103,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         durationSeconds: Double,
         speakers: [Speaker],
         whisperModel: WhisperModelInfo,
-        pyannoteModel: PyannoteModelInfo?,
+        diarizationModel: DiarizationModelInfo?,
         language: String,
         sourceBasename: String
     ) {
@@ -120,7 +114,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         self.durationSeconds = durationSeconds
         self.speakers = speakers
         self.whisperModel = whisperModel
-        self.pyannoteModel = pyannoteModel
+        self.diarizationModel = diarizationModel
         self.language = language
         self.sourceBasename = sourceBasename
     }
@@ -133,7 +127,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         case durationSeconds = "duration_seconds"
         case speakers
         case whisperModel = "whisper_model"
-        case pyannoteModel = "pyannote_model"
+        case diarizationModel = "diarization_model"
         case language
         case sourceBasename = "source_basename"
     }

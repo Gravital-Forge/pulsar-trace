@@ -6,13 +6,12 @@ import Foundation
 struct WindowTranscribingTests {
 
     /// A stub conforming to the seam — proves the protocol exists and is usable
-    /// without a real whisper context.
+    /// without a real model.
     final class StubWindowTranscriber: WindowTranscribing, @unchecked Sendable {
         func transcribeWindow(
             _ samples: [Float],
             windowStart: Duration,
-            options: WhisperOptions,
-            abort: AbortToken?
+            options: TranscriptionOptions
         ) throws -> TranscriptionResult {
             TranscriptionResult(
                 segments: [TranscriptSegment(
@@ -25,7 +24,7 @@ struct WindowTranscribingTests {
     func stubConforms() throws {
         let stub: any WindowTranscribing = StubWindowTranscriber()
         let result = try stub.transcribeWindow(
-            [0.1, 0.2], windowStart: .seconds(1), options: .init(), abort: nil)
+            [0.1, 0.2], windowStart: .seconds(1), options: .init())
         #expect(result.segments.first?.text == "stub")
     }
 }

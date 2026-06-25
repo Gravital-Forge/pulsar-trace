@@ -35,18 +35,17 @@ public struct RecordPlan: Sendable, Equatable {
     ///   - systemAudioEnabled: `false` for a mic-only recording (R6) — the
     ///     engine then reads a single stream from the mic socket and no system
     ///     socket is wired.
-    ///   - modelName: whisper model for both the live pass and the post-pass.
-    ///   - allowedLanguages: optional ISO-639-1 allow list for the live
-    ///     pass's per-window language detection. Empty (the default) →
-    ///     unrestricted auto-detect. When non-empty, the engine is launched
-    ///     with `--allowed-languages a,b,...` and pre-detects per window,
-    ///     forcing the highest-probability allowed code.
+    ///   - allowedLanguages: optional ISO-639-1 allow list. When non-empty,
+    ///     the engine is launched with `--allowed-languages a,b,...`. The live
+    ///     pass uses it as a *script hint*: exactly one code → that code hints
+    ///     Parakeet (which has no language-ID head); otherwise → auto. The
+    ///     refine pass reproduces the old pin / detect-among semantics over the
+    ///     allow list (tasks 13/14). Empty (the default) → auto.
     public static func make(
         outputFolder: URL,
         paths: AppPaths,
         micDeviceID: String?,
         systemAudioEnabled: Bool,
-        modelName: String,
         allowedLanguages: [String] = []
     ) -> RecordPlan {
         let recordingId = RecordingFolder.recordingId(
@@ -59,7 +58,12 @@ public struct RecordPlan: Sendable, Equatable {
             "--out", outputFolder.path,
             "--system-socket", systemSocket.path,
             "--mic-socket", micSocket.path,
-            "--model", modelName,
+            // The live pass has exactly one backend (D39). Capture still
+            // takes `--model` because the value feeds the public
+            // `recording_started` event's `model_live` field
+            // (RecordingStartedEvent) — removing an event field is a
+            // breaking public-API change. Fixed to the only live model.
+            "--model", "parakeet-v3",
         ]
         if let micDeviceID {
             captureArgs += ["--mic-device", micDeviceID]
@@ -72,7 +76,6 @@ public struct RecordPlan: Sendable, Equatable {
             "--live",
             "--out", outputFolder.path,
             "--recording-id", recordingId,
-            "--model", modelName,
         ]
         if systemAudioEnabled {
             // Two-socket mode: the system stream is diarized, the mic stream

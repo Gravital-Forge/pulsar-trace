@@ -60,9 +60,9 @@ public enum RefinementJobState: Codable, Equatable, Sendable {
     /// Fraction in `0...1` if the queue can estimate progress, else `nil`.
     ///
     /// The estimate weights each completed stage as `1/stepsTotal` and within
-    /// the running stage scales by `regionIndex/regionsTotal` when whisper
-    /// is running, otherwise by 0.5 (single-shot stages like diarization
-    /// report half-credit while in flight — not 0, not 1).
+    /// the running stage scales by `regionIndex/regionsTotal` when a region
+    /// transcribe is running, otherwise by 0.5 (single-shot stages like
+    /// diarization report half-credit while in flight — not 0, not 1).
     public var progressFraction: Double? {
         switch self {
         case .queued, .cancelled, .failed: return nil

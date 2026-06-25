@@ -103,32 +103,19 @@ public enum EnvironmentDoctor {
                 + "Apple Silicon is recommended")
     }
 
-    /// A pinned whisper model's cache state. An absent model is only a warning:
-    /// it downloads automatically on first transcription (R54c).
-    public static func modelCheck(name: String, present: Bool) -> DoctorCheck {
-        if present {
+    /// The diarization models (FluidAudio CoreML bundles, D40). Absence is not
+    /// an error — they download automatically from huggingface.co on the first
+    /// recording or refine — but the user should know a download is coming.
+    public static func diarizerModelsCheck(cached: Bool) -> DoctorCheck {
+        if cached {
             return DoctorCheck(
-                name: "whisper model: \(name)", status: .ok,
-                detail: "cached")
+                name: "Diarization models", status: .ok,
+                detail: "CoreML bundles cached")
         }
         return DoctorCheck(
-            name: "whisper model: \(name)", status: .warn,
-            detail: "not downloaded — it downloads automatically on first use "
-                + "(`pulsartrace refine` / `record`)")
-    }
-
-    /// The Python diarization runtime. Without it, diarization is unavailable
-    /// and transcripts fall back to a single unlabeled speaker.
-    public static func pythonRuntimeCheck(interpreterPresent: Bool) -> DoctorCheck {
-        if interpreterPresent {
-            return DoctorCheck(
-                name: "Python diarization", status: .ok,
-                detail: "runtime found")
-        }
-        return DoctorCheck(
-            name: "Python diarization", status: .warn,
-            detail: "diarization runtime not found — transcripts will not be "
-                + "speaker-labeled; build it with `python/build-venv.sh`")
+            name: "Diarization models", status: .warn,
+            detail: "not yet downloaded — the first recording or refine fetches "
+                + "them from huggingface.co automatically")
     }
 
     /// The persistent speaker library. A database that will not open is a hard

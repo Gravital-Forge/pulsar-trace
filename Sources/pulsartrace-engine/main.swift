@@ -1,21 +1,23 @@
 import Foundation
 import Logging
 import PulsarTraceEngine
+#if canImport(Glibc)
+import Glibc
+#else
+import Darwin
+#endif
 
 /// `pulsartrace-engine` — the streaming engine binary.
 ///
 /// In its simplest mode it consumes an `AudioFrameSource` and reports a frame
-/// count. `--transcribe` runs a source through `WhisperTranscriber` and
-/// prints the R13 markdown transcript. Whisper streaming and diarization run
-/// behind the same source-consuming loop.
+/// count. `--live` runs the streaming transcription + diarization pass over a
+/// source, growing an append-only `live.md`.
 ///
 /// Usage:
 ///   pulsartrace-engine --stdin                  Read raw f32le PCM from stdin.
 ///   pulsartrace-engine --fixture <path>         Replay a WAV fixture (fast mode).
 ///   pulsartrace-engine --source fixture <path>  Same; verbose source syntax.
 ///   pulsartrace-engine --socket <path>          Read framed PCM from a socket.
-///   pulsartrace-engine --source fixture <path> --transcribe [--model base]
-///                                               Offline-transcribe + print R13 markdown.
 @main
 struct EngineMain {
     static func main() async {
@@ -27,9 +29,6 @@ struct EngineMain {
             if args.contains("--live") {
                 let summary = try await live(args: args, lifecycle: lifecycle)
                 FileHandle.standardOutput.write(Data((summary + "\n").utf8))
-            } else if args.contains("--transcribe") {
-                let markdown = try await transcribe(args: args, lifecycle: lifecycle)
-                FileHandle.standardOutput.write(Data(markdown.utf8))
             } else {
                 let result = try await run(args: args)
                 FileHandle.standardOutput.write(Data(
@@ -72,34 +71,6 @@ struct EngineMain {
             """)
     }
 
-    /// Offline-transcribe a fixture source and render R13 markdown.
-    ///
-    /// Downloads/verifies the requested model on first use (R54c/R54d), keeps
-    /// it resident in one `WhisperTranscriber`, and runs the whole fixture
-    /// through a single `whisper_full` call.
-    static func transcribe(args: [String], lifecycle: AppLifecycle) async throws -> String {
-        guard let path = fixturePath(in: args) else {
-            throw UsageError(message: """
-                usage: pulsartrace-engine --source fixture <wav> --transcribe [--model base|large-v3]
-                """)
-        }
-        let modelName = value(after: "--model", in: args) ?? "base"
-        guard let model = ModelCatalog.model(named: modelName) else {
-            throw UsageError(message: "unknown model '\(modelName)'; known: "
-                + ModelCatalog.all.map(\.name).joined(separator: ", "))
-        }
-
-        let store = ModelStore(events: lifecycle.events)
-        let modelURL = try await store.ensureAvailable(model)
-
-        let transcriber = try WhisperTranscriber(modelURL: modelURL)
-        let pipeline = OfflineTranscriptionPipeline()
-        let source = FixturePlaybackSource(
-            file: URL(fileURLWithPath: path), realtime: false)
-        let output = try await pipeline.run(source: source, transcriber: transcriber)
-        return output.markdown
-    }
-
     /// Run the live pass — streaming transcription + provisional
     /// live diarization — over a source, growing an append-only `live.md`.
     ///
@@ -114,9 +85,12 @@ struct EngineMain {
     /// else a sibling folder named for the fixture stem, else a timestamped
     /// folder in the cwd.
     ///
-    /// Live diarization is best-effort: if the pyannote subprocess cannot
-    /// start it is skipped and system speakers stay the generic
-    /// `Them?`. `--no-live-diarization` skips it outright.
+    /// Live diarization is best-effort: it runs in-process via
+    /// `DiarizerEngineRawAdapter` over the shared `DiarizerEngine` actor (the
+    /// same offline stack the refine pass uses). If the diarizer models cannot
+    /// be loaded the live pass continues without it — system utterances then
+    /// have no live-diarization coverage and are labelled the neutral
+    /// `Speaker?` (§2b). `--no-live-diarization` skips it outright.
     static func live(args: [String], lifecycle: AppLifecycle) async throws -> String {
         // --- resolve the source(s) ------------------------------------------
         let source: any AudioFrameSource
@@ -131,9 +105,8 @@ struct EngineMain {
                 file: URL(fileURLWithPath: path), realtime: true)
             // `--mic-fixture <path>` pairs a second realtime fixture as the
             // mic stream so a one-WAV repro can exercise the dual-stream
-            // contention on the shared SerializingHostProxy that the real
-            // live pass produces — pass the same WAV to drive 2× decode
-            // load on one whisper subprocess.
+            // contention on the single shared ParakeetEngine actor — pass
+            // the same WAV to drive 2× decode load on one resident model.
             if let micPath = value(after: "--mic-fixture", in: args) {
                 micSource = FixturePlaybackSource(
                     file: URL(fileURLWithPath: micPath), realtime: true)
@@ -156,7 +129,7 @@ struct EngineMain {
             throw UsageError(message: """
                 usage: pulsartrace-engine --live \
                 [--stdin | --source fixture <wav> [--mic-fixture <wav>] | --system-socket <path> [--mic-socket <path>]] \
-                [--out <dir>] [--recording-id <id>] [--model base|large-v3] [--no-live-diarization]
+                [--out <dir>] [--recording-id <id>] [--no-live-diarization]
                 """)
         }
 
@@ -178,89 +151,42 @@ struct EngineMain {
         let recordingId = value(after: "--recording-id", in: args)
             ?? RecordingFolder.recordingId(forName: stemName)
 
-        // --- whisper model (resident) ---------------------------------------
-        let modelName = value(after: "--model", in: args) ?? "base"
-        guard let model = ModelCatalog.model(named: modelName) else {
-            throw UsageError(message: "unknown model '\(modelName)'")
-        }
-        let modelURL = try await ModelStore(events: lifecycle.events)
-            .ensureAvailable(model)
-        // Live engine: whisper runs in a subprocess so a wedged decode can be
-        // recovered (SIGKILL + respawn) without killing this engine — capture,
-        // WAV writers, live.md, events all stay live. The parent-side
-        // watchdog lives inside `RemoteWindowTranscriber`; the old in-process
-        // `DecodeWatchdog` is gone (the abort_callback path it relied on is
-        // structurally insufficient — see the 2026-05-26 wedge case).
-        //
-        // Both the system and mic streams share **one** subprocess via a
-        // `SerializingHostProxy` (Phase 4-fix). The `pulsartrace-whisper`
-        // binary takes a process-wide `flock` (spec §4 Layer 2), so two
-        // independent subprocesses would have one exit with code 75. The
-        // proxy serializes every `decode`/`startAndInitialize` call behind
-        // a single `NSLock` — that lock-around-decode is the IPC equivalent
-        // of the in-process `metalLock` `WhisperTranscriber` used and the
-        // same single-decode-at-a-time invariant the binary's flock enforces.
-        // Both `RemoteWindowTranscriber` instances are constructed with
-        // `hostFactory: { _, _ in proxy }` so they share the inner host;
-        // a wedge in either stream sigkills the shared inner and the
-        // first follow-up decode on either transcriber respawns it.
-        // See docs/specs/2026-05-26-whisper-subprocess-design.md §6/§7/§9.
-        // `lockPath: <standard path>` — both live (here) and refinement
-        // (`RefinementJobQueue.makeStandard`) point at the *same*
-        // `~/Library/Application Support/PulsarTrace/whisper.lock`
-        // because the design's single-instance invariant (spec §4 G4 /
-        // Layer 2) is one whisper subprocess globally, not one per
-        // workload. The mac-app's pause-for-recording dance enforces
-        // mutual exclusion at the queue layer; the shared flock is the
-        // OS-level backstop. Passing `nil` here used to imply "no lock,"
-        // but the subprocess defaults the path internally
-        // (`pulsartrace-whisper/main.swift`'s `ParsedArgs.lockPath`
-        // fallback) — so this is now explicit instead of misleading.
-        let whisperHostConfig = WhisperSubprocessHost.Configuration(
-            binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
-            socketDirectory: AppPaths.standard.socketDirectory,
-            lockPath: AppPaths.standard.applicationSupport
-                .appendingPathComponent("whisper.lock", isDirectory: false),
-            forceCPU: !WhisperOptions.defaultGPUEnabled,
-            spawnTimeout: .seconds(10),
-            // 180 s — generous warm-restart budget so a transient GPU /
-            // CoreML stall after a wedge SIGKILL doesn't trip
-            // `init refused`. See WhisperSubprocessHost.Configuration.
-            initTimeout: .seconds(180))
-        let sharedHostProxy = SerializingHostProxy(
-            configuration: whisperHostConfig,
+        // --- live transcriber (resident, ANE) --------------------------------
+        // Parakeet v3 via FluidAudio (D39): in-process CoreML — no subprocess,
+        // no Metal, no flock, and no live model knob. Both streams share one
+        // resident engine; the actor serializes decodes (the in-process
+        // analogue of the old SerializingHostProxy). First launch downloads
+        // ~0.5 GB from huggingface.co. A wedged window decode is bounded by
+        // ParakeetWindowTranscriber's 30 s deadline — the window is skipped
+        // and the post-pass recovers the audio.
+        let parakeet = try await ParakeetEngine.load(
+            cacheRoot: AppPaths.standard.modelsCacheDirectory,
+            events: lifecycle.events,
             logger: Logger(label: LogSubsystem.engine))
-        let whisperConfig = RemoteWindowTranscriber.Configuration(
-            binaryURL: WhisperBinaryResolver.defaultBinaryURL(),
-            modelURL: modelURL,
-            socketDirectory: AppPaths.standard.socketDirectory,
-            forceCPU: !WhisperOptions.defaultGPUEnabled,
-            // 10 s matches the prior in-process `DecodeWatchdog.deadline`.
-            decodeDeadline: .seconds(10),
-            respawnDeadline: .seconds(180))
-        let sharedHostFactory: RemoteWindowTranscriber.HostFactory = { _, _ in
-            sharedHostProxy
-        }
-        let transcriber: any WindowTranscribing = RemoteWindowTranscriber(
-            configuration: whisperConfig,
-            logger: Logger(label: LogSubsystem.engine),
-            hostFactory: sharedHostFactory)
-        let micTranscriber: (any WindowTranscribing)?
-        if micSource != nil {
-            micTranscriber = RemoteWindowTranscriber(
-                configuration: whisperConfig,
-                logger: Logger(label: LogSubsystem.engine),
-                hostFactory: sharedHostFactory)
-        } else {
-            micTranscriber = nil
-        }
+        let transcriber: any WindowTranscribing =
+            ParakeetWindowTranscriber(engine: parakeet)
+        let micTranscriber: (any WindowTranscribing)? = micSource != nil
+            ? ParakeetWindowTranscriber(engine: parakeet)
+            : nil
 
-        // --- live diarization config (dev venv + .env, like RefineCommand) --
-        let liveDiarizerConfig: LiveDiarizer.Configuration?
-        if args.contains("--no-live-diarization") {
-            liveDiarizerConfig = nil
-        } else {
-            liveDiarizerConfig = Self.liveDiarizerConfig()
+        // --- live diarization in-process (D40 stack) -------------------------
+        // The windowed live pass runs FluidAudio's offline diarizer in-process
+        // via `DiarizerEngineRawAdapter` — the same resident `DiarizerEngine`
+        // actor the offline refine pass uses, so live and post-pass embeddings
+        // share one vector space (R29). Best-effort: a model-load failure must
+        // NOT crash the live pass — it degrades to neutral `Speaker?` labels
+        // (§2b). `--no-live-diarization` skips it entirely.
+        var liveRawDiarizer: (any RawWindowDiarizing)?
+        if !args.contains("--no-live-diarization") {
+            do {
+                let diarEngine = try await DiarizerEngine.load(
+                    cacheRoot: AppPaths.standard.modelsCacheDirectory,
+                    events: lifecycle.events)
+                liveRawDiarizer = DiarizerEngineRawAdapter(engine: diarEngine)
+            } catch {
+                Logger(label: LogSubsystem.engine).error(
+                    "live diarization unavailable — continuing without it: \(PathRedactor.redactHome("\(error)"))")
+            }
         }
 
         // --- speaker library, READ-ONLY (R18/R32) ---------------------------
@@ -280,18 +206,18 @@ struct EngineMain {
             library = nil
         }
 
-        // Optional per-window language allow-list (e.g.
-        // `--allowed-languages en,pl`). Empty → unrestricted auto-detect
-        // (the legacy behaviour); non-empty → the engine pre-detects per
-        // window and forces the highest-probability allowed code, so a
-        // `nn` misfire on English audio cannot poison the committer.
+        // Optional language allow-list (e.g. `--allowed-languages en,pl`).
+        // Parakeet has no language-ID head, so this is a *hint*, not a
+        // detector: ParakeetEngine.languageHint maps exactly one allowed code
+        // to a script-aware hint; with zero or more than one allowed code it
+        // falls back to auto (no hint). Empty → auto.
         let allowedLanguages: [String] = value(
             after: "--allowed-languages", in: args)
             .map { $0.split(separator: ",").map {
                 $0.trimmingCharacters(in: .whitespaces).lowercased()
             }.filter { !$0.isEmpty } } ?? []
         let transcriberConfig = StreamingTranscriber.Configuration(
-            whisperOptions: WhisperOptions(allowedLanguages: allowedLanguages))
+            options: TranscriptionOptions(allowedLanguages: allowedLanguages))
 
         let pipeline = StreamingPipeline(events: lifecycle.events)
         let output = try await pipeline.run(
@@ -300,7 +226,7 @@ struct EngineMain {
                 recordingStart: recordingStart,
                 recordingId: recordingId,
                 transcriberConfig: transcriberConfig,
-                liveDiarizerConfig: liveDiarizerConfig),
+                liveRawDiarizer: liveRawDiarizer),
             systemTranscriber: transcriber,
             micTranscriber: micTranscriber,
             systemSource: source,
@@ -321,67 +247,6 @@ struct EngineMain {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd-HHmmss"
         return f.string(from: Date())
-    }
-
-    /// Build the `LiveDiarizer.Configuration` against the dev venv + repo
-    /// `.env` — mirrors `RefineCommand.makeDiarizer`'s wiring (project-docs/DECISIONS.md
-    /// D3/D9). A future change swaps this for the bundled python runtime.
-    static func liveDiarizerConfig() -> LiveDiarizer.Configuration {
-        let env = ProcessInfo.processInfo.environment
-        let repoRoot: URL
-        if let root = env["PULSARTRACE_REPO_ROOT"], !root.isEmpty {
-            repoRoot = URL(fileURLWithPath: root)
-        } else {
-            repoRoot = URL(fileURLWithPath: #filePath)   // …/Sources/pulsartrace-engine/main.swift
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-        }
-        let workingDir = repoRoot.appendingPathComponent("python/pulsartrace-ai")
-        let venvPython: URL
-        if let p = env["PULSARTRACE_VENV_PYTHON"], !p.isEmpty {
-            venvPython = URL(fileURLWithPath: p)
-        } else {
-            venvPython = workingDir.appendingPathComponent(".venv/bin/python")
-        }
-
-        var subprocessEnv = Self.dotEnv(repoRoot: repoRoot)
-        if let token = env["HF_TOKEN"], !token.isEmpty {
-            subprocessEnv["HF_TOKEN"] = token
-        }
-        if let caches = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask).first {
-            subprocessEnv["HF_HOME"] = caches
-                .appendingPathComponent("PulsarTrace/huggingface").path
-        }
-        return LiveDiarizer.Configuration(
-            pythonExecutable: venvPython,
-            workingDirectory: workingDir,
-            environment: subprocessEnv)
-    }
-
-    /// Load `KEY=VALUE` pairs from the repo `.env` (dev-only, D9).
-    static func dotEnv(repoRoot: URL) -> [String: String] {
-        let envFile = repoRoot.appendingPathComponent(".env")
-        guard let text = try? String(contentsOf: envFile, encoding: .utf8) else {
-            return [:]
-        }
-        var out: [String: String] = [:]
-        for raw in text.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#"),
-                  let eq = line.firstIndex(of: "=") else { continue }
-            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: eq)...])
-                .trimmingCharacters(in: .whitespaces)
-            if value.count >= 2,
-               (value.hasPrefix("\"") && value.hasSuffix("\""))
-                || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                value = String(value.dropFirst().dropLast())
-            }
-            out[key] = value
-        }
-        return out
     }
 
     /// Resolve the fixture WAV path from either `--fixture <p>` or

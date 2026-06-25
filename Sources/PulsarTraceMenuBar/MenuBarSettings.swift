@@ -1,4 +1,5 @@
 import Foundation
+import PulsarTraceEngine
 
 /// A keyboard shortcut for the global record toggle hotkey (R41).
 ///
@@ -37,14 +38,9 @@ public final class MenuBarSettings {
     /// The `UserDefaults` suite name the production app persists into.
     public static let defaultSuiteName = "com.gravitalforge.PulsarTrace"
 
-    /// Default live-pass whisper model — `base` keeps the live pass fast and
-    /// keeps a first run from pulling a 3 GB `large-v3` the user never asked
-    /// for (mirrors `record`'s D24 default).
-    public static let defaultLiveModelName = "base"
-
-    /// Default refine-pass whisper model — `base` so a first run never pulls a
-    /// 3 GB `large-v3` unasked; the user opts into `large-v3` in Settings (D29).
-    public static let defaultRefineModelName = "base"
+    /// Default refine-pass model — Whisper large-v3-turbo on the ANE via
+    /// WhisperKit (D39): near-large-v3 accuracy, ~626 MB, GPU-free.
+    public static let defaultRefineModelName = WhisperKitModelCatalog.defaultModel.name
 
     /// Default output folder when the user has never chosen one:
     /// `~/Documents/PulsarTrace`. Derived at read time and **never persisted**
@@ -65,13 +61,8 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
-    /// Whisper model name for the live pass (R43, D29) — fast model preferred.
-    public var liveModelName: String {
-        didSet { save() }
-    }
-
-    /// Whisper model name for the post-recording refine pass (R43, D29) —
-    /// a higher-quality model is appropriate here (D4 documents `large-v3`).
+    /// Refine-pass model name (R43, D39) — a `WhisperKitModelCatalog` name;
+    /// unknown/retired names re-default on load.
     public var refineModelName: String {
         didSet { save() }
     }
@@ -146,7 +137,9 @@ public final class MenuBarSettings {
         static let micDeviceID = "selectedMicDeviceID"
         /// Legacy single-model key (pre-D29) — read once on load to migrate.
         static let legacyModelName = "modelName"
-        static let liveModelName = "liveModelName"
+        /// Legacy live-model key (pre-D39) — removed on load; the live pass
+        /// has exactly one backend now (parakeet-v3, not user-selectable).
+        static let legacyLiveModelName = "liveModelName"
         static let refineModelName = "refineModelName"
         static let outputFolderPath = "outputFolderPath"
         /// Legacy security-scoped bookmark key (pre-D30) — read once to migrate.
@@ -169,21 +162,18 @@ public final class MenuBarSettings {
         self.defaults = store
 
         self.selectedMicDeviceID = store.string(forKey: Key.micDeviceID)
-        // D29 split the single `modelName` setting into live + refine models.
-        // Migration: if the new keys are absent but the legacy key exists,
-        // seed `liveModelName` from it (the live pass kept the same default);
-        // `refineModelName` falls back to its own documented default.
-        let legacyModelName = store.string(forKey: Key.legacyModelName)
-        self.liveModelName = store.string(forKey: Key.liveModelName)
-            ?? legacyModelName
-            ?? Self.defaultLiveModelName
+        // D39: the live model knob is gone (Parakeet is the only live
+        // backend). Drop both stale keys — the pre-D29 single `modelName`
+        // and the pre-D39 `liveModelName` — so they can never resurface,
+        // same pattern as the legacy bookmark migrations below.
+        store.removeObject(forKey: Key.legacyModelName)
+        store.removeObject(forKey: Key.legacyLiveModelName)
+        // A persisted pre-D39 refine name ("base"/"large-v3") names a
+        // retired ggml backend — re-default to the ANE catalog (clean over
+        // compat: no display shims for dead backends).
         self.refineModelName = store.string(forKey: Key.refineModelName)
+            .flatMap { WhisperKitModelCatalog.model(named: $0)?.name }
             ?? Self.defaultRefineModelName
-        // Drop the migrated-from legacy key so it cannot resurface in a future
-        // migration. The new keys are persisted by the next `save()`.
-        if legacyModelName != nil {
-            store.removeObject(forKey: Key.legacyModelName)
-        }
         // D30: the output folder is now a plain path. If the new key is absent
         // but a legacy security-scoped bookmark exists, best-effort resolve it
         // once to a path (no security scope — v1 is unsandboxed), then drop the
@@ -242,7 +232,6 @@ public final class MenuBarSettings {
     /// `didSet`; also exposed for an explicit flush.
     public func save() {
         defaults.set(selectedMicDeviceID, forKey: Key.micDeviceID)
-        defaults.set(liveModelName, forKey: Key.liveModelName)
         defaults.set(refineModelName, forKey: Key.refineModelName)
         defaults.set(outputFolderPath, forKey: Key.outputFolderPath)
         defaults.set(systemAudioEnabled, forKey: Key.systemAudioEnabled)

@@ -5,19 +5,19 @@ import Foundation
 /// The `id` (`spk_<ulid>`, R83) is the forever-stable identity an external
 /// agent keys off; `name` is a mutable display string (`Unknown #3`, `Steve`).
 /// `centroid` is the running mean of every appearance embedding (R30), valid
-/// only within `pyannoteModelRevision` (Open Question #3).
+/// only within `modelRevision` (Open Question #3 / D40).
 public struct Speaker: Sendable, Equatable, Identifiable {
 
     /// Stable speaker id (`spk_<ulid>`).
     public let id: String
     /// Mutable display name (`Unknown #N` placeholder or a user-assigned name).
     public var name: String
-    /// Running-mean embedding centroid — 256-d for pyannote community-1.
+    /// Running-mean embedding centroid — 256-d for the WeSpeaker backend.
     public var centroid: [Float]
-    /// pyannote model checkpoint revision the centroid was built under. A
-    /// centroid is only comparable with embeddings from the same revision
-    /// (Open Question #3 — cross-revision matches are refused).
-    public var pyannoteModelRevision: String
+    /// Diarization-model revision (content digest, D40) the centroid was built
+    /// under. A centroid is only comparable with embeddings from the same
+    /// revision (Open Question #3 — cross-revision matches are refused).
+    public var modelRevision: String
     /// Number of recording appearances folded into the centroid.
     public var appearanceCount: Int
     /// Wall-clock of the most recent appearance (ISO-8601 UTC).
@@ -41,7 +41,7 @@ public struct Speaker: Sendable, Equatable, Identifiable {
         id: String,
         name: String,
         centroid: [Float],
-        pyannoteModelRevision: String,
+        modelRevision: String,
         appearanceCount: Int,
         lastSeen: String,
         sampleAudioPath: String?,
@@ -52,7 +52,7 @@ public struct Speaker: Sendable, Equatable, Identifiable {
         self.id = id
         self.name = name
         self.centroid = centroid
-        self.pyannoteModelRevision = pyannoteModelRevision
+        self.modelRevision = modelRevision
         self.appearanceCount = appearanceCount
         self.lastSeen = lastSeen
         self.sampleAudioPath = sampleAudioPath

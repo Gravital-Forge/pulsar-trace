@@ -11,14 +11,14 @@ import Logging
 /// ## Concurrency design
 ///
 /// The system and mic streams must be consumed *concurrently* so both run at
-/// real-time pace. But a `WhisperTranscriber` is not `Sendable` (it owns a
-/// `whisper_context`), so the transcribers cannot be captured into child
+/// real-time pace. But a window transcriber is not `Sendable` (it drives a
+/// resident model), so the transcribers cannot be captured into child
 /// tasks. The resolution: the **frame reading** runs on child tasks (an
 /// `AudioFrameSource` *is* `Sendable`, only its iterator is not), each feeding
 /// a single `AsyncStream` of `(stream, frame)` tuples. The run loop then
 /// consumes that merged stream on one task, holding both transcribers as
-/// locals — so whisper is only ever touched from one task and `live.md` only
-/// ever sees one append at a time.
+/// locals — so the decode is only ever touched from one task and `live.md`
+/// only ever sees one append at a time.
 final class LiveRunner: Sendable {
 
     /// Which physical stream a merged frame came from.
@@ -60,6 +60,17 @@ final class LiveRunner: Sendable {
     /// reports on the first tick after it crosses 2 s.
     static let defaultPhaseHeartbeatThreshold: Duration = .seconds(2)
 
+    /// Neutral provisional label for a committed system utterance the live pass
+    /// has **no diarization coverage** for (§2b). It MUST differ from every
+    /// `LiveDiarizer.provisionalKey(index:)` — especially `index: 0` ("Them").
+    /// Earlier code fell back to `"Them"` on no coverage, which collided with
+    /// the first stitched speaker's key: the R18 library lookup then matched
+    /// that speaker's centroid and silently attributed the no-coverage
+    /// utterance to the first speaker's name. Using a distinct marker — and
+    /// skipping the R18 lookup entirely on no coverage — makes that collision
+    /// impossible. Rendered as `Speaker?` with the R16 provisional `?` suffix.
+    static let noCoverageLabel = "Speaker"
+
     private let configuration: StreamingPipeline.Configuration
     private let writer: LiveMarkdownWriter
     private let logger: Logger
@@ -78,16 +89,16 @@ final class LiveRunner: Sendable {
     private let phaseHeartbeatInterval: Duration
     /// Phase-tracker threshold. Defaults to `defaultPhaseHeartbeatThreshold`.
     private let phaseHeartbeatThreshold: Duration
-    /// Per-stream whisper hand-off queue capacity, in audio duration. The drain
+    /// Per-stream decode hand-off queue capacity, in audio duration. The drain
     /// drops the oldest frame from the live view (recording unaffected) once a
     /// queue holds more than this much un-decoded audio (Phase 1).
     private let queueCapacity: Duration
-    /// Bounded wait on the whisper worker at teardown. A wedged decode that
+    /// Bounded wait on the decode worker at teardown. A wedged decode that
     /// would otherwise outlive the run cannot make the run hang past this —
-    /// the recording is already safe on disk regardless. With the Phase 4
-    /// subprocess transcriber, a hung decode is recovered earlier still
-    /// (`RemoteWindowTranscriber` SIGKILLs + respawns its subprocess), so the
-    /// teardown bound exists only as a defensive cap.
+    /// the recording is already safe on disk regardless. The in-process
+    /// transcriber recovers a mid-run wedge on its own
+    /// (`ParakeetWindowTranscriber`'s 30 s decode deadline skips the window);
+    /// the teardown bound exists only as a defensive cap.
     private let workerDrainTimeout: Duration
 
     init(
@@ -170,12 +181,14 @@ final class LiveRunner: Sendable {
         let systemStreamer = StreamingTranscriber(
             transcriber: systemTranscriber,
             configuration: configuration.transcriberConfig,
-            logger: logger)
+            logger: logger,
+            streamLabel: "system")
         let micStreamer = micTranscriber.map {
             StreamingTranscriber(
                 transcriber: $0,
                 configuration: configuration.transcriberConfig,
-                logger: logger)
+                logger: logger,
+                streamLabel: "mic")
         }
 
         // The full system + mic audio is streamed straight to disk as frames
@@ -258,12 +271,12 @@ final class LiveRunner: Sendable {
         }
         defer { heartbeatTask.cancel() }
 
-        // --- per-stream whisper hand-off queues + worker --------------------
+        // --- per-stream decode hand-off queues + worker ---------------------
         // Phase 1: the recording-safe drain (the `for await item in merged`
         // loop below) writes the WAV, feeds diarization, and *enqueues* frames
-        // onto bounded per-stream queues — it never calls whisper. A single
+        // onto bounded per-stream queues — it never runs a decode. A single
         // worker Task owns the (non-Sendable) streamers, drains both queues,
-        // and writes committed utterances to the sink. A hung/slow whisper can
+        // and writes committed utterances to the sink. A hung/slow decode can
         // therefore never block the WAV write — the recording is always safe.
         // Wakeup signal: each queue posts on enqueue/finish so the single worker
         // re-checks both queues. AsyncStream's buffering makes lost wakeups
@@ -281,8 +294,8 @@ final class LiveRunner: Sendable {
                 onActivity: { wakeContinuation.yield(()) })
             : nil
 
-        // The streamers are non-Sendable (`StreamingTranscriber` owns a
-        // `whisper_context`). Box them so the worker Task can capture them
+        // The streamers are non-Sendable (`StreamingTranscriber` drives a
+        // resident model). Box them so the worker Task can capture them
         // across the Swift 6 concurrency boundary. Safe: the box's contents are
         // ONLY ever touched on the worker task below — nowhere else.
         let streamerBox = StreamerBox(system: systemStreamer, mic: micStreamer)
@@ -294,33 +307,27 @@ final class LiveRunner: Sendable {
         // The poll loop is the same cancellation-safe shape as `DiarGate.drain`.
         let workerResult = WorkerLanguageResult()
 
-        // Phase 4: the per-decode watchdog is gone. Wedge recovery now lives
-        // **inside** the `WindowTranscribing` conformer. For the system
-        // stream that's `RemoteWindowTranscriber`, which SIGKILLs + respawns
-        // its `pulsartrace-whisper` subprocess past the deadline (spec §6).
-        // For the mic stream (still in-process per Phase 4 Option A) there is
-        // no in-process recovery — a wedged mic decode is a known smaller
-        // gap pending the shared-host proxy (spec §4 / §9). The
-        // `abort: nil` here is intentional: there is nothing useful for the
-        // remote transcriber to do with it (it ignores the token per its
-        // doc-comment) and nothing in-process arming it any more.
+        // The per-decode watchdog is gone. Wedge recovery now lives **inside**
+        // the `WindowTranscribing` conformer: `ParakeetWindowTranscriber`
+        // bounds a wedged window decode with a 30 s deadline and skips it —
+        // the post-pass recovers the audio (D39).
 
-        // The whisper worker: owns the streamers, drains both queues, writes
+        // The decode worker: owns the streamers, drains both queues, writes
         // committed utterances to the sink. Never blocks the drain — the queues
         // drop-oldest under backpressure. Publishes the system stream's detected
         // language to `workerResult` at end of stream (teardown polls it).
         //
-        // The synchronous whisper decode (`ingest` / `finish`) is offloaded to a
+        // The synchronous decode (`ingest` / `finish`) is offloaded to a
         // background DispatchQueue via `Self.offload` rather than called directly
-        // on the worker Task. A whisper decode can block for an unbounded time
-        // (and, until Task 5's abort lands, a wedged one blocks *forever*).
-        // Calling it directly would pin a Swift cooperative-pool thread, which
-        // can starve the bounded teardown timeout's own `Task.sleep` (the timer
-        // continuation needs a free pool thread). Offloading keeps the worker
-        // Task suspended (pool thread free) while the blocking call runs on a
-        // dispatch thread — so the teardown timeout always fires and the run
-        // always returns. The streamer is only ever touched here (the worker is
-        // suspended awaiting the offload), so no concurrent access occurs.
+        // on the worker Task. A decode can block for the transcriber's deadline
+        // (`ParakeetWindowTranscriber`'s 30 s window bound). Calling it directly
+        // would pin a Swift cooperative-pool thread, which can starve the bounded
+        // teardown timeout's own `Task.sleep` (the timer continuation needs a
+        // free pool thread). Offloading keeps the worker Task suspended (pool
+        // thread free) while the blocking call runs on a dispatch thread — so the
+        // teardown timeout always fires and the run always returns. The streamer
+        // is only ever touched here (the worker is suspended awaiting the
+        // offload), so no concurrent access occurs.
         let worker = Task { [streamerBox] () -> Void in
             var wakeIterator = wake.makeAsyncIterator()
             var systemEnded = false
@@ -333,14 +340,13 @@ final class LiveRunner: Sendable {
                 guard let queue, let streamer else { return true }
                 while let frame = queue.tryDequeueNonSuspending() {
                     let elapsed = ContinuousClock.now - startWall
-                    // Phase 4: no per-decode in-process arming. The system
-                    // stream's `RemoteWindowTranscriber` recovers a wedge by
-                    // killing its subprocess; the mic stream is in-process
-                    // for now (Option A) and runs without an abort token —
-                    // pending the shared-host proxy.
+                    // Both streams decode in-process via `ParakeetWindowTranscriber`,
+                    // which bounds a wedged window with its own 30 s deadline and
+                    // skips it — the post-pass recovers the audio. No per-decode
+                    // cancellation token is threaded through.
                     let utterances = await Self.offload {
                         streamer.ingest(
-                            frame: frame, realTimeElapsed: elapsed, abort: nil)
+                            frame: frame, realTimeElapsed: elapsed)
                     }
                     await workerResult.noteProgress()
                     for utt in utterances {
@@ -387,15 +393,19 @@ final class LiveRunner: Sendable {
             }
             // Publish the detected language and mark the worker finished so the
             // bounded poll in teardown can pick it up without awaiting the Task.
+            // No window detected a language → the live pass reports the
+            // "no information" contract value. Parakeet has no language-ID
+            // head, so this is the steady-state value for the live pass (D39);
+            // the refine pass detects/pins the real language.
             await workerResult.finish(
-                language: streamerBox.system.detectedLanguage ?? "en")
+                language: streamerBox.system.detectedLanguage ?? "unknown")
         }
 
         phase.set("loop-start")
 
         // --- the run loop ---------------------------------------------------
         // The drain owns the WAV write, diarization, and the per-stream silence
-        // watchdog; it never calls whisper. Each `.frame` case is WAV-first,
+        // watchdog; it never runs a decode. Each `.frame` case is WAV-first,
         // then enqueues onto the worker's queue. Real-time elapsed is computed
         // per-case where needed (the worker computes its own at decode time).
         for await item in merged {
@@ -423,28 +433,49 @@ final class LiveRunner: Sendable {
                 // gating, the window copy (an independent `[Float]` the
                 // detached task can safely own), and the Fix C bounded trim.
                 // A detached task runs `diarizeWindow` then `diarState.merge`;
-                // the run loop never `await`s the diarizer subprocess. At most
-                // one window is in flight — if the previous one has not
-                // finished, this window is skipped (live diarization is
-                // best-effort/provisional).
+                // the run loop never `await`s the diarizer. At most one window
+                // is in flight — if the previous one has not finished, this
+                // window is skipped (live diarization is best-effort/provisional).
                 if let liveDiarizer {
                     if let req = diarBuffers.append(frame.samples) {
                         phase.set("await-diarGate-tryAcquire")
+                        // Per-pass diagnostic state (numbers only — Hard Invariant #7).
+                        let _diarBufSec = diarBuffers.bufferedSampleCount / AudioFormat.sampleRate
+                        let _qSys = systemQueue.depth
+                        let _qMic = micQueue?.depth ?? 0
                         if await diarGate.tryAcquire() {
                             let windowStart = samplesToDuration(req.startSampleIndex)
+                            let _launchWall = (ContinuousClock.now - startWall).seconds
+                            let _lg = self.logger
                             Task.detached {
+                                let _diarT0 = ContinuousClock.now
                                 let spans = await liveDiarizer.diarizeWindow(
                                     samples: req.samples, windowStart: windowStart)
                                 await diarState.merge(spans)
                                 await diarGate.release()
+                                let _ran = (ContinuousClock.now - _diarT0).seconds * 1000
+                                let _stateSpans = await diarState.count()
+                                let _keys = await liveDiarizer.centroids().count
+                                _lg.notice("""
+                                    live trace diar: t=\(Int(windowStart.seconds))s \
+                                    launchLag=\(String(format: "%.1f", _launchWall - windowStart.seconds))s \
+                                    ran=\(Int(_ran))ms spans=\(spans.count) diarBuf=\(_diarBufSec)s \
+                                    stateSpans=\(_stateSpans) keys=\(_keys) qSys=\(_qSys) qMic=\(_qMic)
+                                    """)
                             }
+                        } else {
+                            self.logger.notice("""
+                                live trace diar SKIPPED(gate busy): \
+                                t≈\(Int((ContinuousClock.now - startWall).seconds))s \
+                                diarBuf=\(_diarBufSec)s qSys=\(_qSys) qMic=\(_qMic)
+                                """)
                         }
                     }
                 } else {
                     _ = diarBuffers.append(frame.samples)   // trim behavior unchanged without a diarizer
                 }
                 diarBufferProbe?(diarBuffers.bufferedSampleCount)
-                // Hand off to whisper — never blocks; drops oldest if behind.
+                // Hand off to the decode worker — never blocks; drops oldest if behind.
                 phase.set("enqueue-system")
                 systemQueue.enqueue(frame)
                 await noteDropEdges(systemQueue, stream: "system", sink: sink)
@@ -540,7 +571,7 @@ final class LiveRunner: Sendable {
 
         // Both streams ended: let the worker drain remaining frames + flush. We
         // *poll* the worker's published result rather than `await worker.value`:
-        // a wedged whisper decode is uncancellable, so structurally awaiting the
+        // a wedged decode is uncancellable, so structurally awaiting the
         // worker (e.g. via `withTaskGroup`) would block the run forever even
         // after `cancel()`. The bound is on *inactivity* — the run stops waiting
         // once the worker has made no progress for `workerDrainTimeout`. The
@@ -548,12 +579,13 @@ final class LiveRunner: Sendable {
         // measures inactivity since teardown began, not since run-start — a
         // short recording whose single final decode is slow but progressing
         // then gets the full `workerDrainTimeout` of grace. A
-        // slow-but-progressing decode (a fast-fed fixture, or CPU whisper
+        // slow-but-progressing decode (a fast-fed fixture, or the model
         // catching up on a backlog) therefore runs to completion, while a
         // genuinely wedged decode releases the run after the timeout. The poll
         // loop is cancellation-aware (mirrors `DiarGate.drain`) and falls back to
-        // "en" if the worker never finished. The recording is safe on disk
-        // regardless.
+        // "unknown" if the worker never reported a language — Parakeet has no
+        // language-ID head, so the language is "unknown" unless a backend
+        // surfaces one. The recording is safe on disk regardless.
         phase.set("await-worker")
         await workerResult.armDeadline()
         while !(await workerResult.isFinished), !Task.isCancelled,
@@ -561,7 +593,7 @@ final class LiveRunner: Sendable {
                 < workerDrainTimeout {
             try? await Task.sleep(for: .milliseconds(20))
         }
-        let detectedLanguage = await workerResult.language ?? "en"
+        let detectedLanguage = await workerResult.language ?? "unknown"
         worker.cancel()  // abandon a still-wedged worker; recording is safe
 
         // Fix B: hand off any in-flight diarization task before returning —
@@ -570,8 +602,9 @@ final class LiveRunner: Sendable {
         await diarGate.drain(timeout: .seconds(2))
         phase.set("await-readers-value")
         _ = await readers.value
-        // Propagate the language whisper actually detected on the system
-        // stream so Output.language reflects reality.
+        // Propagate the language the backend reported for the system stream so
+        // Output.language reflects reality — "unknown" under Parakeet, which
+        // has no language-ID head, unless a backend surfaces a code.
         phase.set("await-sink-noteSystemLanguage")
         await sink.noteSystemLanguage(detectedLanguage)
 
@@ -654,8 +687,14 @@ final class LiveRunner: Sendable {
         phase: LiveRunnerPhaseTracker? = nil
     ) async -> String {
         phase?.set("await-diarState-dominantKey")
-        let key = await diarState.dominantKey(
-            start: utterance.start, end: utterance.end) ?? "Them"
+        // No live diarization coverage for this utterance's range (§2b): return
+        // the neutral marker and SKIP the R18 lookup. Falling back to a real
+        // provisional key here (e.g. "Them") would let the lookup inherit the
+        // first speaker's name for an utterance no speaker was tracked over.
+        guard let key = await diarState.dominantKey(
+            start: utterance.start, end: utterance.end) else {
+            return "\(Self.noCoverageLabel)?"
+        }
 
         // R18: read-only speaker-library lookup. The live pass never writes the
         // library (invariant #5) — `bestMatch` is a pure read. The lookup is
@@ -685,7 +724,7 @@ final class LiveRunner: Sendable {
 
     /// Run a blocking synchronous body on a background dispatch thread and await
     /// its result, suspending the caller (and freeing its Swift cooperative-pool
-    /// thread) while the body runs. Used by the whisper worker so an unbounded /
+    /// thread) while the body runs. Used by the decode worker so an unbounded /
     /// wedged decode never pins a pool thread (which would starve the bounded
     /// teardown timeout). The body is only ever invoked from the single worker
     /// task while it is otherwise suspended, so the unchecked-Sendable wrapper is
@@ -768,7 +807,7 @@ private struct UncheckedSendableBox<T>: @unchecked Sendable {
 }
 
 /// A `Sendable` wrapper that lets the non-`Sendable` `StreamingTranscriber`s be
-/// captured into the single whisper worker `Task` (Swift 6 concurrency). Its
+/// captured into the single decode worker `Task` (Swift 6 concurrency). Its
 /// contents are ONLY ever touched on the serialized offload path driven by the
 /// single worker (the blocking decode runs on a DispatchQueue thread while the
 /// worker is suspended), so the unchecked conformance is safe — the streamers

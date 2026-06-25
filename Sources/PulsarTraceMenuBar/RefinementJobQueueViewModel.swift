@@ -123,15 +123,16 @@ public final class RefinementJobQueueViewModel {
     }
 
     /// Forward a "Refine" button press, resolving the user's refine-model
-    /// setting to a pinned catalog entry (falling back to `base` for an
-    /// unknown name) — so the views never touch `ModelCatalog` themselves.
+    /// setting to a pinned catalog entry (falling back to the default for an
+    /// unknown name) — so the views never touch `WhisperKitModelCatalog`
+    /// themselves.
     public func enqueueManual(folderURL: URL, recordingId: String,
                               refineModelName: String) async {
-        let model = ModelCatalog.model(named: refineModelName)
-            ?? ModelCatalog.base
+        let model = WhisperKitModelCatalog.model(named: refineModelName)
+            ?? WhisperKitModelCatalog.defaultModel
         await enqueueManual(
             folderURL: folderURL, recordingId: recordingId,
-            modelName: model.name, modelSHA256: model.sha256)
+            modelName: model.name, modelSHA256: "")
     }
 
     /// Forward a "Refine" button press.
