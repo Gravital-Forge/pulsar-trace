@@ -4,7 +4,7 @@ import AVFoundation
 @testable import PulsarTraceCapture
 @testable import PulsarTraceEngine
 
-/// Layer 3 — live capture through the capture engines (R1, R2).
+/// Layer 3 — live capture through the capture engines (PT-R1, PT-R2).
 ///
 /// `ScreenCaptureKitTests` / `BlackHoleCaptureTests` prove the raw OS APIs
 /// work on this host; these tests prove the PulsarTrace *wrappers* —
@@ -123,7 +123,8 @@ struct DeviceCaptureEngineTests {
         // mic always reports at least its noise floor, so the check needs only
         // an unmuted mic, not an audible play→capture path. A tone is played
         // so a host with a loopback path also exercises a strong signal.
-        // See project-docs/BUG-mic-capture-silent.md.
+        // The downmix repair that fixed this is covered by the engine's
+        // channel-layout handling.
         //
         // A noise floor sits far above zero yet well below a heard tone; the
         // bug produced 0. Anything above this proves the path is not silent.
@@ -167,7 +168,7 @@ struct DeviceCaptureEngineTests {
             "captured audio is effectively silent (RMS \(accumulator.rms)) — the microphone capture/conversion path delivered no real signal")
     }
 
-    @Test("MicCaptureEngine exposes the available input devices (R5)")
+    @Test("MicCaptureEngine exposes the available input devices (PT-R5)")
     func micEngineListsDevices() {
         // Device enumeration needs no permission and no opt-in capture.
         let devices = MicCaptureEngine.availableDevices()

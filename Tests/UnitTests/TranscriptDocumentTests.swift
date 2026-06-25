@@ -2,8 +2,8 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the R13 transcript markdown format.
-@Suite("TranscriptDocument (R13)")
+/// Unit coverage of the PT-R13 transcript markdown format.
+@Suite("TranscriptDocument (PT-R13)")
 struct TranscriptDocumentTests {
 
     /// A fixed wall-clock start so the header is deterministic in tests.
@@ -30,7 +30,7 @@ struct TranscriptDocumentTests {
         #expect(TranscriptDocument.offsetStamp(.seconds(-10)) == "00:00:00")
     }
 
-    @Test("Document renders the R13 marker + header + utterance lines")
+    @Test("Document renders the PT-R13 marker + header + utterance lines")
     func rendersR13Format() {
         let doc = TranscriptDocument(
             recordingStart: Self.start,

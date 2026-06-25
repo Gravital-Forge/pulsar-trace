@@ -3,7 +3,7 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Unit coverage of the events-log JSONL writer, envelope, rotation, and
-/// privacy guarantee (R78–R84, §8.13).
+/// privacy guarantee (PT-R78–PT-R84, §8.13).
 @Suite("EventWriter")
 struct EventWriterTests {
 

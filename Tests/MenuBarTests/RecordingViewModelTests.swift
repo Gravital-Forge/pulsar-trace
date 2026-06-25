@@ -3,7 +3,7 @@ import Foundation
 import PulsarTraceEngine
 @testable import PulsarTraceMenuBar
 
-/// `RecordingViewModel`'s status machine (R40, R45), exercised through
+/// `RecordingViewModel`'s status machine (PT-R40, PT-R45), exercised through
 /// the injected orchestration seam so no real capture/engine processes spawn.
 @Suite("RecordingViewModel")
 @MainActor
@@ -286,7 +286,7 @@ struct RecordingViewModelTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let settings = try settings(outputRoot: root)
-        // The live pass has exactly one backend (D39) and takes no model
+        // The live pass has exactly one backend (PT-P5-D1) and takes no model
         // knob; `refineModelName` is the only model the user still chooses,
         // and it must never leak into the live argv.
         settings.refineModelName = "large-v3"

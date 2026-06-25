@@ -2,9 +2,9 @@ import Testing
 @testable import PulsarTraceEngine
 
 /// Layer 1 — `ToneDetector`, the Goertzel frequency analysis behind
-/// `pulsartrace doctor --capture-test` (R68). The play+capture half is
+/// `pulsartrace doctor --capture-test` (PT-R68). The play+capture half is
 /// device-gated; the math is verified here on synthesized tones.
-@Suite("ToneDetector (capture-test, R68)")
+@Suite("ToneDetector (capture-test, PT-R68)")
 struct ToneDetectorTests {
 
     private let sampleRate = 16_000

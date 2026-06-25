@@ -2,9 +2,9 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the canonical Int16 WAV storage format (R54e) and the
+/// Unit coverage of the canonical Int16 WAV storage format (PT-R54e) and the
 /// `WAVWriter` ↔ `WAVReader` round-trip.
-@Suite("WAVWriter (R54e)")
+@Suite("WAVWriter (PT-R54e)")
 struct WAVWriterTests {
 
     @Test("Encoded WAV has a valid 44-byte RIFF/WAVE header")

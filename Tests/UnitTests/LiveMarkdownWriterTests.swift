@@ -2,11 +2,11 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the append-only `live.md` writer (R12, R35a, R36, R37).
+/// Unit coverage of the append-only `live.md` writer (PT-R12, PT-R35a, PT-R36, PT-R37).
 ///
 /// `live.md` is a public API surface an agent `tail -f`s. These tests assert
 /// the two hard invariants: created at session start with marker + header
-/// (R35a/R37), and strictly append-only with monotonic byte growth (R36/R12).
+/// (PT-R35a/PT-R37), and strictly append-only with monotonic byte growth (PT-R36/PT-R12).
 @Suite("Append-only live.md writer")
 struct LiveMarkdownWriterTests {
 
@@ -28,7 +28,7 @@ struct LiveMarkdownWriterTests {
         return Calendar.current.date(from: comps)!
     }
 
-    @Test("start() creates live.md with the marker and header (R35a/R37)")
+    @Test("start() creates live.md with the marker and header (PT-R35a/PT-R37)")
     func startCreatesMarkerAndHeader() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -44,7 +44,7 @@ struct LiveMarkdownWriterTests {
         #expect(lines[1] == "## Transcript — 2026-05-16 09:30")
     }
 
-    @Test("the file exists before any utterance is appended (R35a)")
+    @Test("the file exists before any utterance is appended (PT-R35a)")
     func fileExistsBeforeFirstUtterance() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -57,7 +57,7 @@ struct LiveMarkdownWriterTests {
         await writer.finish()
     }
 
-    @Test("appendUtterance renders the R13 line format")
+    @Test("appendUtterance renders the PT-R13 line format")
     func appendUtteranceLineFormat() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -80,7 +80,7 @@ struct LiveMarkdownWriterTests {
         #expect(text.contains("**[01:01:12] You:** right, the redirect uri"))
     }
 
-    @Test("every append strictly increases the byte count (R36/R12)")
+    @Test("every append strictly increases the byte count (PT-R36/PT-R12)")
     func appendsAreMonotonic() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -108,7 +108,7 @@ struct LiveMarkdownWriterTests {
         #expect(onDisk == sizes.last)
     }
 
-    @Test("appends never rewrite earlier content — prefix is stable (R36)")
+    @Test("appends never rewrite earlier content — prefix is stable (PT-R36)")
     func appendsNeverRewrite() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -157,7 +157,7 @@ struct LiveMarkdownWriterTests {
         }
     }
 
-    @Test("gap annotations render as italic notes and stay append-only (R7)")
+    @Test("gap annotations render as italic notes and stay append-only (PT-R7)")
     func gapAnnotations() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -192,7 +192,7 @@ struct LiveMarkdownWriterTests {
         #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o600)
     }
 
-    @Test("multi-byte UTF-8 content is written whole (no torn character, R12)")
+    @Test("multi-byte UTF-8 content is written whole (no torn character, PT-R12)")
     func multibyteContentIntact() async throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

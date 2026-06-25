@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// R18 coverage: during the live pass a provisional speaker whose centroid
+/// PT-R18 coverage: during the live pass a provisional speaker whose centroid
 /// matches a known library speaker is surfaced **by name** — `<name>?` —
 /// not the generic `Them?`.
 ///
@@ -10,14 +10,14 @@ import Foundation
 /// must pass the live diarizer's *real* model revision to
 /// `SpeakerLibrary.bestMatch`. `bestMatch` skips any library speaker whose
 /// `modelRevision` does not equal the one passed in (Open Question
-/// #3 / D40) — so with the old hardcoded `""` the lookup matched nothing and
-/// R18 was dead. These tests prove the lookup now fires, and that the revision
+/// #3 / PT-P5-D3) — so with the old hardcoded `""` the lookup matched nothing and
+/// PT-R18 was dead. These tests prove the lookup now fires, and that the revision
 /// scoping is real (a mismatched revision still falls back to `Them`).
 ///
 /// No Python subprocess: `LiveDiarizer._seedForTesting` pre-seeds the running
 /// live-speaker set + the model revision the subprocess would otherwise
 /// report, so the test stays fast and device/network-free.
-@Suite("Live pass R18 library lookup")
+@Suite("Live pass PT-R18 library lookup")
 struct LiveRunnerLibraryLookupTests {
 
     private func tempDir() -> URL {
@@ -101,7 +101,7 @@ struct LiveRunnerLibraryLookupTests {
         let label = await runner.resolveSystemLabel(
             for: utterance, diarState: diarState, diarizer: diarizer)
 
-        // R18: the known name is surfaced, still flagged provisional (R16).
+        // PT-R18: the known name is surfaced, still flagged provisional (PT-R16).
         #expect(label == "Dana Lee?")
     }
 
@@ -146,11 +146,11 @@ struct LiveRunnerLibraryLookupTests {
     /// §2b regression: when the live diarizer has **no coverage** for the
     /// committed utterance's time range, `DiarState.dominantKey` returns `nil`.
     /// The old `?? "Them"` fallback collided with `provisionalKey(index: 0)` —
-    /// the first real speaker's stitched key — so the R18 library lookup found
+    /// the first real speaker's stitched key — so the PT-R18 library lookup found
     /// that speaker's centroid and silently attributed the no-coverage
     /// utterance to the FIRST speaker's name (in the field: "everything became
     /// Stanisław"). A no-coverage utterance must instead surface the neutral
-    /// `Speaker?` marker and never run the R18 lookup.
+    /// `Speaker?` marker and never run the PT-R18 lookup.
     ///
     /// Same setup as `knownSpeakerSurfacesByName` — a `Them` span over `[0s,10s]`
     /// whose centroid matches the library speaker "Dana Lee" — but the utterance
@@ -175,7 +175,7 @@ struct LiveRunnerLibraryLookupTests {
 
         // The live diarizer's first (`Them`) centroid matches "Dana Lee", and
         // the revision matches — so IF the no-coverage key collapsed to `Them`
-        // the R18 lookup would (wrongly) surface "Dana Lee".
+        // the PT-R18 lookup would (wrongly) surface "Dana Lee".
         let diarizer = LiveDiarizer(testSeamLogger: .init(label: "test"))
         await diarizer._seedForTesting(
             speakers: [(key: "Them", centroid: knownCentroid)],

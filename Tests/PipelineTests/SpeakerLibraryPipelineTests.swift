@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// The speaker-library "done" criterion (PRD §15): refine recording A — a new speaker
+/// The speaker-library "done" criterion (PT-R22): refine recording A — a new speaker
 /// becomes `Unknown #1` in the library — then refine recording B containing
 /// the *same* voice, and the speaker is auto-labelled with the same
 /// name/`spk_` id in `final.md`.
@@ -18,7 +18,7 @@ import Foundation
 @Suite("Speaker library pipeline", .serialized)
 struct SpeakerLibraryPipelineTests {
 
-    /// One lazily-loading WhisperKit transcriber per process (D39 backend).
+    /// One lazily-loading WhisperKit transcriber per process (PT-P5-D1 backend).
     private static let whisperKit = WhisperKitRegionTranscriber(
         configuration: .init(
             model: WhisperKitModelCatalog.largeV3Turbo,
@@ -144,10 +144,10 @@ struct SpeakerLibraryPipelineTests {
         #expect(finalB.contains("] Unknown #1:**"))
 
         // The library still has exactly one speaker — the same stable id —
-        // now with two appearances and a centroid refined by B (R30).
+        // now with two appearances and a centroid refined by B (PT-R30).
         let afterB = try await library.liveSpeakers()
         #expect(afterB.count == 1)
-        #expect(afterB[0].id == speakerID)              // R83: stable id
+        #expect(afterB[0].id == speakerID)              // PT-R83: stable id
         #expect(afterB[0].appearanceCount == 2)
         #expect(Set(try await library.appearances(of: speakerID).map(\.recordingId))
             == ["rec_single-speaker-30s", "rec_single-speaker-returning"])
@@ -171,7 +171,7 @@ struct SpeakerLibraryPipelineTests {
         #expect(log.contains("\"speakers_matched\":1"))
 
         // The reconciled final.md carries the returning speaker's label on a
-        // genuine transcript of recording B. Distinctive fixture words (D39)
+        // genuine transcript of recording B. Distinctive fixture words (PT-P5-D1)
         // instead of a byte-for-byte reference: WhisperKit's wording drifts
         // from the retired whisper `base` snapshot, but the same content words
         // appear (git history:

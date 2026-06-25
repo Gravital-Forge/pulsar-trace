@@ -3,7 +3,7 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Pipeline coverage: drive the engine's `FrameConsumer` from each fixture-fed
-/// `AudioFrameSource` and assert clean, uniform end-of-stream (R71, R75, R76).
+/// `AudioFrameSource` and assert clean, uniform end-of-stream (PT-R71, PT-R75, PT-R76).
 @Suite("Source pipeline")
 struct SourcePipelineTests {
 

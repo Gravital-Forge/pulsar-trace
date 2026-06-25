@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Layer 3: Capture tests (R66, §12 "Layer 3").
+/// Layer 3: Capture tests (PT-R66, §12 "Layer 3").
 ///
 /// These tests cover the `Capture` target plumbing and the BlackHole-detection
 /// helper: they prove the target builds and that capture tests skip cleanly on

@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the `capture.sock` binary frame protocol codec (R76).
+/// Unit coverage of the `capture.sock` binary frame protocol codec (PT-R76).
 @Suite("FrameProtocol")
 struct FrameProtocolTests {
 

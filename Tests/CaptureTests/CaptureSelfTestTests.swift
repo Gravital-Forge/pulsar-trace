@@ -3,7 +3,7 @@ import Foundation
 @testable import PulsarTraceCapture
 
 /// Layer 3 — `CaptureSelfTest`, the play-a-tone / capture-it-back self-check
-/// behind `pulsartrace doctor --capture-test` (R68).
+/// behind `pulsartrace doctor --capture-test` (PT-R68).
 ///
 /// Needs real audio I/O, so it is opt-in (see `DeviceTestGate`). The pure
 /// frequency analysis (`ToneDetector`) is unit-tested without hardware; this
@@ -13,7 +13,7 @@ import Foundation
 /// the played tone reaches the microphone depends on the host's audio routing
 /// (acoustic path, or a BlackHole loopback). The frequency match is verified
 /// by a human via `docs/release-smoke-test.md`.
-@Suite("CaptureSelfTest (capture-test, R68)", .tags(.liveCapture),
+@Suite("CaptureSelfTest (capture-test, PT-R68)", .tags(.liveCapture),
        .enabled(if: DeviceTestGate.enabled))
 struct CaptureSelfTestTests {
 

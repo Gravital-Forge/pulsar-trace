@@ -3,7 +3,7 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Unit coverage of `SpeakerReconciler` — the bridge between a recording's
-/// diarization clusters and the persistent library (R22, R23).
+/// diarization clusters and the persistent library (PT-R22, PT-R23).
 @Suite("Speaker reconciler")
 struct SpeakerReconcilerTests {
 

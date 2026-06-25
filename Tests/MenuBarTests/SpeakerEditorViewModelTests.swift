@@ -4,7 +4,7 @@ import PulsarTraceEngine
 @testable import PulsarTraceMenuBar
 
 /// `SpeakerEditorViewModel` drives rename/merge/delete/undelete and
-/// the retroactive `final.md` rewrite (R44, D16), emitting `speaker_*` events
+/// the retroactive `final.md` rewrite (PT-R44, PT-P1-D16), emitting `speaker_*` events
 /// with a populated `applied_to_recordings` in causal order.
 @Suite("SpeakerEditorViewModel")
 @MainActor

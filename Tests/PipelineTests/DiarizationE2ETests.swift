@@ -6,7 +6,7 @@ import Testing
 /// End-to-end offline diarization on the committed audio fixtures, against
 /// the real FluidAudio CoreML models (first run downloads them — see
 /// CLAUDE.md's narrow-filter notes). Replaces the retired Python pyannote
-/// subprocess suite (D40).
+/// subprocess suite (PT-P5-D3).
 @Suite("DiarizationE2E (FluidAudio offline, real models)", .serialized)
 struct DiarizationE2ETests {
 
@@ -43,7 +43,7 @@ struct DiarizationE2ETests {
     /// The two synthetic ElevenLabs voices in `two-speakers-alternating.wav`
     /// MUST separate into 2 speakers. FluidAudio's default VBx evidence
     /// weight (Fa 0.07) collapses them on clips this short; `DiarizerEngine`
-    /// raises it to 0.2 (D40) — see the engine's config comment for the
+    /// raises it to 0.2 (PT-P5-D4) — see the engine's config comment for the
     /// measured separability numbers.
     @Test func twoSpeakersSeparate() async throws {
         let engine = try await DiarizerTestEngine.shared()
@@ -81,7 +81,7 @@ struct DiarizationE2ETests {
     }
 }
 
-/// Coverage of the resident `DiarizerEngine` (D40): it loads the FluidAudio
+/// Coverage of the resident `DiarizerEngine` (PT-P5-D3): it loads the FluidAudio
 /// community-1 CoreML stack once per process and reports a stable content
 /// digest as its `modelRevision`. First run downloads the
 /// `speaker-diarization` bundles (~21 MB) into the standard cache root;
@@ -108,9 +108,9 @@ struct DiarizationE2EEngineTests {
 
 /// The live windowed pass driven through the production window geometry
 /// (10 s window / 5 s step — `StreamingPipeline` defaults) against the real
-/// FluidAudio engine (D40). Proves `LiveDiarizer` stitches the per-window
+/// FluidAudio engine (PT-P5-D3). Proves `LiveDiarizer` stitches the per-window
 /// raw labels into stable provisional keys, emits recording-absolute spans,
-/// and exposes the live centroids + a 64-hex model revision for the R18
+/// and exposes the live centroids + a 64-hex model revision for the PT-R18
 /// library lookup. Per the measured behaviour, a single 10 s window does NOT
 /// separate the two voices — differentiation comes from stitching across the
 /// alternating windows, so this asserts stable `Them*` keys, not a per-window
@@ -155,7 +155,7 @@ struct DiarizationE2ELiveTests {
     }
 }
 
-/// Pins the WeSpeaker-space similarity thresholds (D40). If this fails after
+/// Pins the WeSpeaker-space similarity thresholds (PT-P5-D4). If this fails after
 /// a model bump, read the printed similarities and re-pin the constants:
 /// both thresholds must sit between the worst same-speaker similarity and the
 /// best cross-speaker similarity, with margin on both sides.

@@ -2,12 +2,12 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of mic-echo deduplication (R19).
+/// Unit coverage of mic-echo deduplication (PT-R19).
 ///
 /// When the user listens on speakers, the mic picks up the system audio and
-/// the same words appear twice. R19: a mic utterance > 0.5 similar to a system
+/// the same words appear twice. PT-R19: a mic utterance > 0.5 similar to a system
 /// utterance within ±5 s is an echo — the mic-side copy is dropped.
-@Suite("Mic-echo dedup (R19)")
+@Suite("Mic-echo dedup (PT-R19)")
 struct MicEchoDedupTests {
 
     @Test("identical text within the window is detected as an echo")
@@ -96,7 +96,7 @@ struct MicEchoDedupTests {
         dedup.noteSystemUtterance(
             text: "one two three four",
             start: .seconds(10), end: .seconds(12))
-        // 0.5 similar — R19 requires *strictly greater than* 0.5.
+        // 0.5 similar — PT-R19 requires *strictly greater than* 0.5.
         #expect(!dedup.isMicEcho(
             text: "one two five six",
             start: .seconds(10), end: .seconds(12)))

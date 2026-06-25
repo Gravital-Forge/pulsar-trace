@@ -3,9 +3,9 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Layer 1 — `EventLogTail`, the pure parsing/filtering behind
-/// `pulsartrace events tail` (R86). No timer, no follow loop here: those live
+/// `pulsartrace events tail` (PT-R86). No timer, no follow loop here: those live
 /// in the CLI command and are covered by a real-binary smoke run.
-@Suite("EventLogTail (events tail, R86)")
+@Suite("EventLogTail (events tail, PT-R86)")
 struct EventLogTailTests {
 
     private let sampleLine =

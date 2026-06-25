@@ -3,10 +3,10 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Unit coverage of `StreamingWAVWriter` — the incremental, crash-safe variant
-/// of the canonical Int16 WAV storage format (R54e). The key guarantee under
+/// of the canonical Int16 WAV storage format (PT-R54e). The key guarantee under
 /// test: the file on disk is *always* a valid, correctly-sized WAV reflecting
 /// what was appended, even if `finalize()` is never reached.
-@Suite("StreamingWAVWriter (R54e, crash-safe)")
+@Suite("StreamingWAVWriter (PT-R54e, crash-safe)")
 struct StreamingWAVWriterTests {
 
     /// A scratch WAV path that is removed when `body` returns.

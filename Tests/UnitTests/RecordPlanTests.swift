@@ -3,8 +3,8 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Layer 1 — `RecordPlan`, the pure capture↔engine argv builder behind
-/// `pulsartrace record` (R47).
-@Suite("RecordPlan (record, R47)")
+/// `pulsartrace record` (PT-R47).
+@Suite("RecordPlan (record, PT-R47)")
 struct RecordPlanTests {
 
     private let paths = AppPaths(home: URL(fileURLWithPath: "/tmp/pt-home"))
@@ -43,7 +43,7 @@ struct RecordPlanTests {
         #expect(value(after: "--mic-socket", in: plan.engineArguments)
             == plan.micSocket.path)
         #expect(value(after: "--out", in: plan.engineArguments) == folder.path)
-        // The live pass has exactly one backend (D39): the engine takes no
+        // The live pass has exactly one backend (PT-P5-D1): the engine takes no
         // model flag; capture still reports the fixed name in
         // `recording_started.model_live`.
         #expect(!plan.engineArguments.contains("--model"))

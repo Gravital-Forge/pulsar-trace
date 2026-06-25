@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Coverage of the speaker-library resilience edge cases (PRD §15):
+/// Coverage of the speaker-library resilience edge cases:
 /// the last-good backup on every write, and auto-restore + warn when the
 /// database is found corrupt on open.
 @Suite("Speaker library resilience")

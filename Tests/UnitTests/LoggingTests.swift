@@ -4,7 +4,7 @@ import Logging
 @testable import PulsarTraceEngine
 
 /// Unit coverage of log-line formatting, rotation, retention, and the
-/// content-leak scan scaffolding (R57–R61, §11).
+/// content-leak scan scaffolding (PT-R57–PT-R61, §11).
 @Suite("Logging")
 struct LoggingTests {
 

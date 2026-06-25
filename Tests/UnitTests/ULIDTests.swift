@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of ULID generation (event-ID infrastructure, R80).
+/// Unit coverage of ULID generation (event-ID infrastructure, PT-R80).
 @Suite("ULID")
 struct ULIDTests {
 

@@ -3,7 +3,7 @@ import Foundation
 @testable import PulsarTraceMenuBar
 
 /// `MenuBarSettings` round-trips every property through an injected
-/// `UserDefaults` suite, so a relaunch restores the user's choices (R42/R43).
+/// `UserDefaults` suite, so a relaunch restores the user's choices (PT-R42/PT-R43).
 @Suite("MenuBarSettings")
 @MainActor
 struct MenuBarSettingsTests {
@@ -91,20 +91,20 @@ struct MenuBarSettingsTests {
         #expect(defaults.string(forKey: "outputFolderPath") == nil)
     }
 
-    @Test("legacy live-model keys are removed on load (D39)")
+    @Test("legacy live-model keys are removed on load (PT-P5-D1)")
     func legacyLiveModelKeysRemoved() {
         let (suite, suiteName) = tempSuite()
         defer { suite.removePersistentDomain(forName: suiteName) }
 
-        suite.set("large-v3", forKey: "modelName")      // pre-D29 single knob
-        suite.set("base", forKey: "liveModelName")      // pre-D39 live knob
+        suite.set("large-v3", forKey: "modelName")      // pre-PT-P2-D11 single knob
+        suite.set("base", forKey: "liveModelName")      // pre-PT-P5-D1 live knob
         let settings = MenuBarSettings(defaults: suite)
         #expect(suite.object(forKey: "modelName") == nil)
         #expect(suite.object(forKey: "liveModelName") == nil)
         #expect(settings.refineModelName == MenuBarSettings.defaultRefineModelName)
     }
 
-    @Test("a persisted pre-D39 refine model name re-defaults to the ANE catalog")
+    @Test("a persisted pre-PT-P5-D1 refine model name re-defaults to the ANE catalog")
     func staleRefineModelNameRedefaults() {
         let (suite, suiteName) = tempSuite()
         defer { suite.removePersistentDomain(forName: suiteName) }
@@ -143,7 +143,7 @@ struct MenuBarSettingsTests {
             == dir.standardizedFileURL)
     }
 
-    @Test("a legacy security-scoped bookmark migrates to a plain path (D30)")
+    @Test("a legacy security-scoped bookmark migrates to a plain path (PT-P2-D12)")
     @MainActor
     func legacyBookmarkMigratesToPath() throws {
         let (defaults, suiteName) = tempSuite()
@@ -163,7 +163,7 @@ struct MenuBarSettingsTests {
             try? FileManager.default.removeItem(at: prevDir)
         }
 
-        // Simulate a pre-D30 store: only the legacy bookmark keys are present.
+        // Simulate a pre-PT-P2-D12 store: only the legacy bookmark keys are present.
         let bookmark = try dir.bookmarkData()
         let prevBookmark = try prevDir.bookmarkData()
         defaults.set(bookmark, forKey: "outputFolderBookmark")
@@ -184,7 +184,7 @@ struct MenuBarSettingsTests {
         } == dir.standardizedFileURL)
     }
 
-    @Test("the new path key wins over a stale legacy bookmark (D30)")
+    @Test("the new path key wins over a stale legacy bookmark (PT-P2-D12)")
     @MainActor
     func newPathKeyWinsOverLegacyBookmark() throws {
         let (defaults, suiteName) = tempSuite()

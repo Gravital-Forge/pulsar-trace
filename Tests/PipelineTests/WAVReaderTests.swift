@@ -3,7 +3,7 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Pipeline coverage of `WAVReader` against the committed 16 kHz mono Int16
-/// fixtures (canonical storage format, R54e).
+/// fixtures (canonical storage format, PT-R54e).
 @Suite("WAVReader")
 struct WAVReaderTests {
 

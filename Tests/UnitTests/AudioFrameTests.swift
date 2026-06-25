@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the canonical audio format and `AudioFrame` (R76).
+/// Unit coverage of the canonical audio format and `AudioFrame` (PT-R76).
 @Suite("AudioFrame")
 struct AudioFrameTests {
 

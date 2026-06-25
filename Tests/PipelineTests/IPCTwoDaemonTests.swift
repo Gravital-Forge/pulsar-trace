@@ -10,7 +10,7 @@ import Foundation
 ///    would from `pulsartrace-capture`. `FixtureSocketServer` stands in for the
 ///    daemon (it writes the identical `FrameProtocol` bytes).
 /// 2. **Pause/resume propagation** — a `.paused` / `.resumed` control event in
-///    the audio stream (capture daemon sleep/wake, R7) reaches `live.md` as a
+///    the audio stream (capture daemon sleep/wake, PT-R7) reaches `live.md` as a
 ///    gap annotation.
 ///
 /// `.serialized`: one resident ANE model serves the whole process
@@ -80,11 +80,11 @@ struct IPCTwoDaemonTests {
         #expect(lines[0] == "<!-- pulsartrace:live -->")
         #expect(lines[1].hasPrefix("## Transcript — "))
         #expect(output.utteranceLines > 0)
-        // The mic stream's utterances are labelled `You` (R17).
+        // The mic stream's utterances are labelled `You` (PT-R17).
         #expect(text.contains("You:**"))
     }
 
-    @Test("a paused/resumed control event in the stream annotates live.md (R7)")
+    @Test("a paused/resumed control event in the stream annotates live.md (PT-R7)")
     func pauseResumeGapAnnotation() async throws {
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }

@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// The engine-side retroactive `final.md` rewrite (D16).
+/// The engine-side retroactive `final.md` rewrite (PT-P1-D16).
 ///
 /// `FinalMarkdownRewriter` rewrites a speaker label across past `final.md`
 /// files after a rename/merge/split. These tests build hand-written fixture

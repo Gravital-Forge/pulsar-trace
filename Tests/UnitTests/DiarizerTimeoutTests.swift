@@ -13,7 +13,7 @@ import Testing
 /// because the offline path used the default 600s ceiling regardless of the
 /// recording's length.
 ///
-/// Exercised through the test-only `operation:` seam (D40, in-process): the
+/// Exercised through the test-only `operation:` seam (PT-P5-D3, in-process): the
 /// seam stands in for the FluidAudio engine call while the watchdog's
 /// floor-expansion is the system under test. A header-only WAV declares the
 /// audio's length so the probe can read it without samples on disk.
