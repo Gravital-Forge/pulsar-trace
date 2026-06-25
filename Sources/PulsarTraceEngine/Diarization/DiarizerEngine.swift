@@ -2,16 +2,16 @@ import FluidAudio
 import Foundation
 import Logging
 
-/// The resident FluidAudio offline-diarization stack (D40) — pyannote
+/// The resident FluidAudio offline-diarization stack (PT-P5-D3) — pyannote
 /// community-1 ported to CoreML, segmentation + WeSpeaker embeddings + VBx
 /// clustering on the ANE. Loaded once per process and shared by the offline
 /// refine pass (`Diarizer`) and the live windowed pass (`LiveDiarizer`), so
-/// both produce embeddings in the same vector space (R29).
+/// both produce embeddings in the same vector space (PT-R112).
 ///
 /// `OfflineDiarizerManager` is a non-Sendable class; this actor owns it and
 /// serializes access. Models live at `<cacheRoot>/speaker-diarization/`
 /// (FluidAudio's `DownloadUtils` appends `Repo.diarizer.folderName`, which
-/// strips the `-coreml` suffix, to the directory it is handed) — the same D10
+/// strips the `-coreml` suffix, to the directory it is handed) — the same PT-P1-D10
 /// cache root Parakeet and FluidVAD use.
 public actor DiarizerEngine {
 
@@ -40,7 +40,7 @@ public actor DiarizerEngine {
     private nonisolated(unsafe) let manager: OfflineDiarizerManager
     /// Content digest of the model directory — the authoritative model
     /// identity. The speaker library keys centroid compatibility on this
-    /// (Open Question #3 / D40): it changes exactly when the model content
+    /// (Open Question #3 / PT-P5-D3): it changes exactly when the model content
     /// changes.
     public nonisolated let modelRevision: String
 
@@ -53,7 +53,7 @@ public actor DiarizerEngine {
     /// model-download network call; the repo is public, no token) and load the
     /// diarizer models from `<cacheRoot>/speaker-diarization`. Emits
     /// `model_downloaded` with a `DirectoryDigest` after a fresh download
-    /// (D39 digest pattern).
+    /// (PT-P5-D2 digest pattern).
     ///
     /// Call once per process and share the returned engine.
     public static func load(
@@ -71,9 +71,9 @@ public actor DiarizerEngine {
         logger.notice("diarizer: ensuring models available (cached=\(existedBefore))")
         var config = OfflineDiarizerConfig.default
         // Keep overlap-preserving spans: the transcript merge's 30 %
-        // co-attribution rule (D11) needs overlapping speaker spans.
+        // co-attribution rule (PT-P1-D11) needs overlapping speaker spans.
         config.postProcessing.exclusiveSegments = false
-        // VBx evidence weight, raised from FluidAudio's 0.07 default (D40).
+        // VBx evidence weight, raised from FluidAudio's 0.07 default (PT-P5-D4).
         // At 0.07 the clusterer collapses two clearly-distinct voices
         // (cross-speaker cosine 0.38, same-speaker 0.93) into one cluster on
         // recordings shorter than ~1 minute — VBx's prior dominates until

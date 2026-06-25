@@ -1,11 +1,11 @@
 import Foundation
 
-/// One persistent speaker in the library (R28).
+/// One persistent speaker in the library (PT-R28).
 ///
-/// The `id` (`spk_<ulid>`, R83) is the forever-stable identity an external
+/// The `id` (`spk_<ulid>`, PT-R83) is the forever-stable identity an external
 /// agent keys off; `name` is a mutable display string (`Unknown #3`, `Steve`).
-/// `centroid` is the running mean of every appearance embedding (R30), valid
-/// only within `modelRevision` (Open Question #3 / D40).
+/// `centroid` is the running mean of every appearance embedding (PT-R30), valid
+/// only within `modelRevision` (Open Question #3 / PT-P5-D3).
 public struct Speaker: Sendable, Equatable, Identifiable {
 
     /// Stable speaker id (`spk_<ulid>`).
@@ -14,7 +14,7 @@ public struct Speaker: Sendable, Equatable, Identifiable {
     public var name: String
     /// Running-mean embedding centroid — 256-d for the WeSpeaker backend.
     public var centroid: [Float]
-    /// Diarization-model revision (content digest, D40) the centroid was built
+    /// Diarization-model revision (content digest, PT-P5-D3) the centroid was built
     /// under. A centroid is only comparable with embeddings from the same
     /// revision (Open Question #3 — cross-revision matches are refused).
     public var modelRevision: String
@@ -23,11 +23,11 @@ public struct Speaker: Sendable, Equatable, Identifiable {
     /// Wall-clock of the most recent appearance (ISO-8601 UTC).
     public var lastSeen: String
     /// Basename of a representative audio file for this speaker, if any
-    /// (R28 `sample_audio_path` — basename only, Invariant #7).
+    /// (PT-R28 `sample_audio_path` — basename only, Invariant #7).
     public var sampleAudioPath: String?
     /// Wall-clock the row was created (ISO-8601 UTC).
     public let createdAt: String
-    /// Soft-delete tombstone (R32b): `nil` for a live speaker, an ISO-8601 UTC
+    /// Soft-delete tombstone (PT-R32b): `nil` for a live speaker, an ISO-8601 UTC
     /// instant for a deleted/merged-away speaker. Recoverable for 30 days.
     public var deletedAt: String?
     /// Delist tombstone ("Don't recognize this speaker"): `nil` for a speaker
@@ -61,13 +61,13 @@ public struct Speaker: Sendable, Equatable, Identifiable {
         self.delistedAt = delistedAt
     }
 
-    /// True when the speaker has been soft-deleted (R32b).
+    /// True when the speaker has been soft-deleted (PT-R32b).
     public var isDeleted: Bool { deletedAt != nil }
     /// True when the speaker has been delisted ("Don't recognize this speaker").
     public var isDelisted: Bool { delistedAt != nil }
 }
 
-/// One speaker ↔ recording appearance link (R28 appearances table).
+/// One speaker ↔ recording appearance link (PT-R28 appearances table).
 ///
 /// Kept as a separate table so the retroactive rewrite can enumerate every
 /// `final.md` a speaker appears in and rewrite it after a rename/merge.
@@ -95,7 +95,7 @@ public struct SpeakerAppearance: Sendable, Equatable {
     }
 }
 
-/// The result of matching a cluster centroid against the library (R22).
+/// The result of matching a cluster centroid against the library (PT-R22).
 public struct SpeakerMatch: Sendable, Equatable {
     /// The matched library speaker.
     public let speaker: Speaker

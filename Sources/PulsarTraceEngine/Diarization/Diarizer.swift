@@ -1,13 +1,13 @@
 import Foundation
 import Logging
 
-/// Runs offline speaker diarization in-process on the ANE (D40).
+/// Runs offline speaker diarization in-process on the ANE (PT-P5-D3).
 ///
 /// Architecture:
 /// - FluidAudio's offline pipeline (pyannote community-1 ported to CoreML —
-///   `DiarizerEngine`) replaces the captive Python subprocess (D9, retired).
+///   `DiarizerEngine`) replaces the captive Python subprocess (PT-P1-D9, retired).
 ///   No venv, no HF token, no IPC: the WAV is handed to CoreML directly.
-/// - **R17**: the entry point only ever receives the *system-stream* WAV. The
+/// - **PT-R17**: the entry point only ever receives the *system-stream* WAV. The
 ///   mic stream is never diarized — "You" is always "You". This is structural:
 ///   `Diarizer` has a single `diarizeSystemStream(wavPath:)` method and no
 ///   other diarization surface.
@@ -23,7 +23,7 @@ import Logging
 public actor Diarizer {
 
     public struct Configuration: Sendable {
-        /// Model cache root (D10) — models live in
+        /// Model cache root (PT-P1-D10) — models live in
         /// `<cacheRoot>/speaker-diarization/`.
         public let cacheRoot: URL
         /// Minimum wall-clock budget for one diarization run. Used as a
@@ -109,7 +109,7 @@ public actor Diarizer {
         inflight?.cancel()
     }
 
-    /// Diarize the **system-stream** WAV of a recording (R17).
+    /// Diarize the **system-stream** WAV of a recording (PT-R17).
     public func diarizeSystemStream(wavPath: URL) async throws -> DiarizationResult {
         guard FileManager.default.fileExists(atPath: wavPath.path) else {
             throw DiarizeError.wavNotFound(wavPath.path)

@@ -2,13 +2,13 @@ import Foundation
 import SQLite3
 
 /// A thin, non-throwing-where-possible wrapper over the system `SQLite3` C
-/// library — just enough surface for `SpeakerLibrary` (R28).
+/// library — just enough surface for `SpeakerLibrary` (PT-R28).
 ///
 /// We use the C `SQLite3` module that ships with macOS rather than adding a
 /// SwiftPM dependency: it has no supply-chain surface, no version drift, and
 /// the speaker-library schema is small enough that a hand-rolled wrapper is
 /// less code than integrating and pinning a third-party package
-/// (project-docs/DECISIONS.md D17).
+/// (PT-P1-D17).
 ///
 /// Not an `actor`: serialization is the caller's job — `SpeakerLibrary` is the
 /// actor that owns exactly one `SQLiteDatabase` and never shares it.
@@ -34,7 +34,7 @@ final class SQLiteDatabase {
             case .step(let c, let m): return "sqlite step failed (\(c)): \(m)"
             case .integrityFailed(let m): return "sqlite integrity check failed: \(m)"
             case .journalModeNotWAL(let m):
-                return "sqlite WAL journal mode could not be set (R32a); got: \(m)"
+                return "sqlite WAL journal mode could not be set (PT-R32a); got: \(m)"
             case .backupFailed(let c, let m):
                 return "sqlite online backup failed (\(c)): \(m)"
             }
@@ -49,7 +49,7 @@ final class SQLiteDatabase {
     let url: URL
 
     /// Open (creating if absent) the database at `url` in WAL journal mode
-    /// (R32a). Throws `SQLiteError.open` on a connection failure — the caller
+    /// (PT-R32a). Throws `SQLiteError.open` on a connection failure — the caller
     /// (`SpeakerLibrary`) treats that as corruption and restores from backup.
     init(url: URL) throws {
         self.url = url
@@ -66,7 +66,7 @@ final class SQLiteDatabase {
         // owner before the WAL pragma — -wal/-shm inherit the database
         // file's mode when SQLite creates them.
         SecureFiles.restrictToOwner(url)
-        // WAL (R32a): a concurrent reader (the live engine) and a
+        // WAL (PT-R32a): a concurrent reader (the live engine) and a
         // single writer coexist; two writers serialize on SQLite's lock.
         //
         // `sqlite3_exec` reports SQLITE_OK even when SQLite silently falls

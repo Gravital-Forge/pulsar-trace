@@ -4,7 +4,7 @@ import Foundation
 /// recording.
 ///
 /// `start`/`end` are offsets from the start of the **system-stream** recording
-/// (R17 — only the system stream is diarized; the mic stream is always "You").
+/// (PT-R17 — only the system stream is diarized; the mic stream is always "You").
 /// pyannote's raw labels are `SPEAKER_00`, `SPEAKER_01`, … — PulsarTrace
 /// re-renders them as `Speaker_0`, `Speaker_1`, … for the transcript
 /// (see `DiarizationResult.displayLabel(for:)`).
@@ -33,7 +33,7 @@ public struct SpeakerSpan: Sendable, Equatable {
 }
 
 /// A 256-d speaker embedding from the diarization backend's embedding model
-/// (R29).
+/// (PT-R112).
 ///
 /// The embedding is in the backend's own vector space so it is directly
 /// comparable with the live pass and the persistent speaker library — but only
@@ -52,7 +52,7 @@ public struct SpeakerEmbedding: Sendable, Equatable {
 }
 
 /// The full result of an offline diarization run — produced in-process by
-/// `DiarizationResultMapper` from FluidAudio's CoreML/ANE pipeline (D40).
+/// `DiarizationResultMapper` from FluidAudio's CoreML/ANE pipeline (PT-P5-D3).
 public struct DiarizationResult: Sendable, Equatable {
     /// Diarization model identifier
     /// (`FluidInference/speaker-diarization-coreml`).
@@ -60,7 +60,7 @@ public struct DiarizationResult: Sendable, Equatable {
     /// Content digest (DirectoryDigest SHA-256) of the model directory. This
     /// is the authoritative model identity — the speaker library refuses to
     /// match embeddings across a different `modelRevision` (Open Question #3
-    /// / D40). Empty only in frozen test fixtures predating the digest.
+    /// / PT-P5-D3). Empty only in frozen test fixtures predating the digest.
     public let modelRevision: String
     /// Duration of the diarized WAV.
     public let audioDuration: Duration
@@ -69,7 +69,7 @@ public struct DiarizationResult: Sendable, Equatable {
     /// Speaker turns, overlap-preserving: when two speakers talk at once both
     /// attributions appear with overlapping time ranges.
     public let spans: [SpeakerSpan]
-    /// Per-speaker embeddings (R29), keyed by raw speaker label.
+    /// Per-speaker embeddings (PT-R112), keyed by raw speaker label.
     public let embeddings: [SpeakerEmbedding]
 
     public init(
@@ -91,7 +91,7 @@ public struct DiarizationResult: Sendable, Equatable {
     /// The transcript-facing display label for a raw pyannote label.
     ///
     /// pyannote emits `SPEAKER_00`, `SPEAKER_01`, …; PulsarTrace's transcript
-    /// format (R13 / `docs/file-format.md`) uses `Speaker_0`, `Speaker_1`, …
+    /// format (PT-R13 / `docs/file-format.md`) uses `Speaker_0`, `Speaker_1`, …
     /// The mapping is positional over the sorted `speakers` list, so it is
     /// stable for a given diarization result. An unknown label falls back to
     /// itself so a merge never silently drops text.
