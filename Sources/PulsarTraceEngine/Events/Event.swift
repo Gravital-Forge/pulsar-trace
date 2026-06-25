@@ -67,15 +67,13 @@ public struct AppStoppedEvent: EventPayload {
 
 // MARK: - Model-download events
 
-/// `model_downloaded` — emitted once after a model is downloaded. The `sha256`
-/// field carries one of two identities depending on the download path:
-/// - a single-file model (e.g. a whisper `.bin`) is downloaded *and* its
-///   SHA-256 pin-verified (PT-R109); the field is that pin hash. A failed/corrupt
-///   download emits nothing — the file is deleted and the download retried;
-///   only a verified model is an event.
-/// - an SDK-managed CoreML bundle (Parakeet/WhisperKit) is a directory tree the
-///   SDK fetches, so there is no single-file pin to verify; the field instead
-///   carries a computed `DirectoryDigest` of the bundle tree (PT-P5-D2).
+/// `model_downloaded` — emitted once after a model is downloaded. Every current
+/// model is an SDK-managed CoreML bundle (Parakeet / WhisperKit / the FluidAudio
+/// diarizer): a directory tree the SDK fetches, with no single-file pin to
+/// verify, so the `sha256` field carries a computed `DirectoryDigest` of the
+/// bundle tree as the model's content identity (PT-P5-D2, PT-R109). Older
+/// (pre-ANE) records may instead carry a single-file model's SHA-256 pin; the
+/// field name is unchanged for schema stability.
 ///
 /// `source_host` is the bare hostname (`huggingface.co`), never a full URL with
 /// query params — invariant 7 (no full paths in logs) and the no-telemetry
@@ -85,11 +83,10 @@ public struct ModelDownloadedEvent: EventPayload {
 
     /// Short model name, e.g. `base` / `large-v3`.
     public let modelName: String
-    /// File size in bytes (single-file model), or total bundle-tree size
-    /// (`DirectoryDigest.totalBytes`) for an SDK-managed CoreML bundle.
+    /// Total bundle-tree size in bytes (`DirectoryDigest.totalBytes`).
     public let sizeBytes: Int
-    /// The lowercase-hex SHA-256: a single-file pin hash, or the bundle-tree
-    /// `DirectoryDigest` (PT-P5-D2) for an SDK-managed CoreML bundle.
+    /// The lowercase-hex bundle-tree `DirectoryDigest` (PT-P5-D2) — the model's
+    /// content identity. (Older records may carry a single-file SHA-256 pin.)
     public let sha256: String
     /// Bare hostname the model came from (e.g. `huggingface.co`).
     public let sourceHost: String

@@ -45,11 +45,13 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         }
     }
 
-    /// Identity of the whisper model used for the refine pass.
+    /// Identity of the refine-pass transcription model (WhisperKit on the ANE).
     public struct WhisperModelInfo: Codable, Equatable, Sendable {
-        /// Short model name, e.g. `large-v3`, `base`.
+        /// Short model name, e.g. `large-v3-turbo`, `large-v3`.
         public let name: String
-        /// Pinned SHA-256 of the ggml model file (its version identity, PT-R109).
+        /// Model content identity. Empty for the SDK-managed CoreML bundle, which
+        /// carries no single-file pin (PT-P5-D2); the `whisper_model` field name
+        /// is kept unchanged for schema stability.
         public let sha256: String
 
         public init(name: String, sha256: String) {
