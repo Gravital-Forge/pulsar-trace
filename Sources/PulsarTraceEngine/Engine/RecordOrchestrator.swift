@@ -312,8 +312,7 @@ public actor RecordOrchestrator {
     /// cooperative pool) can lag behind a chatty subprocess: FluidAudio mirrors
     /// every log line to stderr in DEBUG builds, so a slow drain lets the 64 KB
     /// pipe fill and parks the writer in `write()` — the real cause of the
-    /// live-diarizer "wedge" (see the 2026-06-19 resolution in
-    /// docs/specs/2026-06-18-live-pass-lag-investigation.md).
+    /// live-diarizer "wedge" (see PT-P5-D7).
     private func drainToVoid(_ handle: FileHandle) {
         DispatchQueue.global().async {
             _ = try? handle.readToEnd()

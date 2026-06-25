@@ -17,7 +17,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.17.0"),
-        // ANE transcription backends (D39). Pinned exact: both projects
+        // ANE transcription backends (PT-P5-D1). Pinned exact: both projects
         // churn their APIs release-to-release. Bump deliberately, with the
         // release notes open.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.2"),
@@ -25,7 +25,7 @@ let package = Package(
     ],
     targets: [
         // Core library: the engine, all AudioFrameSources, transcription
-        // (Parakeet live / WhisperKit refine, both ANE — D39), logging,
+        // (Parakeet live / WhisperKit refine, both ANE — PT-P5-D1), logging,
         // events log, IPC.
         .target(
             name: "PulsarTraceEngine",
@@ -44,7 +44,7 @@ let package = Package(
         // The user-facing CLI. `refine`/`speakers`, plus `record`, `doctor`,
         // and `events tail`. Depends on PulsarTraceCapture so `doctor` can
         // read TCC permission state and `doctor --capture-test` can drive
-        // the real capture path (R68).
+        // the real capture path (PT-R68).
         .executableTarget(
             name: "pulsartrace",
             dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
@@ -68,14 +68,14 @@ let package = Package(
         // the recordings scanner, the live-transcript watcher, the speaker
         // editor — everything testable. No SwiftUI. `PulsarTraceCapture`
         // already depends on `PulsarTraceEngine`, so depending on both here
-        // introduces no diamond (D27).
+        // introduces no diamond (PT-P2-D9).
         .target(
             name: "PulsarTraceMenuBar",
             dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
         ),
         // The thin SwiftUI executable — `MenuBarExtra` + `Settings`
         // scenes bound to `PulsarTraceMenuBar`'s ViewModels. No logic, no
-        // unit tests; exercised only by manual smoke test (D27).
+        // unit tests; exercised only by manual smoke test (PT-P2-D9).
         // `PulsarTraceEngine` is declared honestly: a few views name engine
         // types — static catalogs (`WhisperKitModelCatalog`,
         // `LanguageCatalog`, `AudioInputDevices`) and display types
@@ -97,7 +97,7 @@ let package = Package(
             exclude: ["__Snapshots__"]
         ),
         // Layer 2 + 4: pipeline + IPC integration tests, fixture-fed, no devices.
-        // Audio fixtures live at the repo's `Tests/Fixtures/audio/` (PRD §12, project-docs/DECISIONS.md D6)
+        // Audio fixtures live at the repo's `Tests/Fixtures/audio/` (PT-P1-D6)
         // and are resolved by path relative to the test source file (#filePath)
         // rather than copied as bundle resources, so they are not duplicated.
         .testTarget(
