@@ -64,11 +64,11 @@ final class LiveRunner: Sendable {
     /// has **no diarization coverage** for (§2b). It MUST differ from every
     /// `LiveDiarizer.provisionalKey(index:)` — especially `index: 0` ("Them").
     /// Earlier code fell back to `"Them"` on no coverage, which collided with
-    /// the first stitched speaker's key: the R18 library lookup then matched
+    /// the first stitched speaker's key: the PT-R18 library lookup then matched
     /// that speaker's centroid and silently attributed the no-coverage
     /// utterance to the first speaker's name. Using a distinct marker — and
-    /// skipping the R18 lookup entirely on no coverage — makes that collision
-    /// impossible. Rendered as `Speaker?` with the R16 provisional `?` suffix.
+    /// skipping the PT-R18 lookup entirely on no coverage — makes that collision
+    /// impossible. Rendered as `Speaker?` with the PT-R16 provisional `?` suffix.
     static let noCoverageLabel = "Speaker"
 
     private let configuration: StreamingPipeline.Configuration
@@ -310,7 +310,7 @@ final class LiveRunner: Sendable {
         // The per-decode watchdog is gone. Wedge recovery now lives **inside**
         // the `WindowTranscribing` conformer: `ParakeetWindowTranscriber`
         // bounds a wedged window decode with a 30 s deadline and skips it —
-        // the post-pass recovers the audio (D39).
+        // the post-pass recovers the audio (PT-P5-D1).
 
         // The decode worker: owns the streamers, drains both queues, writes
         // committed utterances to the sink. Never blocks the drain — the queues
@@ -395,7 +395,7 @@ final class LiveRunner: Sendable {
             // bounded poll in teardown can pick it up without awaiting the Task.
             // No window detected a language → the live pass reports the
             // "no information" contract value. Parakeet has no language-ID
-            // head, so this is the steady-state value for the live pass (D39);
+            // head, so this is the steady-state value for the live pass (PT-P5-D1);
             // the refine pass detects/pins the real language.
             await workerResult.finish(
                 language: streamerBox.system.detectedLanguage ?? "unknown")
@@ -671,9 +671,9 @@ final class LiveRunner: Sendable {
 
     /// Resolve the provisional speaker label for a committed system utterance:
     /// the live diarizer's stitched key, optionally upgraded to a library name
-    /// (read-only lookup, R18). Always carries the `?` provisional suffix (R16).
+    /// (read-only lookup, PT-R18). Always carries the `?` provisional suffix (PT-R16).
     ///
-    /// `internal` (not `private`) so the R18 library-lookup path can be tested
+    /// `internal` (not `private`) so the PT-R18 library-lookup path can be tested
     /// directly — see `LiveRunnerLibraryLookupTests`.
     ///
     /// `phase` is an optional diagnostic tracker — when supplied (production
@@ -688,7 +688,7 @@ final class LiveRunner: Sendable {
     ) async -> String {
         phase?.set("await-diarState-dominantKey")
         // No live diarization coverage for this utterance's range (§2b): return
-        // the neutral marker and SKIP the R18 lookup. Falling back to a real
+        // the neutral marker and SKIP the PT-R18 lookup. Falling back to a real
         // provisional key here (e.g. "Them") would let the lookup inherit the
         // first speaker's name for an utterance no speaker was tracked over.
         guard let key = await diarState.dominantKey(
@@ -696,11 +696,11 @@ final class LiveRunner: Sendable {
             return "\(Self.noCoverageLabel)?"
         }
 
-        // R18: read-only speaker-library lookup. The live pass never writes the
+        // PT-R18: read-only speaker-library lookup. The live pass never writes the
         // library (invariant #5) — `bestMatch` is a pure read. The lookup is
         // scoped to the live diarizer's actual pyannote model revision:
         // `bestMatch` skips speakers recorded under a different revision
-        // (Open Question #3), so passing the real revision is what makes R18
+        // (Open Question #3), so passing the real revision is what makes PT-R18
         // able to match at all.
         if let library, let diarizer {
             phase?.set("await-diarizer-centroids")

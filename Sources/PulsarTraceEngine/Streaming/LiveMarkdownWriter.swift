@@ -1,16 +1,16 @@
 import Foundation
 
-/// Strictly append-only writer for a recording's `live.md` (R12, R35,
-/// R35a, R36, R37).
+/// Strictly append-only writer for a recording's `live.md` (PT-R12, PT-R35,
+/// PT-R35a, PT-R36, PT-R37).
 ///
 /// `live.md` is one of PulsarTrace's three public API surfaces: an external AI
 /// agent `tail -f`s it during a meeting. Two hard invariants govern it:
 ///
-/// - **R35a / R37** — the file is created **at session start**, before the
+/// - **PT-R35a / PT-R37** — the file is created **at session start**, before the
 ///   first utterance, carrying the `<!-- pulsartrace:live -->` marker and the
 ///   `## Transcript — YYYY-MM-DD HH:MM` header. An agent attaching mid-meeting
 ///   sees an unambiguous "recording in progress" signal even before any speech.
-/// - **R36 / R12** — every write is a **whole line appended to the end**. The
+/// - **PT-R36 / PT-R12** — every write is a **whole line appended to the end**. The
 ///   file is never rewritten, never edited in place, never truncated. A
 ///   speaker rename mid-call applies to the next post-pass, never here. A
 ///   `tail -f` consumer therefore sees **strictly monotonic byte growth** and
@@ -22,7 +22,7 @@ import Foundation
 /// utterance. Instead the writer holds one `FileHandle` open for the session
 /// and appends each line directly to its file descriptor.
 ///
-/// The append is **fully robust** (R12 — append-only is a hard invariant): the
+/// The append is **fully robust** (PT-R12 — append-only is a hard invariant): the
 /// line is UTF-8 encoded *before* the write (so a multi-byte character is never
 /// cut), and the bytes are written via a `write(2)` loop on the raw descriptor
 /// that retries on `EINTR` and on a short write until **every** byte has
@@ -57,18 +57,18 @@ public actor LiveMarkdownWriter {
     private let recordingStart: Date
     private var handle: FileHandle?
     /// Running byte total — every append advances it; exposed so tests can
-    /// assert strictly monotonic growth (R36).
+    /// assert strictly monotonic growth (PT-R36).
     public private(set) var bytesWritten: Int = 0
 
     /// - Parameters:
     ///   - fileURL: the `live.md` path inside the recording folder.
-    ///   - recordingStart: wall-clock recording start for the R35a header.
+    ///   - recordingStart: wall-clock recording start for the PT-R35a header.
     public init(fileURL: URL, recordingStart: Date) {
         self.fileURL = fileURL
         self.recordingStart = recordingStart
     }
 
-    /// Create `live.md` at session start with the marker + header (R35a, R37).
+    /// Create `live.md` at session start with the marker + header (PT-R35a, PT-R37).
     ///
     /// Writes the two header lines and leaves the handle open for the session.
     /// Idempotent-guarded: a second call throws rather than silently truncating
@@ -87,7 +87,7 @@ public actor LiveMarkdownWriter {
         }
         self.handle = h
 
-        // R35a/R37: marker first, then the header — exactly the `final.md`
+        // PT-R35a/PT-R37: marker first, then the header — exactly the `final.md`
         // header shape but with the `live` marker.
         let header = TranscriptDocument.Marker.live.rawValue + "\n"
             + "## Transcript — \(Self.headerFormatter.string(from: recordingStart))\n"
@@ -95,7 +95,7 @@ public actor LiveMarkdownWriter {
         try appendRaw(header)
     }
 
-    /// Append one fully-formed utterance line (R12, R36).
+    /// Append one fully-formed utterance line (PT-R12, PT-R36).
     ///
     /// `line` must be a single transcript line **without** a trailing newline;
     /// this method adds exactly one. The whole line is appended atomically.
@@ -106,7 +106,7 @@ public actor LiveMarkdownWriter {
 
     /// Append a formatted utterance line for a streaming utterance.
     ///
-    /// Renders the R13/Appendix shape: `**[HH:MM:SS] <speaker>:** <text>`.
+    /// Renders the PT-R13/Appendix shape: `**[HH:MM:SS] <speaker>:** <text>`.
     /// `speakerLabel` already carries any provisional `?` suffix the caller
     /// wants (mic is `You`, system speakers are `Them?` etc.).
     public func appendUtterance(
@@ -118,7 +118,7 @@ public actor LiveMarkdownWriter {
         try appendLine("**[\(stamp)] \(speakerLabel):** \(text)")
     }
 
-    /// A capture pause/resume to annotate in `live.md` (R7).
+    /// A capture pause/resume to annotate in `live.md` (PT-R7).
     public enum GapKind: Sendable {
         /// Capture paused — the Mac slept or the audio device changed.
         case paused
@@ -126,7 +126,7 @@ public actor LiveMarkdownWriter {
         case resumed(Duration)
     }
 
-    /// Append a gap-annotation line marking a capture pause or resume (R7).
+    /// Append a gap-annotation line marking a capture pause or resume (PT-R7).
     ///
     /// Rendered as an italic note (`_(recording paused)_`) — the same line
     /// kind `final.md` uses for "no speech detected", clearly distinct from an
@@ -155,7 +155,7 @@ public actor LiveMarkdownWriter {
     /// the raw file descriptor that retries on `EINTR`/short writes until every
     /// byte has landed. Encoding before the write guarantees no partial
     /// multi-byte character ever reaches the file; the loop guarantees the
-    /// whole line is appended even if a signal interrupts the syscall (R12 —
+    /// whole line is appended even if a signal interrupts the syscall (PT-R12 —
     /// `live.md` append-only is a hard invariant).
     private func appendRaw(_ text: String) throws {
         guard let handle else { throw WriteError.notStarted }
@@ -198,7 +198,7 @@ public actor LiveMarkdownWriter {
         return "\(seconds)s"
     }
 
-    /// `YYYY-MM-DD HH:MM` local-time header stamp (R35a) — identical shape to
+    /// `YYYY-MM-DD HH:MM` local-time header stamp (PT-R35a) — identical shape to
     /// `TranscriptDocument`'s `final.md` header.
     private nonisolated static let headerFormatter: DateFormatter = {
         let f = DateFormatter()

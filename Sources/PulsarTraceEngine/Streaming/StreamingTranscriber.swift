@@ -3,7 +3,7 @@ import Logging
 
 /// A committed streaming utterance — text plus the recording-absolute span the
 /// LocalAgreement-2 committer settled on. The streaming analogue of
-/// `TranscriptSegment`; it is only ever produced once *stable* (R10).
+/// `TranscriptSegment`; it is only ever produced once *stable* (PT-R10).
 public struct CommittedUtterance: Sendable, Equatable {
     /// Recording-absolute offset of the utterance's first word.
     public let start: Duration
@@ -19,7 +19,7 @@ public struct CommittedUtterance: Sendable, Equatable {
     }
 }
 
-/// Streaming transcription for the live pass (R10).
+/// Streaming transcription for the live pass (PT-R10).
 ///
 /// Consumes any `AudioFrameSource` at whatever pace the source delivers frames
 /// (real-time for a device / `ffmpeg -re` pipe / `FixturePlaybackSource`
@@ -42,7 +42,7 @@ public struct CommittedUtterance: Sendable, Equatable {
 ///  3. Feed each window's hypothesis to a `LiveAgreementCommitter`: only the
 ///     longest prefix that **two consecutive windows agree on** is committed
 ///     (LocalAgreement-2). Unstable tail words are held back, never emitted —
-///     so `live.md` only grows and is never rewritten (R36).
+///     so `live.md` only grows and is never rewritten (PT-R36).
 ///  4. When the window grows past `windowDuration` past the commit point, the
 ///     buffer is trimmed at the commit point so memory stays bounded.
 ///  5. Group newly-committed tokens back into utterances (split on a silence
