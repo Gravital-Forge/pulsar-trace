@@ -466,9 +466,9 @@ Concurrent appends to the shared event log are serialized so records never inter
 
 A stuck transcription decode cannot stall or lose the recording, the live transcript, or the audio
 file, and is recovered in-process: a wedged refinement decode is cancelled at a token boundary and
-resumes from its checkpoint, and a wedged live window is bounded by a deadline and skipped, recovered
-by the post pass. *Acceptance:* a hung refine decode resumes from checkpoint after cancellation; a
-hung live window is skipped without stalling the recording.
+resumes from its checkpoint, and a wedged live window is bounded by a deadline and skipped,
+recovered by the post pass. *Acceptance:* a hung refine decode resumes from checkpoint after
+cancellation; a hung live window is skipped without stalling the recording.
 
 ## Security, privacy & accessibility
 

@@ -35,8 +35,8 @@ labels mark the microphone as the local speaker and system speakers as a generic
 provisional other party (PT-R14, PT-R16, PT-R18); microphone-echo duplicates are dropped (PT-R19). A
 provisional speaker is marked with a compact `?` suffix emitted by the engine at the source; an
 utterance the live pass cannot attribute to any tracked speaker takes a neutral `Speaker?` marker
-rather than a named or numbered party. The verbose `(provisional)` form is the prior schema version of
-this field and is still honored on read; the field evolves under the contract's versioning rule
+rather than a named or numbered party. The verbose `(provisional)` form is the prior schema version
+of this field and is still honored on read; the field evolves under the contract's versioning rule
 (PT-R89).
 
 ## Live-to-final replacement

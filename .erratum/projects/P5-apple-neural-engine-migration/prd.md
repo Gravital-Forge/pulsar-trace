@@ -34,11 +34,11 @@ investigation (E2-rev2). The latter is the project's genuinely in-flight tail.
 Each requirement carries a **type** (functional / technical / constraint) and a **change-type**
 against the product layer (Introduce / Supersede(target) / Retire(target)), with the target product
 requirement in the heading. At project close-out these were reconciled into `product/`: the product
-requirement numbers below (PT-R107–PT-R113) were minted, the supersession pointers and terminal flips
-were applied to the traceability matrix, and the superseded/retired bodies were removed from
-`requirements.md`, per `references/close-out.md`. The reliability revisions E2-rev1 and E2-rev2 propose
-**no new product requirement** — E2-rev1's experiment was reverted, and E2-rev2 hardens existing
-live-pass guarantees rather than adding one.
+requirement numbers below (PT-R107–PT-R113) were minted, the supersession pointers and terminal
+flips were applied to the traceability matrix, and the superseded/retired bodies were removed from
+`requirements.md`, per `references/close-out.md`. The reliability revisions E2-rev1 and E2-rev2
+propose **no new product requirement** — E2-rev1's experiment was reverted, and E2-rev2 hardens
+existing live-pass guarantees rather than adding one.
 
 ### PT-P5-R1 · Technical · Supersede(PT-R9) — Resident ANE transcription
 
@@ -74,14 +74,13 @@ mismatch.
 ### PT-P5-R4 · Technical · Introduce — In-process ANE-bounded decode recovery
 
 A wedged or runaway ANE decode cannot stall or lose the recording, the live transcript, or the audio
-file, and is recovered in-process: a refine decode stops at a WhisperKit per-token callback deadline,
-and the paused job drops the WhisperKit actor (ARC frees the CoreML models) and requeues from its
-on-disk checkpoint; a live Parakeet window is bounded by a per-window semaphore deadline and skipped,
-with the post-pass recovering it.
+file, and is recovered in-process: a refine decode stops at a WhisperKit per-token callback
+deadline, and the paused job drops the WhisperKit actor (ARC frees the CoreML models) and requeues
+from its on-disk checkpoint; a live Parakeet window is bounded by a per-window semaphore deadline
+and skipped, with the post-pass recovering it.
 
-*Introduces:* PT-R110. *Acceptance:* a hung refine decode is cancelled at a token boundary
-and resumes from checkpoint; a hung live window is skipped without stalling the drain or the WAV
-writes.
+*Introduces:* PT-R110. *Acceptance:* a hung refine decode is cancelled at a token boundary and
+resumes from checkpoint; a hung live window is skipped without stalling the drain or the WAV writes.
 
 ### PT-P5-R5 · Functional · Retire(PT-R97) — Out-of-process recognizer removed
 
@@ -99,18 +98,18 @@ The system stream is diarized offline by FluidAudio's CoreML `speaker-diarizatio
 pipeline running in-process on the Apple Neural Engine — powerset segmentation, WeSpeaker
 embeddings, AHC warm start, and VBx/PLDA refinement — replacing the pyannote Python subprocess.
 
-*Supersedes:* PT-R15a; introduces PT-R111. *Acceptance:* a refine diarizes the system stream
-through FluidAudio in-process; no `python/` tree, venv, or pyannote subprocess remains; the mic
-stream is still never diarized.
+*Supersedes:* PT-R15a; introduces PT-R111. *Acceptance:* a refine diarizes the system stream through
+FluidAudio in-process; no `python/` tree, venv, or pyannote subprocess remains; the mic stream is
+still never diarized.
 
 ### PT-P5-R7 · Technical · Supersede(PT-R29) — Unified WeSpeaker embedding space
 
-Per-speaker voice embeddings are 256-d WeSpeaker vectors produced by the one FluidAudio pipeline used
-across the live pass, the offline pass, and the speaker library — a single embedding space by
+Per-speaker voice embeddings are 256-d WeSpeaker vectors produced by the one FluidAudio pipeline
+used across the live pass, the offline pass, and the speaker library — a single embedding space by
 construction, with match/stitch thresholds recalibrated to that geometry.
 
-*Supersedes:* PT-R29; introduces PT-R112. *Acceptance:* live, offline, and library embeddings
-come from one FluidAudio WeSpeaker model; `SpeakerLibrary.defaultMatchThreshold` and
+*Supersedes:* PT-R29; introduces PT-R112. *Acceptance:* live, offline, and library embeddings come
+from one FluidAudio WeSpeaker model; `SpeakerLibrary.defaultMatchThreshold` and
 `LiveDiarizer.stitchThreshold` are calibrated for it and pinned by the threshold-calibration tests.
 
 ### PT-P5-R8 · Technical · Introduce — Diarization-driven schema migration
@@ -118,16 +117,16 @@ come from one FluidAudio WeSpeaker model; `SpeakerLibrary.defaultMatchThreshold`
 The new embedding space forces a one-way data migration: the speaker library moves to schema v3
 (`pyannote_model_revision` → `model_revision`; a pre-v3 database is archived to
 `speakers.sqlite.pre-v3.bak` and reset, because pyannote-space centroids can never match WeSpeaker
-embeddings), and `metadata.json` moves to v2 (`pyannote_model` → `diarization_model { id, revision }`;
-the `library_version` field is dropped).
+embeddings), and `metadata.json` moves to v2 (`pyannote_model` →
+`diarization_model { id, revision }`; the `library_version` field is dropped).
 
-*Introduces:* PT-R113. *Acceptance:* opening a pre-v3 library archives and resets it; a fresh
-refine writes `diarization_model { id, revision }` into a v2 `metadata.json`.
+*Introduces:* PT-R113. *Acceptance:* opening a pre-v3 library archives and resets it; a fresh refine
+writes `diarization_model { id, revision }` into a v2 `metadata.json`.
 
 ### PT-P5-R9 · Technical · Retire(PT-R67) — Python diarization test layer removed
 
-Deleting the `python/` tree removes the pyannote wrapper layer and the Python test layer that covered
-it; in-process Swift diarization is covered by the existing Swift test requirements (the
+Deleting the `python/` tree removes the pyannote wrapper layer and the Python test layer that
+covered it; in-process Swift diarization is covered by the existing Swift test requirements (the
 `DiarizationE2E` suite and the deterministic pipeline tests).
 
 *Retires:* PT-R67. *Acceptance:* no `python/` tree or Python test target remains; diarization is

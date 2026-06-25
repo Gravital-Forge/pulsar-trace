@@ -21,10 +21,10 @@ by the engine executable from its invocation mode.
 
 Turns audio frames into transcript text using resident recognizers on the Apple Neural Engine:
 Parakeet TDT v3 (via FluidAudio) for the live window pass and WhisperKit (a `large-v3-turbo` default
-with a `large-v3` accuracy fallback) for the offline/refine pass, over a fixed model catalog. Owns the
-whole-stream and per-region decode assembly with blank/no-speech and hallucination filtering, the
-shared transcript option/error types, and an in-process decode that is bounded by a deadline (per
-token on refine, per window on live) rather than serialized by a Metal lock.
+with a `large-v3` accuracy fallback) for the offline/refine pass, over a fixed model catalog. Owns
+the whole-stream and per-region decode assembly with blank/no-speech and hallucination filtering,
+the shared transcript option/error types, and an in-process decode that is bounded by a deadline
+(per token on refine, per window on live) rather than serialized by a Metal lock.
 
 *Interactions:* reads from the Audio Source Layer; model bundles are acquired via Model Acquisition
 (PT-C21); emits the transcript consumed by the Refinement Pipeline and the live pass.
@@ -33,15 +33,15 @@ token on refine, per window on live) rather than serialized by a Metal lock.
 
 ### PT-C3 · Diarization Engine
 
-Produces speaker turns and per-speaker embeddings for the system stream by running FluidAudio's CoreML
-`speaker-diarization-community-1` pipeline — powerset segmentation, WeSpeaker embeddings, and AHC/VBx
-clustering — in-process on the Apple Neural Engine through a resident `DiarizerEngine`; never diarizes
-the microphone stream. Owns the transcript-to-turns merge by dominant overlap. One embedding model
-serves the offline pass, the live pass, and the Speaker Library, so the embedding space is unified by
-construction. There is no Python runtime anywhere in the product.
+Produces speaker turns and per-speaker embeddings for the system stream by running FluidAudio's
+CoreML `speaker-diarization-community-1` pipeline — powerset segmentation, WeSpeaker embeddings, and
+AHC/VBx clustering — in-process on the Apple Neural Engine through a resident `DiarizerEngine`;
+never diarizes the microphone stream. Owns the transcript-to-turns merge by dominant overlap. One
+embedding model serves the offline pass, the live pass, and the Speaker Library, so the embedding
+space is unified by construction. There is no Python runtime anywhere in the product.
 
-*Interactions:* reads system-stream audio; model bundles via Model Acquisition (PT-C21); its turns and
-embeddings flow to the Refinement Pipeline, Live Diarization, and the Speaker Library.
+*Interactions:* reads system-stream audio; model bundles via Model Acquisition (PT-C21); its turns
+and embeddings flow to the Refinement Pipeline, Live Diarization, and the Speaker Library.
 
 *Satisfies:* PT-R111, PT-R17, PT-R112
 
@@ -66,8 +66,8 @@ A durable SQLite store (WAL mode) of speaker identity — centroids, names, coun
 clusters, soft-delete with undo, and corruption auto-restore. Owns the merge/unmerge centroid
 arithmetic and speaker delisting; a per-line fallback for speech overlapping no diarized turn labels
 the line without becoming a person. Centroids live in the unified WeSpeaker embedding space with
-thresholds calibrated to it; a schema migration archives and resets a database carrying centroids from
-a prior, incompatible embedding space.
+thresholds calibrated to it; a schema migration archives and resets a database carrying centroids
+from a prior, incompatible embedding space.
 
 *Interactions:* read and written by the Refinement Pipeline; managed by the CLI and the Menubar
 editor; edits drive the retroactive rewriter.
@@ -118,11 +118,11 @@ spawns the Capture Daemon and engine for `record`.
 
 ### PT-C10 · Model Store
 
-**Status:** Retired — superseded by Model Acquisition (PT-C21) when models moved to SDK-managed CoreML
-bundles identified by a content digest.
+**Status:** Retired — superseded by Model Acquisition (PT-C21) when models moved to SDK-managed
+CoreML bundles identified by a content digest.
 
-Acquired and verified recognition models: resumable download, pinned content-hash verification, and a
-single product-owned cache root; emitted a model-download event.
+Acquired and verified recognition models: resumable download, pinned content-hash verification, and
+a single product-owned cache root; emitted a model-download event.
 
 *Interactions:* used by the Transcription Engine; wrote to the Events Log.
 
@@ -158,8 +158,8 @@ skipped rather than stalling the pass.
 Windowed diarization of the system stream, in-process over the resident `DiarizerEngine` (PT-C3),
 stitching provisional speaker identity across windows by embedding similarity, with read-only
 speaker-library lookup to surface known names. A single in-flight window is gated so a wedged window
-never stalls transcription or the live transcript, and an utterance with no diarized coverage takes a
-neutral provisional marker rather than a named speaker. Never writes the library.
+never stalls transcription or the live transcript, and an utterance with no diarized coverage takes
+a neutral provisional marker rather than a named speaker. Never writes the library.
 
 *Interactions:* reads the system source (PT-C1), runs the Diarization Engine (PT-C3), and reads the
 Speaker Library (PT-C5); labels live utterances for the Live Markdown Writer.
@@ -208,9 +208,9 @@ edits the Speaker Library (PT-C5); surfaces the Refinement Job Queue (PT-C17).
 
 A single-worker FIFO queue, persisted as JSONL, that runs refinement off the recording path:
 per-voice-activity-region checkpointing via a resumable refiner, a pause gate that yields to a
-starting recording by cancelling the in-flight ANE decode at a token boundary and requeuing the job to
-resume from checkpoint, and one recognizer reused per job. The menubar drives refinement through it;
-the CLI keeps the direct one-shot path.
+starting recording by cancelling the in-flight ANE decode at a token boundary and requeuing the job
+to resume from checkpoint, and one recognizer reused per job. The menubar drives refinement through
+it; the CLI keeps the direct one-shot path.
 
 *Interactions:* drives the Refinement Pipeline (PT-C4); paused by a recording start; surfaced by the
 Menubar Application (PT-C16).
@@ -222,9 +222,9 @@ Menubar Application (PT-C16).
 Keeps the recording safe under failure: incremental crash-safe WAV writing (header re-patched as it
 grows), capture stall detection driving engine rebuilds, and the live run split into a
 recording-safe drain (WAV + diarization + a bounded drop-oldest queue, never calling the recognizer)
-plus a best-effort decode bounded by an in-process deadline. Neither a stall nor a wedged decode loses
-the recording; a wedged decode is recovered in-process — the live window is skipped and a refine job
-requeues from checkpoint — rather than by force-killing a recognizer process.
+plus a best-effort decode bounded by an in-process deadline. Neither a stall nor a wedged decode
+loses the recording; a wedged decode is recovered in-process — the live window is skipped and a
+refine job requeues from checkpoint — rather than by force-killing a recognizer process.
 
 *Interactions:* wraps the live pass (PT-C12, PT-C14) and the Capture Daemon (PT-C15); drives the
 in-process recognizer (PT-C2) under a deadline.
@@ -233,12 +233,14 @@ in-process recognizer (PT-C2) under a deadline.
 
 ### PT-C19 · Out-of-Process Recognizer
 
-**Status:** Retired — removed when transcription moved to the in-process Apple Neural Engine backends;
-its decode-hang isolation is now provided in-process (PT-R110, via PT-C2 / PT-C17 / PT-C18).
+**Status:** Retired — removed when transcription moved to the in-process Apple Neural Engine
+backends; its decode-hang isolation is now provided in-process (PT-R110, via PT-C2 / PT-C17 /
+PT-C18).
 
-Hosted the recognizer in a separate `pulsartrace-whisper` subprocess over a length-prefixed IPC codec,
-so a wedged native decode could be force-killed and respawned from the parent without taking down the
-engine. It shared a unified `RemoteTranscriberCore` between its live and refinement IPC clients.
+Hosted the recognizer in a separate `pulsartrace-whisper` subprocess over a length-prefixed IPC
+codec, so a wedged native decode could be force-killed and respawned from the parent without taking
+down the engine. It shared a unified `RemoteTranscriberCore` between its live and refinement IPC
+clients.
 
 *Interactions:* was invoked by the live decode worker and the refiner over the IPC layer (PT-C8);
 managed by Recording Durability (PT-C18).
@@ -262,11 +264,11 @@ Pipeline, Transcript Output, Events Log, Speaker Library, Capture Daemon, and IP
 Acquires the CoreML model bundles through their managing SDKs (WhisperKit, FluidAudio) into a single
 product-owned cache root, and identifies each bundle by a deterministic content digest — a tree hash
 of the bundle directory — recorded on the model-download event. There is no PulsarTrace-owned
-downloader and no pinned-hash gate; an upstream bundle revision changes the digest rather than failing.
-The digest is the model identity downstream — the Speaker Library refuses to match centroids across a
-digest change.
+downloader and no pinned-hash gate; an upstream bundle revision changes the digest rather than
+failing. The digest is the model identity downstream — the Speaker Library refuses to match
+centroids across a digest change.
 
-*Interactions:* used by the Transcription Engine (PT-C2) and the Diarization Engine (PT-C3); writes the
-model-download event to the Events Log (PT-C6). Replaces the retired Model Store (PT-C10).
+*Interactions:* used by the Transcription Engine (PT-C2) and the Diarization Engine (PT-C3); writes
+the model-download event to the Events Log (PT-C6). Replaces the retired Model Store (PT-C10).
 
 *Satisfies:* PT-R108, PT-R109

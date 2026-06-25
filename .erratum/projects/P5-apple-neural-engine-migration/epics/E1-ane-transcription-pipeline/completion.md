@@ -10,9 +10,9 @@ The live pass runs **Parakeet TDT 0.6B v3** through FluidAudio: a resident `Para
 once, shared by both streams, with a script-aware `languageHint`), a `ParakeetWindowTranscriber`
 conforming to the existing `WindowTranscribing` seam, and a `ParakeetTokenMapper` turning
 SentencePiece token timings into per-word segments. The live pass has no model knob anywhere — no
-engine `--model`, no settings entry — and `recording_started.model_live` is fixed to `parakeet-v3`. A
-live window is bounded by a 30 s semaphore deadline; an over-run window is skipped and recovered by
-the post-pass.
+engine `--model`, no settings entry — and `recording_started.model_live` is fixed to `parakeet-v3`.
+A live window is bounded by a 30 s semaphore deadline; an over-run window is skipped and recovered
+by the post-pass.
 
 The refine pass runs **WhisperKit** (argmax-oss-swift) over a fixed two-model catalog
 (`WhisperKitModelCatalog`): `large-v3-turbo` (`…626MB`, default) and `large-v3` (`…947MB`, the
@@ -26,20 +26,20 @@ maps segments with the D31 hallucination gate ported onto WhisperKit's per-segme
 for a recording cancels the in-flight decode, drops the WhisperKit actor (ARC frees the CoreML
 models), and requeues the job to resume from its checkpoint.
 
-Model bundles are SDK-managed directories under `~/Library/Caches/PulsarTrace/models/` with no pinned
-SHA-256; `DirectoryDigest` computes a deterministic SHA-256 tree hash carried on `model_downloaded`,
-and `RefinementJob.modelSHA256` / the `metadata.json` hash field record `""`. The shared option/error
-types became `TranscriptionOptions`/`TranscriptionError` (whisper's `threadCount`/`temperature`/
-`vadModelURL` knobs and `AbortToken` removed).
+Model bundles are SDK-managed directories under `~/Library/Caches/PulsarTrace/models/` with no
+pinned SHA-256; `DirectoryDigest` computes a deterministic SHA-256 tree hash carried on
+`model_downloaded`, and `RefinementJob.modelSHA256` / the `metadata.json` hash field record `""`.
+The shared option/error types became `TranscriptionOptions`/`TranscriptionError` (whisper's
+`threadCount`/`temperature`/ `vadModelURL` knobs and `AbortToken` removed).
 
 whisper.cpp was removed wholesale: `CWhisper`, the vendored Metal build, the `pulsartrace-whisper`
-subprocess, `WhisperIPC`, `WhisperTranscriber`, and `ModelStore`/`ModelCatalog`, followed by a rename
-sweep across the CLI help text, comments, and docs.
+subprocess, `WhisperIPC`, `WhisperTranscriber`, and `ModelStore`/`ModelCatalog`, followed by a
+rename sweep across the CLI help text, comments, and docs.
 
 ## Deltas from the spec
 
-None. Diarization deliberately stayed on Python/pyannote at the close of this epic; its ANE migration
-is PT-P5-E2.
+None. Diarization deliberately stayed on Python/pyannote at the close of this epic; its ANE
+migration is PT-P5-E2.
 
 ## Requirements satisfied
 
@@ -48,8 +48,8 @@ is PT-P5-E2.
   `ParakeetWindowTranscriber.swift`, `ParakeetTokenMapper.swift`;
   `Sources/PulsarTraceEngine/Transcription/WhisperKit/WhisperKitRegionTranscriber.swift`,
   `WhisperKitModelCatalog.swift`, `WhisperKitSegmentMapper.swift`, `WhisperKitLanguagePolicy.swift`;
-  `Sources/PulsarTraceEngine/Transcription/FluidVADRegionDetector.swift`,
-  `TranscriptTypes.swift`, `TranscriptionOptions.swift`.
+  `Sources/PulsarTraceEngine/Transcription/FluidVADRegionDetector.swift`, `TranscriptTypes.swift`,
+  `TranscriptionOptions.swift`.
 - **PT-P5-R2** (SDK-managed model acquisition) — WhisperKit/FluidAudio SDK download into
   `AppPaths.modelsCacheDirectory`; the PulsarTrace `ModelStore` was removed.
 - **PT-P5-R3** (content-digest model integrity) —

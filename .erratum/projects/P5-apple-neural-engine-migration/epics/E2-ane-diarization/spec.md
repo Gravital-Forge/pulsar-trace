@@ -4,17 +4,18 @@
 
 ## Intent
 
-Move speaker diarization fully in-process onto the Apple Neural Engine and remove the embedded-Python
-pyannote sidecar. Implements PT-P5-R6 (in-process ANE offline diarization), PT-P5-R7 (unified
-WeSpeaker embedding space), PT-P5-R8 (diarization-driven schema migration), and PT-P5-R9 (retire the
-Python diarization test layer). Reshapes the Diarization Engine (PT-C3), Live Diarization (PT-C13),
-the Speaker Library (PT-C5), and the Refinement Pipeline (PT-C4); deletes the `python/` tree.
+Move speaker diarization fully in-process onto the Apple Neural Engine and remove the
+embedded-Python pyannote sidecar. Implements PT-P5-R6 (in-process ANE offline diarization), PT-P5-R7
+(unified WeSpeaker embedding space), PT-P5-R8 (diarization-driven schema migration), and PT-P5-R9
+(retire the Python diarization test layer). Reshapes the Diarization Engine (PT-C3), Live
+Diarization (PT-C13), the Speaker Library (PT-C5), and the Refinement Pipeline (PT-C4); deletes the
+`python/` tree.
 
 ## Acceptance criteria
 
-- Both the offline (refine) and live (streaming) passes diarize the system stream through FluidAudio's
-  CoreML `speaker-diarization-community-1` pipeline in-process on the ANE; the microphone stream is
-  never diarized.
+- Both the offline (refine) and live (streaming) passes diarize the system stream through
+  FluidAudio's CoreML `speaker-diarization-community-1` pipeline in-process on the ANE; the
+  microphone stream is never diarized.
 - A resident `DiarizerEngine` actor owns the `OfflineDiarizerManager`, loaded once per process and
   shared by the live pass; the offline `Diarizer` keeps the `diarizeSystemStream(wavPath:)` entry
   point and `RefinementCancellable`, with cancellation mapped onto Swift `Task` cancellation.
@@ -26,7 +27,8 @@ the Speaker Library (PT-C5), and the Refinement Pipeline (PT-C4); deletes the `p
 - The speaker library migrates to schema v3 (archive-and-reset of any pre-v3 database);
   `metadata.json` migrates to v2 (`diarization_model { id, revision }`; `library_version` dropped).
 - No `python/` tree, venv, `requirements.lock`, `pulsartrace_ai` module, Swift↔Python JSON contract,
-  or `HF_TOKEN`/`.env` flow remains; `doctor` checks the model cache instead of a Python environment.
+  or `HF_TOKEN`/`.env` flow remains; `doctor` checks the model cache instead of a Python
+  environment.
 
 ## Tasks
 

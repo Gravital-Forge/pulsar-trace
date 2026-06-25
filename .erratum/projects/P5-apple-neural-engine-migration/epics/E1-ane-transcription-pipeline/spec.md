@@ -14,8 +14,9 @@ Transcription Engine (PT-C2), Streaming Transcription (PT-C12), the Refinement P
 
 ## Acceptance criteria
 
-- The live pass transcribes with a resident Parakeet TDT 0.6B v3 model on the ANE (FluidAudio); there
-  is no live-model knob anywhere, and `recording_started.model_live` is fixed to `parakeet-v3`.
+- The live pass transcribes with a resident Parakeet TDT 0.6B v3 model on the ANE (FluidAudio);
+  there is no live-model knob anywhere, and `recording_started.model_live` is fixed to
+  `parakeet-v3`.
 - The refine pass transcribes with WhisperKit on the ANE over a fixed two-model catalog
   (`large-v3-turbo` default, `large-v3` fallback), switchable in Settings and via `refine --model` /
   `record --refine-model`.

@@ -19,8 +19,9 @@ intent (PT-R15/R16/R18) is unchanged.
 
 ## Tasks
 
-- PT-P5-E2-rev1-T1 — Split `DiarizerEngine` into a refine manager (default `clustering.threshold =
-  0.6`) and a live manager with a raised AHC threshold (`liveClusteringThreshold = 1.05`).
+- PT-P5-E2-rev1-T1 — Split `DiarizerEngine` into a refine manager (default
+  `clustering.threshold = 0.6`) and a live manager with a raised AHC threshold
+  (`liveClusteringThreshold = 1.05`).
 - PT-P5-E2-rev1-T2 — Calibrate the threshold and add live-path key-count guard tests.
-- PT-P5-E2-rev1-T3 — Revert: restore a single shared manager at the default threshold (the experiment
-  did not address the real failure).
+- PT-P5-E2-rev1-T3 — Revert: restore a single shared manager at the default threshold (the
+  experiment did not address the real failure).
