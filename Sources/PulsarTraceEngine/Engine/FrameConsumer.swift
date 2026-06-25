@@ -5,7 +5,7 @@ import Logging
 ///
 /// This is deliberately minimal — it is the proof that the engine talks only
 /// to the `AudioFrameSource` abstraction (invariant 3) and handles every
-/// source's end-of-stream uniformly (R75). Higher-level passes replace the
+/// source's end-of-stream uniformly (PT-R75). Higher-level passes replace the
 /// body of the per-frame work with streaming transcription, diarization, and
 /// file output; the source-consuming loop stays exactly as it is here.
 public struct FrameConsumer: Sendable {
@@ -16,7 +16,7 @@ public struct FrameConsumer: Sendable {
         public let frameCount: Int
         /// Total number of PCM samples across all frames.
         public let sampleCount: Int
-        /// Number of pause markers observed (R77).
+        /// Number of pause markers observed (PT-R77).
         public let pauseCount: Int
         /// Total paused duration observed across resume markers.
         public let pausedDuration: Duration

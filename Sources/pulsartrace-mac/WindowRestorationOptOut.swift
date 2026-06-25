@@ -14,8 +14,8 @@ import SwiftUI
 /// affected — a reopened window still gets its last size and position.
 ///
 /// This is the AppKit-level equivalent of the macOS 15-only
-/// `restorationBehavior(.disabled)` scene modifier (the PRD floor is
-/// macOS 14, and `SceneBuilder` cannot branch on `#available`).
+/// `restorationBehavior(.disabled)` scene modifier (the minimum supported OS
+/// is macOS 14, and `SceneBuilder` cannot branch on `#available`).
 ///
 /// Usage: `.background(WindowRestorationOptOut())` on the window's root view.
 struct WindowRestorationOptOut: NSViewRepresentable {

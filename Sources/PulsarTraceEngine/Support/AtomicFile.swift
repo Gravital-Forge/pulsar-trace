@@ -2,7 +2,7 @@ import Foundation
 
 /// Atomic write-then-rename for files external tools may be reading.
 ///
-/// `final.md` and `metadata.json` are public API surfaces (PRD §17): an AI
+/// `final.md` and `metadata.json` are public API surfaces: an AI
 /// agent or an editor may have either file open while a refine pass rewrites
 /// it. A naive truncate-then-write would let a consumer observe a half-written
 /// file. Instead every write goes to a sibling temp file and is `rename(2)`'d

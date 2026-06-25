@@ -228,7 +228,7 @@ struct LiveRunnerResilienceTests {
             await writer.finish()
         }
 
-        // R36/R12: every observed size is ≥ the previous — strictly monotonic
+        // PT-R36/PT-R12: every observed size is ≥ the previous — strictly monotonic
         // growth. The watchdog's gap annotation is append-only.
         let observed = await sizes.values
         for i in 1..<max(observed.count, 1) {

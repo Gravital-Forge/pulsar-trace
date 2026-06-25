@@ -20,7 +20,7 @@ Transcription Engine (PT-C2), Streaming Transcription (PT-C12), the Refinement P
 - The refine pass transcribes with WhisperKit on the ANE over a fixed two-model catalog
   (`large-v3-turbo` default, `large-v3` fallback), switchable in Settings and via `refine --model` /
   `record --refine-model`.
-- Speech regions come from FluidAudio's Silero-CoreML VAD with 800 ms coalescing, and the D31
+- Speech regions come from FluidAudio's Silero-CoreML VAD with 800 ms coalescing, and the PT-P2-D13
   hallucination double-gate is applied on WhisperKit's per-segment `noSpeechProb`/`avgLogprob`.
 - Model bundles are SDK-managed directories under `~/Library/Caches/PulsarTrace/models/`;
   `model_downloaded` carries a `DirectoryDigest` and no pinned-SHA gate remains.
@@ -39,7 +39,7 @@ Transcription Engine (PT-C2), Streaming Transcription (PT-C12), the Refinement P
   `ParakeetWindowTranscriber`); cut the live pass over with no model knob.
 - PT-P5-E1-T4 — WhisperKit refine backend (`WhisperKitModelCatalog`, `WhisperKitLanguagePolicy`,
   `WhisperKitSegmentMapper`, `WhisperKitRegionTranscriber`) plus `FluidVADRegionDetector`; port the
-  D31 hallucination gate.
+  PT-P2-D13 hallucination gate.
 - PT-P5-E1-T5 — Refine queue, `refine`/`record` CLI, and Menubar settings cutover: in-process decode
   cancel, refine-model picker, removal of the live-model knob.
 - PT-P5-E1-T6 — Remove whisper.cpp (`CWhisper`, `pulsartrace-whisper`, `WhisperIPC`,

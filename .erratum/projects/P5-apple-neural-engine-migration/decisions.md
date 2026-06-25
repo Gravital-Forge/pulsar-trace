@@ -1,9 +1,10 @@
 # PT-P5 · Apple Neural Engine Migration — Decision Log
 
 The reasoning behind moving transcription and diarization onto the Apple Neural Engine, recorded as
-each choice was taken. Decisions D5–D8 cover the live-diarization reliability investigation that
-followed the diarization cutover; D2–D4 and D7 carry detail that lived only in branch commit
-messages (D42, D43), now captured here. Append-only; frozen at project close.
+each choice was taken. Decisions PT-P5-D5–PT-P5-D8 cover the live-diarization reliability
+investigation that followed the diarization cutover; PT-P5-D2–PT-P5-D4 and PT-P5-D7 carry detail
+that previously lived only in branch commit messages, now captured here. Append-only; frozen at
+project close.
 
 ## Decisions
 
@@ -19,26 +20,28 @@ models: `large-v3-turbo` (the default) and `large-v3` (the accuracy fallback if 
 switched in Settings, not code. whisper.cpp is gone: `CWhisper`, the vendored Metal build, the
 `pulsartrace-whisper` subprocess, `WhisperIPC`, `WhisperTranscriber`, and
 `ModelCatalog`/`ModelStore`. Speech regions come from FluidAudio's Silero-CoreML VAD with the same
-800 ms coalescing, and the D31 hallucination double-gate is ported onto WhisperKit's per-segment
-`noSpeechProb`/`avgLogprob`. Language selection reuses the existing "Restrict to languages" selector
-across both passes, plus an explicit `refine --language` override.
+800 ms coalescing, and the PT-P2-D13 hallucination double-gate is ported onto WhisperKit's
+per-segment `noSpeechProb`/`avgLogprob`. Language selection reuses the existing "Restrict to
+languages" selector across both passes, plus an explicit `refine --language` override.
 
 **Because:** whisper.cpp's Metal decode pinned the GPU — live transcription degraded Meet +
 screen-share fluency, and a `large-v3` refine ran at ~1× real time while monopolising the GPU. The
 ANE is idle during meetings; Parakeet v3 beats whisper `base` on Polish by ~4× FLEURS WER (7.3% vs
 30.8%) and turbo is ~2–5× faster than `large-v3` at near-identical accuracy. CC-BY-4.0 (Parakeet),
 Apache-2.0 (FluidAudio), and MIT (WhisperKit, Whisper weights) all permit commercial use. This
-supersedes/reshapes the whisper-bound decisions D7 (vendored build), D8 (Metal single-context
-discipline), D15 (CPU-backend tests), D36 (per-job transcriber to dodge Metal re-init), and D38's
-whisper-subprocess recovery mechanics — the drain/worker live architecture itself survives. The
-revert path, should ANE dogfooding disappoint, is `git revert` of the cutover branch.
+supersedes/reshapes the whisper-bound decisions PT-P1-D7 (vendored build), PT-P1-D8 (Metal
+single-context discipline), PT-P1-D15 (CPU-backend tests), PT-P3-D5 (per-job transcriber to dodge
+Metal re-init), and PT-P3-D7's whisper-subprocess recovery mechanics — the drain/worker live
+architecture itself survives. The revert path, should ANE dogfooding disappoint, is `git revert` of
+the cutover branch.
 
 ### PT-P5-D2 · Content-digest model integrity replaces the pinned content hash
 
 *2026-06-12*
 
 **Decision:** CoreML model bundles are SDK-managed directories under
-`~/Library/Caches/PulsarTrace/models/` (the D10 cache root preserved) with **no pinned SHA-256**.
+`~/Library/Caches/PulsarTrace/models/` (the PT-P1-D10 cache root preserved) with **no pinned
+SHA-256**.
 `model_downloaded` carries a computed `DirectoryDigest` — a deterministic SHA-256 tree hash of the
 bundle directory — as the model identity instead. `RefinementJob.modelSHA256` and `metadata.json`'s
 hash field record `""` for these models; the frozen public `whisper_model` field name is unchanged.
@@ -57,15 +60,16 @@ acquisition now.
 **Decision:** Speaker diarization runs fully in-process on the ANE via FluidAudio 0.15.2's
 `OfflineDiarizerManager` for both the offline (refine) and the live (streaming) passes. The entire
 `python/` tree is deleted — no venv, no `requirements.lock`, no `pulsartrace_ai` modules — and with
-it the one-shot pyannote subprocess (superseding D9), the long-lived windowed-pyannote subprocess
-(superseding D19), the Swift↔Python JSON wire contract (retiring D11's `schema` field), the
-`HF_TOKEN`/`.env` arrangement (mooting D10's `HF_HOME` redirect), and the OpenTelemetry kill-switch
-(mooting D12 — there is no Python process to emit telemetry). The models are FluidInference's CoreML
-conversion of `speaker-diarization-community-1` (powerset segmentation + WeSpeaker 256-d embeddings
+it the one-shot pyannote subprocess (superseding PT-P1-D9), the long-lived windowed-pyannote
+subprocess (superseding PT-P2-D1), the Swift↔Python JSON wire contract (retiring PT-P1-D11's
+`schema` field), the `HF_TOKEN`/`.env` arrangement (mooting PT-P1-D10's `HF_HOME` redirect), and the
+OpenTelemetry kill-switch (mooting PT-P1-D12 — there is no Python process to emit telemetry). The
+models are FluidInference's CoreML conversion of `speaker-diarization-community-1` (powerset
+segmentation + WeSpeaker 256-d embeddings
 \+ AHC warm start + VBx/PLDA refinement), ~21 MB from the public repo
 `FluidInference/speaker-diarization-coreml`. A resident `DiarizerEngine` actor owns the manager and
 is loaded once per process; the live pass shares that instance, and the offline `Diarizer` keeps the
-same `diarizeSystemStream(wavPath:)` entry point (R17 intact — the mic is never diarized) with
+same `diarizeSystemStream(wavPath:)` entry point (PT-R17 intact — the mic is never diarized) with
 cancellation now mapped onto Swift `Task` cancellation. The speaker library migrates to schema v3
 (`pyannote_model_revision` → `model_revision`; a pre-v3 database is archived to `…pre-v3.bak` and
 reset) and `metadata.json` to v2 (`pyannote_model` → `diarization_model { id, revision }`;
@@ -78,8 +82,9 @@ kill-switch — from the shipping app. CoreML diarization is ~21 MB versus a mul
 install, runs on the Neural Engine alongside the PT-P5-D1 transcription models, and unifies the
 embedding space across every pass. Carrying pyannote-space centroids forward would only produce
 garbage matches against WeSpeaker embeddings, so the schema-v3 reset is mandatory, not cosmetic.
-This completes the diarization deferral noted in PT-P5-D1 and supersedes PRD §17's "pyannote stays
-in Python." The revert path is `git revert` of this branch.
+This completes the diarization deferral noted in PT-P5-D1 and supersedes the originating
+specification's "pyannote stays in Python" position (now reflected in PT-R111/PT-R112). The revert
+path is `git revert` of this branch.
 
 ### PT-P5-D4 · VBx warm-start `Fa = 0.2` and thresholds recalibrated for the WeSpeaker space
 
@@ -110,15 +115,15 @@ the ~0.93 same-speaker ceiling.
 `DiarizerEngine` into a refine manager (FluidAudio default `clustering.threshold = 0.6`) and a live
 manager with a raised AHC threshold (`liveClusteringThreshold = 1.05`, a Euclidean distance on
 unit-normalized WeSpeaker embeddings) — to cure an observed per-window over-split where one speaker
-fragments into 2–3 keys and the R18 library lookup mis-names each fragment — was reverted
+fragments into 2–3 keys and the PT-R18 library lookup mis-names each fragment — was reverted
 (`c0ddbda`). Live and refine share one resident manager at threshold 0.6.
 
 **Because:** over-split was never the reported problem. The field failure was the opposite —
 **under-split**, where short interjections collapse into whoever is already speaking — and raising
 the AHC merge distance aggravates under-split. A later threshold sweep independently confirmed the
 clustering threshold is a non-lever here (the speakers were already highly separable, cross-cosines
-~0.28); the wedge investigation (PT-P5-D6/D7) found the real cause elsewhere. The experiment never
-reached the integration branch, so the shipped product is unchanged.
+~0.28); the wedge investigation (PT-P5-D6/PT-P5-D7) found the real cause elsewhere. The experiment
+never reached the integration branch, so the shipped product is unchanged.
 
 ### PT-P5-D6 · Live-diarization wedge, attempt: reclaim a wedged diar-gate slot
 
@@ -150,7 +155,7 @@ and a length-prefixed wire codec — a supervisor with a per-window deadline plu
 built to release a "wedged ANE call" by killing the process, but is then **reverted entirely** on
 2026-06-23 (`531a1cc`, ≈ −1180 lines), along with the PT-P5-D6 gate reclaim and generation token.
 Live diarization runs through `DiarizerEngineRawAdapter` over a resident `DiarizerEngine` of the
-same type and WeSpeaker model the offline `Diarizer` separately loads (R29 holds by construction,
+same type and WeSpeaker model the offline `Diarizer` separately loads (PT-R29 holds by construction,
 not by a shared instance), and `DiarGate` returns to a plain ≤1-in-flight gate. The two fixes that
 actually resolved the wedge are retained: the worker (then any subprocess) routes stdio to
 `/dev/null` (`912208e`), and `RecordOrchestrator` drains subprocess pipes in chunks via a background
@@ -173,13 +178,13 @@ P5 — not yet merged to the integration branch.
 
 **Decision:** When the live diarizer has no coverage for a committed system utterance,
 `LiveRunner.resolveSystemLabel` returns the neutral marker `Speaker?` (`LiveRunner.noCoverageLabel`)
-and skips the R18 library lookup, rather than falling back to `"Them"`. The has-coverage path,
+and skips the PT-R18 library lookup, rather than falling back to `"Them"`. The has-coverage path,
 including a genuine `"Them"` span, is unchanged.
 
 **Because:** the old no-coverage fallback `dominantKey(...) ?? "Them"` collided with a real key:
 `"Them"` is exactly `LiveDiarizer.provisionalKey(index: 0)`, the first stitched speaker. A
-no-coverage utterance therefore inherited the first speaker's centroid, the R18 lookup resolved it,
-and the line silently took the first speaker's name (field symptom: "everything became the first
+no-coverage utterance therefore inherited the first speaker's centroid, the PT-R18 lookup resolved
+it, and the line silently took the first speaker's name (field symptom: "everything became the first
 speaker"). Returning a neutral `Speaker?` and skipping the lookup makes a no-coverage line accurate
 — nothing was tracked — and it can never collide with `provisionalKey(0)`. This fix is part of the
 in-flight wedge-reliability tail (PT-P5-D7).

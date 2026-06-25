@@ -84,7 +84,7 @@ public actor RefinementJobQueue {
     /// Restore persisted jobs and kick the worker.
     ///
     /// Before reloading active jobs, prunes terminal jobs older than 30 days
-    /// (matching the events-log retention policy, R51 / Epic 1). A prune failure
+    /// (matching the events-log retention policy, PT-R51 / Epic 1). A prune failure
     /// is non-fatal: it logs a warning and queue startup continues normally.
     public func start() async throws {
         do {
@@ -196,7 +196,7 @@ public actor RefinementJobQueue {
     /// running job's `.running(stage:, …)` into `.paused(reason: .recordingInProgress,
     /// lastStage:)` so the UI reflects the suspension rather than showing
     /// stale "Diarizing 2/7" text. Also signals the diarizer to terminate its
-    /// subprocess if one is currently running (D-Q7 / Task D3).
+    /// subprocess if one is currently running (D-Q7 / Task PT-P1-D3).
     ///
     /// **Why this does more than close the gate.** Closing the gate only stops
     /// the refiner *between* regions — an in-flight WhisperKit decode runs to
@@ -492,7 +492,7 @@ extension RefinementJobQueue {
         // then `setRunJob` replaces it with the real one that captures the queue.
         // This breaks the chicken-and-egg: the real runJob needs to call
         // `queue.setInflightCancellable(diarizer)` so the queue can cancel the
-        // diarizer on pause (D-Q7 / Task D3).
+        // diarizer on pause (D-Q7 / Task PT-P1-D3).
         //
         // Weak capture: `runJob` is stored on the queue itself, which would
         // create a retain cycle with a strong capture. Using `[weak queue]`
@@ -502,21 +502,21 @@ extension RefinementJobQueue {
 
         // Persistent speaker library — same path OfflineRefiner uses. A
         // failure to open it is non-fatal: each job falls back to raw
-        // Speaker_N labels rather than the library names (R22/R23). The
+        // Speaker_N labels rather than the library names (PT-R22/PT-R23). The
         // library actor is opened once and shared across jobs.
         let library: SpeakerLibrary? = try? await SpeakerLibrary(
             databaseURL: paths.speakersDatabaseURL, events: events)
 
         let runJob: RunJob = { [weak queue] job in
             guard let queue else { return }
-            // ANE refine (D39): in-process WhisperKit + FluidAudio VAD. The
+            // ANE refine (PT-P5-D1): in-process WhisperKit + FluidAudio VAD. The
             // job's model name resolves against the WhisperKit catalog; an
             // unknown name (e.g. a job enqueued by an older build) falls
             // back to the default rather than failing the job.
             let model = WhisperKitModelCatalog.model(named: job.modelName)
                 ?? WhisperKitModelCatalog.defaultModel
 
-            // Normalize retired model names (e.g. a pre-D39 "base" enqueued by an
+            // Normalize retired model names (e.g. a pre-PT-P5-D1 "base" enqueued by an
             // older build) so the events/metadata path downstream reports the
             // model actually used for the decode, not the stale enqueue-time name.
             // `RefinementJob.modelName` is a `let`, so reconstruct via the
@@ -526,7 +526,7 @@ extension RefinementJobQueue {
                 recordingId: job.recordingId,
                 folderURL: job.folderURL,
                 modelName: model.name,
-                // D39 — SDK-managed bundle, no pin; clears the retired ggml digest.
+                // PT-P5-D1 — SDK-managed bundle, no pin; clears the retired ggml digest.
                 modelSHA256: "",
                 trigger: job.trigger,
                 enqueuedAt: job.enqueuedAt,

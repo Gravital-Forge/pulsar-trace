@@ -1,7 +1,7 @@
 import Foundation
 
 /// Installs (and removes) the `pulsartrace` symlink in a `bin` directory —
-/// the mechanism behind R51 ("CLI is symlinked into `/usr/local/bin` … with
+/// the mechanism behind PT-R51 ("CLI is symlinked into `/usr/local/bin` … with
 /// user consent").
 ///
 /// Consent is the explicit `pulsartrace install-cli` invocation; this type

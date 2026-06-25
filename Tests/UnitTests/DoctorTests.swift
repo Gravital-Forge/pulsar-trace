@@ -2,9 +2,9 @@ import Testing
 @testable import PulsarTraceEngine
 
 /// Layer 1 — `EnvironmentDoctor`, the pure decision logic behind
-/// `pulsartrace doctor` (R50). Environment *gathering* lives in the CLI's
+/// `pulsartrace doctor` (PT-R50). Environment *gathering* lives in the CLI's
 /// `DoctorCommand` and is covered by a real-binary smoke run.
-@Suite("EnvironmentDoctor (doctor, R50)")
+@Suite("EnvironmentDoctor (doctor, PT-R50)")
 struct DoctorTests {
 
     // MARK: - macOS

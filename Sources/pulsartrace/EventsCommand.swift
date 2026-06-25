@@ -2,9 +2,9 @@ import Foundation
 import PulsarTraceEngine
 
 /// `pulsartrace events tail [--type TYPE]… [--no-follow]` — live-tail today's
-/// events log (R86).
+/// events log (PT-R86).
 ///
-/// The events log is a public API surface (`docs/events-schema.md`). `tail`
+/// The events log is a public API surface (`.erratum/product/architecture/events-log.md`). `tail`
 /// streams it verbatim — one JSONL line per event — so scripts and agents can
 /// pipe it. `--type` keeps only the named event type(s); it may be repeated.
 /// `--no-follow` prints what is already on disk and exits (the default follows

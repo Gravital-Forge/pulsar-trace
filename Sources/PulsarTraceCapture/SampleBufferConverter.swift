@@ -7,7 +7,7 @@ import CoreMedia
 /// The input format is not known until the first buffer arrives, so the
 /// underlying `AudioConverter` is built lazily from that buffer's format and
 /// rebuilt if a later buffer's format differs (a device change mid-session,
-/// R8). Not thread-safe: the owning capture engine feeds it from a single
+/// PT-R8). Not thread-safe: the owning capture engine feeds it from a single
 /// delivery queue.
 final class SampleBufferConverter {
 

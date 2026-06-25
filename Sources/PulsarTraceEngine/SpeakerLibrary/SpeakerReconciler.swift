@@ -2,7 +2,7 @@ import Foundation
 import Logging
 
 /// Reconciles a recording's post-pass diarization clusters against the
-/// persistent speaker library (R22, R23, R30).
+/// persistent speaker library (PT-R22, PT-R23, PT-R30).
 ///
 /// After the diarizer produces a per-speaker embedding for a recording, the
 /// refine pipeline asks the reconciler to map each raw cluster label
@@ -10,7 +10,7 @@ import Logging
 ///
 /// - a cluster whose centroid matches a library speaker (cosine ≥ threshold,
 ///   same `model_revision`) is **matched** — its library name is used
-///   and the running-mean centroid is refined (R30, `speaker_centroid_updated`);
+///   and the running-mean centroid is refined (PT-R30, `speaker_centroid_updated`);
 /// - a cluster with no match becomes a **new** library speaker with an
 ///   `Unknown #N` placeholder name (`speaker_created`).
 ///

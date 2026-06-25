@@ -2,9 +2,9 @@ import FluidAudio
 import Foundation
 import Logging
 
-/// The resident Parakeet TDT 0.6B v3 model (live pass, R10) — loaded once
+/// The resident Parakeet TDT 0.6B v3 model (live pass, PT-R10) — loaded once
 /// per process and shared by the system and mic stream transcribers. The
-/// live pass has exactly one backend; there is no live model knob (D39).
+/// live pass has exactly one backend; there is no live model knob (PT-P5-D1).
 ///
 /// FluidAudio's `AsrManager` is an actor, so concurrent window decodes from
 /// the two streams serialize automatically (the in-process analogue of the
@@ -52,8 +52,8 @@ public actor ParakeetEngine {
     /// Download (first run only; ~0.5 GB from huggingface.co — the permitted
     /// model-download network call) and load the model from
     /// `<cacheRoot>/parakeet-tdt-0.6b-v3-coreml`, keeping every PulsarTrace
-    /// model under one cache root (D10). Emits `model_downloaded` with a
-    /// `DirectoryDigest` after a fresh download (D39).
+    /// model under one cache root (PT-P1-D10). Emits `model_downloaded` with a
+    /// `DirectoryDigest` after a fresh download (PT-P5-D1).
     ///
     /// Call once per process and share the returned engine; concurrent `load`
     /// calls race the same download directory.

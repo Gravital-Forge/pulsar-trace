@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// Live-transcript auto-scroll state — the pill-driving half of R45.
+/// Live-transcript auto-scroll state — the pill-driving half of PT-R45.
 ///
 /// The actual "should I scroll on a new line?" decision lives in the
 /// NSScrollView-backed renderer (`TranscriptTextView`), which can sample

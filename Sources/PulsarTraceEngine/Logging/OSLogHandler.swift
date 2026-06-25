@@ -3,7 +3,7 @@ import Logging
 import os
 
 /// A `swift-log` `LogHandler` that bridges to `os.Logger` under the
-/// `app.pulsartrace` subsystem (R61, §11).
+/// `app.pulsartrace` subsystem (PT-R61, §11).
 ///
 /// This is the second backend wired in parallel with `FileLogHandler`: it makes
 /// PulsarTrace events visible to `log show --predicate 'subsystem ==

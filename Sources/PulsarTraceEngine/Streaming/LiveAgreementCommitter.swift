@@ -1,6 +1,6 @@
 import Foundation
 
-/// LocalAgreement-2 commit logic for streaming transcription (R10).
+/// LocalAgreement-2 commit logic for streaming transcription (PT-R10).
 ///
 /// The streaming path runs the transcriber repeatedly on overlapping windows of
 /// recent audio. Each run produces a *hypothesis* — the best transcript the
@@ -17,7 +17,7 @@ import Foundation
 /// the two (over the *uncommitted* region) — that prefix is stable and is
 /// committed; everything past it stays provisional and is simply not emitted
 /// yet. Because a committed word is one that survived two independent decodes,
-/// `live.md` only ever grows (R36) and never has to take a word back.
+/// `live.md` only ever grows (PT-R36) and never has to take a word back.
 ///
 /// This type is the pure, deterministic core of that algorithm — token-level,
 /// no audio, no decode. `StreamingTranscriber` feeds it decoder hypotheses;

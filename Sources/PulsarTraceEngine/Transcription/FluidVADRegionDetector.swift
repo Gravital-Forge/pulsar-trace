@@ -8,12 +8,12 @@ import Logging
 /// the WhisperKit pipeline never has to construct a ggml context.
 ///
 /// Regions are coalesced with the same 800 ms `minTurnGap` rule via
-/// `SpeechRegion.coalesced` — the D26 turn-sizing contract (final.md breaks
+/// `SpeechRegion.coalesced` — the PT-P2-D8 turn-sizing contract (final.md breaks
 /// at genuine conversational pauses) is backend-independent.
 ///
 /// The VAD model (~small, `FluidInference/silero-vad-coreml`) is loaded
 /// lazily on first use and pinned under the shared PulsarTrace cache root
-/// (`<cacheRoot>/silero-vad-coreml`, D10 one-cache-root) via FluidAudio's
+/// (`<cacheRoot>/silero-vad-coreml`, PT-P1-D10 one-cache-root) via FluidAudio's
 /// `modelDirectory:` init parameter; FluidAudio caches it. A failure here is
 /// the caller's fallback decision (whole-buffer decode / one whole-file
 /// region).

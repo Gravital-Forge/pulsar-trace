@@ -2,7 +2,7 @@ import Foundation
 
 /// Single-source path redaction for human-visible log lines and UI strings.
 ///
-/// PulsarTrace's PRD has a hard invariant (Hard Invariant #7): no full
+/// PulsarTrace has a hard invariant (Hard Invariant #7): no full
 /// user-chosen filesystem paths in `~/Library/Logs/PulsarTrace/` or in any
 /// UI surface. When Foundation errors are interpolated via `\(error)`, their
 /// `description` frequently embeds `NSFilePathErrorKey` (a full path); this

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The `capture.sock` binary frame protocol (R76, §17).
+/// The `capture.sock` binary frame protocol (PT-R76, §17).
 ///
 /// `pulsartrace-capture` writes PCM frames to a Unix domain socket;
 /// `pulsartrace-engine` reads them via `SocketSource`. The same framing is used
@@ -14,21 +14,21 @@ import Foundation
 ///     └──────────────┴─────────────────────────────┘
 ///
 /// `length` is the payload byte count (`samples * 4`). A length of `0` is the
-/// explicit end-of-stream sentinel (R75): the producer writes one zero-length
+/// explicit end-of-stream sentinel (PT-R75): the producer writes one zero-length
 /// frame, then closes. Consumers also treat a clean EOF (no more bytes) as
 /// end-of-stream so an abruptly-closed producer still terminates cleanly.
 ///
 /// ## Control frames
 ///
 /// A PCM frame's payload is always a positive multiple of 4 (Float32 samples).
-/// `pulsartrace-capture` also needs to signal pause/resume (system sleep, R7;
-/// device change, R8) in-band. Those use **control frames**: a length that is
+/// `pulsartrace-capture` also needs to signal pause/resume (system sleep, PT-R7;
+/// device change, PT-R8) in-band. Those use **control frames**: a length that is
 /// neither `0` nor a multiple of 4 — a value a PCM frame can never have — whose
 /// payload is a 1-byte opcode followed by opcode-specific data. The
 /// read-exactly-`length`-bytes invariant is preserved, and the encoding is
 /// purely additive: `FixtureSocketServer`, `PipeSource`, and any PCM-only
 /// producer write only frames + the zero-length EOS, so they are unaffected.
-/// See `project-docs/DECISIONS.md` (D21).
+/// See PT-P2-D3.
 public enum FrameProtocol {
 
     /// The end-of-stream sentinel: a frame whose declared length is zero.

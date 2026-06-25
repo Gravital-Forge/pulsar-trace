@@ -1,7 +1,7 @@
 import Foundation
 
 /// Drops whisper's silence hallucinations from the **offline / refine**
-/// transcription path (project-docs/DECISIONS.md D31).
+/// transcription path (PT-P2-D13).
 ///
 /// `BlankTokenFilter` already removes bracketed non-speech markers and the
 /// unambiguous YouTube-only stock phrases (`"thanks for watching"`,
@@ -28,7 +28,7 @@ import Foundation
 /// Scope: offline only. The streaming `transcribeWindow` path is left
 /// unchanged — it VAD-gates short windows upstream so the silent-window
 /// failure mode cannot arise, and LocalAgreement-2 must see every committed
-/// token (D31 records this scoping rationale).
+/// token (PT-P2-D13 records this scoping rationale).
 enum HallucinationFilter {
 
     /// Per-segment decoder confidence signals whisper exposes for one segment.

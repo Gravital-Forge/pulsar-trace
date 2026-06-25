@@ -3,7 +3,7 @@ import Foundation
 /// Minimal RIFF/WAVE PCM reader.
 ///
 /// PulsarTrace's canonical on-disk storage format is 16 kHz mono Int16 PCM
-/// (R54e); fixture WAVs are produced that way by ffmpeg. This reader decodes
+/// (PT-R54e); fixture WAVs are produced that way by ffmpeg. This reader decodes
 /// such files to the engine's canonical in-memory format (Float32 [-1, 1]).
 /// It deliberately supports only what fixtures need: uncompressed PCM, Int16
 /// or Float32, mono or stereo (downmixed), at any sample rate (caller must

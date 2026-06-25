@@ -235,7 +235,7 @@ struct RefinementJobQueueTests {
     }
 
     /// `pauseForRecording()` calls `cancel()` on the registered inflight
-    /// cancellable (D-Q7 / Task D3). A spy actor records whether it was hit.
+    /// cancellable (D-Q7 / Task PT-P1-D3). A spy actor records whether it was hit.
     ///
     /// Design: a `setRunJob` setter lets us capture `queue` inside `runJob`
     /// after construction, breaking the chicken-and-egg. The runJob registers
@@ -558,7 +558,7 @@ struct RefinementJobQueueTests {
         }
     }
 
-    /// Post-cutover contract (D39): `pauseForRecording` returns within its
+    /// Post-cutover contract (PT-P5-D1): `pauseForRecording` returns within its
     /// bounded wait, and only after the worker task has exited, when the
     /// release hook *cancels an in-flight decode* — the production shape.
     ///

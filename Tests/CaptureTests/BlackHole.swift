@@ -4,7 +4,7 @@ import CoreAudio
 /// Detects the BlackHole virtual audio device used by Layer 3 capture tests.
 ///
 /// The `Capture` test layer exercises the real `AVFoundation` /
-/// `ScreenCaptureKit` paths and needs BlackHole 2ch installed (R66). On
+/// `ScreenCaptureKit` paths and needs BlackHole 2ch installed (PT-R66). On
 /// machines without it — including this EC2 Mac, which has no audio devices —
 /// `requireInstalled()` raises a skip so the suite passes cleanly with a clear
 /// message instead of failing.

@@ -3,7 +3,7 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Layer 2 — `RecordOrchestrator`, the capture↔engine subprocess dance behind
-/// `pulsartrace record` (R47).
+/// `pulsartrace record` (PT-R47).
 ///
 /// Real audio is not needed: the orchestrator is binary-agnostic, so stand-in
 /// `/bin/sh` scripts emulate `pulsartrace-capture` (prints `ready`, then idles
@@ -13,7 +13,7 @@ import Foundation
 ///
 /// The idle scripts `exec sleep` so SIGTERM kills the process directly,
 /// leaving no orphan holding the stdout pipe open.
-@Suite("RecordOrchestrator (record, R47)")
+@Suite("RecordOrchestrator (record, PT-R47)")
 struct RecordOrchestratorTests {
 
     private let sh = URL(fileURLWithPath: "/bin/sh")

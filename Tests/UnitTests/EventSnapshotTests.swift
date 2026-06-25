@@ -3,7 +3,7 @@ import Foundation
 import SnapshotTesting
 @testable import PulsarTraceEngine
 
-/// Snapshot coverage of the events-log JSONL line format (R65).
+/// Snapshot coverage of the events-log JSONL line format (PT-R65).
 ///
 /// The events log is a public API surface; a format regression an LLM might
 /// introduce ("nicer key names") shows up here as a text diff. The snapshot is

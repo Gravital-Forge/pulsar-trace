@@ -1,13 +1,13 @@
 import Foundation
 
-/// Centroid vector math for the speaker library (R30, R22).
+/// Centroid vector math for the speaker library (PT-R30, PT-R22).
 ///
 /// A speaker's *centroid* is the running mean of every embedding ever
 /// attributed to them. Matching a new recording's cluster to the library is a
 /// cosine-similarity lookup; refining a returning speaker is a
 /// count-weighted running-mean update. All vectors are WeSpeaker
 /// 256-d embeddings and are only comparable within one `model_revision`
-/// (Open Question #3 / D40 — `SpeakerLibrary` refuses cross-revision matches).
+/// (Open Question #3 / PT-P5-D3 — `SpeakerLibrary` refuses cross-revision matches).
 public enum Centroid {
 
     /// Cosine similarity of two equal-length vectors, in `[-1, 1]`.
@@ -32,7 +32,7 @@ public enum Centroid {
     }
 
     /// Fold a new appearance embedding into an existing centroid via a
-    /// count-weighted running mean (R30):
+    /// count-weighted running mean (PT-R30):
     ///
     /// ```
     /// new = (old * count + appearance) / (count + 1)
@@ -59,7 +59,7 @@ public enum Centroid {
     }
 
     /// Mean of a non-empty set of equal-length vectors — used to recompute a
-    /// centroid from scratch after a merge re-attributes appearances (R30,
+    /// centroid from scratch after a merge re-attributes appearances (PT-R30,
     /// `speaker_merged`). Returns `[]` for an empty input.
     public static func mean(of vectors: [[Float]]) -> [Float] {
         guard let first = vectors.first, !first.isEmpty else { return [] }
@@ -109,7 +109,7 @@ public enum Centroid {
     // MARK: - BLOB serialization
 
     /// Serialize a `Float32` vector as a little-endian byte BLOB for SQLite
-    /// storage (R28: "centroid (numpy blob)"). 256 floats → 1024 bytes.
+    /// storage (PT-R28: "centroid (numpy blob)"). 256 floats → 1024 bytes.
     public static func encodeBlob(_ vector: [Float]) -> Data {
         var data = Data(capacity: vector.count * 4)
         for value in vector {

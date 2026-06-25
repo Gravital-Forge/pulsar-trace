@@ -1,7 +1,7 @@
 import Foundation
 
 /// Single-frequency tone analysis — the frequency-verification half of
-/// `pulsartrace doctor --capture-test` (R68).
+/// `pulsartrace doctor --capture-test` (PT-R68).
 ///
 /// Uses the Goertzel algorithm: an O(N) evaluation of one DFT bin, far cheaper
 /// than a full FFT when only a handful of candidate frequencies matter. Pure

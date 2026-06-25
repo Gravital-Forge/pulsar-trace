@@ -39,10 +39,9 @@ outside it.
 
 ## Adoption status
 
-This Erratum record is being established against the shipped trunk first, then extended onto the
-in-flight branches. The following work completes adoption and is pending:
-
-- Retire the standalone `project-docs/` specification documents — their content is held here.
-- Bring the repository's methodology skills into agreement with this directory, so the skill set and
-  the documentation describe one system rather than two.
-- Add in-source requirement links (`// PT-R…`) across the Swift and Python sources.
+Adoption is complete: the Erratum layer is the single source of truth for the product's
+requirements, architecture, and traceability, reconciled through project P5. The standalone
+specification documents that predated this layer have been retired (their history remains in git),
+in-source requirement and decision references use Erratum IDs (`// PT-R…`, `// PT-P…-D…`), and the
+public output contracts are specified in `product/architecture/`, with the end-user `docs/` files
+pointing to them.

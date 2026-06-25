@@ -8,13 +8,13 @@ import Glibc
 import Darwin
 #endif
 
-/// `pulsartrace doctor [--capture-test]` — environment self-check (R50, R68).
+/// `pulsartrace doctor [--capture-test]` — environment self-check (PT-R50, PT-R68).
 ///
 /// `doctor` gathers facts about the host (macOS version, CPU, diarization
 /// model cache, speaker library, TCC permissions, writable directories) and
 /// runs each through `EnvironmentDoctor`'s pure decision logic, then prints an
 /// actionable report. `--capture-test` additionally runs a sine sweep through
-/// the real capture path (R68).
+/// the real capture path (PT-R68).
 ///
 /// Exit code: `0` when no check failed (warnings are advisory), `1` otherwise.
 enum DoctorCommand {
@@ -51,7 +51,7 @@ enum DoctorCommand {
         checks.append(EnvironmentDoctor.architectureCheck(
             isAppleSilicon: isAppleSilicon()))
 
-        // --- diarization models (ANE, D40) ----------------------------------
+        // --- diarization models (ANE, PT-P5-D3) -----------------------------
         let diarizerModelDir = AppPaths.standard.modelsCacheDirectory
             .appendingPathComponent(DiarizerEngine.repoFolderName, isDirectory: true)
         let diarizerCached = ["Segmentation.mlmodelc", "FBank.mlmodelc",

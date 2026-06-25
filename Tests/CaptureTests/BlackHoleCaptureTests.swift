@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 import Testing
 
-/// Layer 3 — live capture from the BlackHole loopback device (R66).
+/// Layer 3 — live capture from the BlackHole loopback device (PT-R66).
 ///
 /// Proves this host can actually open BlackHole 2ch through AVFoundation and
 /// receive audio sample buffers — the capability the `Capture` test layer and

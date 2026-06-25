@@ -4,7 +4,7 @@ import Foundation
 /// Decodes the committed diarization JSON fixtures
 /// (`Tests/Fixtures/diarization/*.json`) into a `DiarizationResult`.
 ///
-/// These files were captured from the retired Python pyannote pipeline (D40).
+/// These files were captured from the retired Python pyannote pipeline (PT-P5-D3).
 /// They are no longer a wire contract — just frozen, realistic test data for
 /// the merge / reconciliation logic, which is embedding-space-agnostic.
 /// Unknown keys in the files (`schema`, `model_version`, `exclusive_spans`,

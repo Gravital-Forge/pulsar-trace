@@ -32,7 +32,7 @@ public actor ResumableRefiner {
     private let pauseGate: PauseGate
     private let events: EventWriter?
     /// Persistent speaker library used by `mergeAndWrite` for reconciliation
-    /// (R22, R23). `nil` keeps the raw `Speaker_N` labels — the queue's
+    /// (PT-R22, PT-R23). `nil` keeps the raw `Speaker_N` labels — the queue's
     /// `makeStandard` opens a real library and passes it in for production.
     private let library: SpeakerLibrary?
     /// Decode tunables threaded into every region decode (`allowedLanguages`

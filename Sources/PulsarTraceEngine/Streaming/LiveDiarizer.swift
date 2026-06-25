@@ -14,7 +14,7 @@ public struct LiveSpeakerSpan: Sendable, Equatable {
     /// Recording-absolute end.
     public let end: Duration
     /// The speaker embedding for this window's speaker (256-d, WeSpeaker
-    /// space — R29). Empty if the window produced none.
+    /// space — PT-R112). Empty if the window produced none.
     public let embedding: [Float]
 
     public init(
@@ -45,22 +45,22 @@ protocol LiveDiarizing: Sendable {
     func diarizeWindow(
         samples: [Float], windowStart: Duration
     ) async -> [LiveSpeakerSpan]
-    /// Live-speaker centroids keyed by provisional key (R18 library lookup).
+    /// Live-speaker centroids keyed by provisional key (PT-R18 library lookup).
     func centroids() async -> [String: [Float]]
-    /// The diarization model's content digest (R18 revision scoping).
+    /// The diarization model's content digest (PT-R18 revision scoping).
     func modelRevision() async -> String
 }
 
-/// Live (streaming) speaker diarization for the system stream (R15, R16).
+/// Live (streaming) speaker diarization for the system stream (PT-R15, PT-R16).
 ///
-/// ## Windowed in-process diarization (D40)
+/// ## Windowed in-process diarization (PT-P5-D3)
 ///
 /// The retired design ran windowed-pyannote in a long-lived Python subprocess
-/// (D19). The window geometry survives — `StreamingPipeline` hands this actor
+/// (PT-P2-D1). The window geometry survives — `StreamingPipeline` hands this actor
 /// a ~10 s window of recent system audio every ~5 s — but each window now runs
 /// FluidAudio's offline pipeline (`DiarizerEngine`) in-process on the ANE.
 /// Same embedding space as the offline post-pass and the speaker library
-/// (R29), no subprocess, no scratch WAVs.
+/// (PT-R112), no subprocess, no scratch WAVs.
 ///
 /// ## Provisional label stitching
 ///
@@ -69,7 +69,7 @@ protocol LiveDiarizing: Sendable {
 /// `Them #2`, …) by matching each window-speaker's embedding against the
 /// running set of live speakers' centroids by cosine similarity. A new voice
 /// that matches nothing gets a fresh `Them #N`. This is **best-effort**; the
-/// post-pass is the source of truth (R16).
+/// post-pass is the source of truth (PT-R16).
 ///
 /// An `actor`: it owns the running live-speaker set, mutable state not safe
 /// to touch concurrently.
@@ -77,7 +77,7 @@ public actor LiveDiarizer: LiveDiarizing {
 
     /// Cosine-similarity threshold for stitching a window-speaker to an
     /// existing live speaker. Above → same speaker; below → a new `Them #N`.
-    /// Calibrated for the WeSpeaker embedding space (D40): on the committed
+    /// Calibrated for the WeSpeaker embedding space (PT-P5-D4): on the committed
     /// fixtures, same-speaker cosine measured ~0.93, cross-speaker ~0.35
     /// (see the DiarizationE2E calibration suite).
     public static let stitchThreshold = 0.45
@@ -203,20 +203,20 @@ public actor LiveDiarizer: LiveDiarizing {
     }
 
     /// The Nth provisional speaker key: `Them`, `Them #2`, `Them #3`, …
-    /// (R16 — the `?` suffix is added by `LiveRunner.resolveSystemLabel`).
+    /// (PT-R16 — the `?` suffix is added by `LiveRunner.resolveSystemLabel`).
     public static func provisionalKey(index: Int) -> String {
         index == 0 ? "Them" : "Them #\(index + 1)"
     }
 
     /// The live-speaker centroids, for a read-only speaker-library lookup
-    /// (R18) — keyed by provisional key.
+    /// (PT-R18) — keyed by provisional key.
     public func centroids() -> [String: [Float]] {
         var out: [String: [Float]] = [:]
         for s in liveSpeakers { out[s.key] = s.centroid }
         return out
     }
 
-    /// The diarization model's content digest. The R18 speaker-library lookup
+    /// The diarization model's content digest. The PT-R18 speaker-library lookup
     /// keys centroid compatibility on this — `bestMatch` skips speakers
     /// recorded under a different revision. An empty revision (no engine)
     /// matches nothing in a populated library — safe degradation.
@@ -227,7 +227,7 @@ public actor LiveDiarizer: LiveDiarizing {
     }
 
     /// Test seam: pre-seed the running live-speaker set and the model
-    /// revision, so the R18 lookup can be exercised without real models.
+    /// revision, so the PT-R18 lookup can be exercised without real models.
     func _seedForTesting(
         speakers: [(key: String, centroid: [Float])],
         modelRevision: String

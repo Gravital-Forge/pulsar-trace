@@ -13,7 +13,7 @@ import Logging
 ///
 /// `OfflineRefiner` owns everything `RefinementPipeline` needs but does not
 /// build itself: wiring the in-process `Diarizer` (FluidAudio CoreML/ANE,
-/// D40 — no venv, no token, no IPC), opening the persistent speaker library,
+/// PT-P5-D3 — no venv, no token, no IPC), opening the persistent speaker library,
 /// and constructing the WhisperKit transcriber + FluidVAD wiring.
 public struct OfflineRefiner: Sendable {
 
@@ -103,7 +103,7 @@ public struct OfflineRefiner: Sendable {
             transcriber: transcriber,
             diarizer: diarizer,
             whisperModelName: model.name,
-            whisperModelSHA256: "",   // SDK-managed CoreML bundle (D39)
+            whisperModelSHA256: "",   // SDK-managed CoreML bundle (PT-P5-D1)
             recordingStart: Date(),
             options: options,
             library: library,
@@ -112,8 +112,8 @@ public struct OfflineRefiner: Sendable {
 
     // MARK: - Diarizer wiring
 
-    /// Build a `Diarizer` over the FluidAudio ANE backend (D40). Models load
-    /// lazily from the shared cache root (D10) on the first diarize call;
+    /// Build a `Diarizer` over the FluidAudio ANE backend (PT-P5-D3). Models load
+    /// lazily from the shared cache root (PT-P1-D10) on the first diarize call;
     /// `events` receives `model_downloaded` after a fresh download.
     public static func makeDiarizer(events: EventWriter? = nil) -> Diarizer {
         Diarizer(configuration: .init(), events: events)

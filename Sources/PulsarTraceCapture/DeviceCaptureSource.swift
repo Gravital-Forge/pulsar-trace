@@ -21,9 +21,9 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         public let recordingId: String
         /// Basename of the recording's output folder (events carry basenames).
         public let outputDirBasename: String
-        /// Microphone `uniqueID`, or `nil` for the system default (R5).
+        /// Microphone `uniqueID`, or `nil` for the system default (PT-R5).
         public let micDeviceID: String?
-        /// Whether to capture system audio; `false` for a mic-only run (R6).
+        /// Whether to capture system audio; `false` for a mic-only run (PT-R6).
         public let systemAudioEnabled: Bool
         /// Where the system-audio socket is bound.
         public let systemSocketPath: URL
@@ -276,7 +276,7 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         func take() -> T { lock.withLock { value! } }
     }
 
-    // MARK: - Sleep / wake (R7)
+    // MARK: - Sleep / wake (PT-R7)
 
     private func handleSleep() {
         restartQueue.async { [self] in
@@ -495,7 +495,7 @@ public final class DeviceCaptureSource: @unchecked Sendable {
             } catch {
                 // Carry only the error's *type name* back across the task
                 // boundary — never the full description, which can render a
-                // filesystem path (Hard Invariant #7 / R84).
+                // filesystem path (Hard Invariant #7 / PT-R84).
                 return StartFailure(category: "\(type(of: error))")
             }
         }

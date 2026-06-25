@@ -5,7 +5,7 @@ import Foundation
 ///
 /// CoreML model bundles (Parakeet, WhisperKit) are directories of files
 /// managed by their SDKs — there is no single ggml file to pin a SHA-256
-/// against (DECISIONS D39). This digest gives the `model_downloaded` event
+/// against (PT-P5-D2). This digest gives the `model_downloaded` event
 /// an honest, reproducible identity: SHA-256 over every regular file's
 /// `relativePath + "\0" + fileSHA256 + "\n"`, files ordered by relative
 /// path. Two trees with identical contents and layout digest identically,

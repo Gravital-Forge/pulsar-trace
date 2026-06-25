@@ -1,7 +1,7 @@
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// Wrapping pill chips listing the speakers in a refined recording (R31).
+/// Wrapping pill chips listing the speakers in a refined recording (PT-R31).
 ///
 /// Replaces the older "N speakers" count subtitle in `RecordingsListView` with
 /// the richer information that is already in `metadata.json`: each speaker as

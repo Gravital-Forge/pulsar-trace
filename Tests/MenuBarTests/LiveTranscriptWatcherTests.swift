@@ -3,7 +3,7 @@ import Foundation
 @testable import PulsarTraceMenuBar
 
 /// `LiveTranscriptWatcher` tails an append-only `live.md` and exposes
-/// its complete lines (R40). Read-only — it never writes the file.
+/// its complete lines (PT-R40). Read-only — it never writes the file.
 @Suite("LiveTranscriptWatcher")
 @MainActor
 struct LiveTranscriptWatcherTests {

@@ -11,7 +11,7 @@ import Darwin
 /// `pulsartrace-capture` — the real device-capture daemon.
 ///
 /// It owns AVFoundation (mic) and ScreenCaptureKit (system audio) — the only
-/// PulsarTrace process that needs TCC permissions (R4) — and streams 16 kHz
+/// PulsarTrace process that needs TCC permissions (PT-R4) — and streams 16 kHz
 /// mono Float32 frames to two Unix domain sockets the engine reads via
 /// `SocketSource`.
 ///
@@ -36,7 +36,7 @@ struct CaptureMain {
         let systemAudioEnabled = !args.contains("--no-system-audio")
         let micDeviceID = value(of: "--mic-device", in: args)
         // Default must match ParakeetEngine.modelName — the only live model
-        // (D39). Capture can't import the engine target, so it's a literal.
+        // (PT-P5-D1). Capture can't import the engine target, so it's a literal.
         let modelLive = value(of: "--model", in: args) ?? "parakeet-v3"
 
         let paths = AppPaths.standard
@@ -50,7 +50,7 @@ struct CaptureMain {
             .map { URL(fileURLWithPath: $0).lastPathComponent }
             ?? recordingId
 
-        // --- permissions (R4): the daemon is the only TCC-gated process -----
+        // --- permissions (PT-R4): the daemon is the only TCC-gated process -----
         let checker = PermissionChecker(events: lifecycle.events)
         _ = await checker.requestMicrophoneIfNeeded()
         let status = await checker.checkAndEmit()

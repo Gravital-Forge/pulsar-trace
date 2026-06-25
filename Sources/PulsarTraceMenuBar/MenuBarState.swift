@@ -1,6 +1,6 @@
 import Foundation
 
-/// The recording state machine the menubar drives (R40, R45).
+/// The recording state machine the menubar drives (PT-R40, PT-R45).
 ///
 /// `RecordingViewModel` owns one of these and transitions it as the
 /// capture+engine subprocess pair starts, runs, and tears down. The menubar
@@ -10,17 +10,17 @@ import Foundation
 /// meetings without waiting for refine to complete.
 ///
 /// State flow (happy path): `.idle` → `.launching` → `.recording` → `.idle`.
-/// An unexpected engine exit while `.recording` moves to `.crashed` (R45);
+/// An unexpected engine exit while `.recording` moves to `.crashed` (PT-R45);
 /// a launch failure to `.error`.
 public enum RecordingStatus: Equatable, Sendable {
     /// No recording in progress — the menubar is ready to start one.
     case idle
-    /// `startRecording()` is spawning the capture+engine pair (R40).
+    /// `startRecording()` is spawning the capture+engine pair (PT-R40).
     case launching
     /// A recording is running. `id` is the `rec_<short>` id; `startedAt`
     /// drives the menubar's elapsed-time display.
     case recording(id: String, startedAt: Date)
-    /// The engine exited unexpectedly mid-recording (R45). `partialFolderURL`
+    /// The engine exited unexpectedly mid-recording (PT-R45). `partialFolderURL`
     /// is the recording folder whose partial `live.md` can still be refined.
     case crashed(id: String, partialFolderURL: URL?)
     /// A launch / start failure that is not a crash — carries a user-facing

@@ -7,10 +7,10 @@
 ## Intent
 
 Investigate and cure an apparent per-window **over-split** in the live diarizer landed by PT-P5-E2,
-where a single speaker fragments into 2–3 provisional keys and the R18 library lookup mis-names each
-fragment. This is a tuning revision of the live diarization in PT-P5-E2 (component PT-C13 / the
+where a single speaker fragments into 2–3 provisional keys and the PT-R18 library lookup mis-names
+each fragment. This is a tuning revision of the live diarization in PT-P5-E2 (component PT-C13 / the
 `DiarizerEngine` clustering); it proposes **no new product requirement** — the live-diarization
-intent (PT-R15/R16/R18) is unchanged.
+intent (PT-R15/PT-R16/PT-R18) is unchanged.
 
 ## Acceptance criteria
 

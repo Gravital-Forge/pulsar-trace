@@ -3,9 +3,9 @@ import PulsarTraceEngine
 import ScreenCaptureKit
 
 /// Checks — and, where it can, requests — the two TCC permissions
-/// `pulsartrace-capture` needs: Microphone (R1) and Screen Recording (R2).
+/// `pulsartrace-capture` needs: Microphone (PT-R1) and Screen Recording (PT-R2).
 /// The capture daemon is the *only* PulsarTrace process that needs either
-/// (R4); the engine has no TCC requirements.
+/// (PT-R4); the engine has no TCC requirements.
 ///
 /// Each check emits a `permission_changed` event so a consumer tailing the
 /// events log sees the permission state at session start and whenever it moves.

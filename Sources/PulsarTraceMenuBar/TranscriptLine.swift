@@ -2,7 +2,7 @@ import Foundation
 
 /// One parsed line of a `live.md`/`final.md` transcript. The utterance
 /// shape (`**[HH:MM:SS] Speaker:** text`) is a public file-format
-/// contract (docs/file-format.md), so this parser is deliberately
+/// contract (`.erratum/product/architecture/transcript-format.md`), so this parser is deliberately
 /// conservative: anything that doesn't match a known shape exactly is
 /// passed through as `.plain` and rendered verbatim.
 public enum TranscriptLine: Equatable, Sendable {

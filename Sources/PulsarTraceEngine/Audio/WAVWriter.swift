@@ -1,9 +1,9 @@
 import Foundation
 
 /// Writes the canonical PulsarTrace storage format: 16 kHz mono **Int16** PCM
-/// WAV (R54e).
+/// WAV (PT-R54e).
 ///
-/// R54e fixes one storage format end-to-end (~60 MB/hour). Resampling and
+/// PT-R54e fixes one storage format end-to-end (~60 MB/hour). Resampling and
 /// downmixing happen at the `AudioFrameSource` boundary, so by the time audio
 /// reaches storage it is already 16 kHz mono — this writer only converts the
 /// engine's in-memory Float32 to Int16 and frames a RIFF/WAVE container.
@@ -22,7 +22,7 @@ public struct WAVWriter {
     /// - Parameters:
     ///   - samples: mono PCM in [-1, 1].
     ///   - sampleRate: defaults to the canonical 16 kHz; callers should not
-    ///     deviate (storage format is fixed by R54e).
+    ///     deviate (storage format is fixed by PT-R54e).
     public static func encode(
         samples: [Float],
         sampleRate: Int = AudioFormat.sampleRate

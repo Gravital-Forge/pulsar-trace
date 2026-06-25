@@ -47,7 +47,7 @@ single-slot structure (test `wedgedDiarizerDoesNotStallTranscription`).
 to `"Them"` when the diarizer has no coverage for an utterance — `"Them"` is exactly
 `LiveDiarizer.provisionalKey(index: 0)`, so the old fallback made a no-coverage line inherit the
 first speaker's centroid and name. It now returns the neutral `LiveRunner.noCoverageLabel`
-(`Speaker?`) and skips the R18 lookup, covered by no-coverage regression tests.
+(`Speaker?`) and skips the PT-R18 lookup, covered by no-coverage regression tests.
 
 ## Deltas from the spec
 
@@ -57,7 +57,7 @@ resolution is the in-process revert plus the two pipe-drain fixes and the §2b l
 
 ## Requirements satisfied
 
-None new — this epic hardens existing live-pass behaviour (PT-R15/R16 live diarization; the
+None new — this epic hardens existing live-pass behaviour (PT-R15/PT-R16 live diarization; the
 wedged-decode isolation intent carried by PT-P5-R4) and fixes a labelling bug. The work is recorded
 in decisions PT-P5-D6, PT-P5-D7, and PT-P5-D8.
 

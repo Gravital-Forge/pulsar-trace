@@ -436,6 +436,12 @@ A system notification is delivered when a refinement completes or fails.
 The main window presents recordings master–detail and renders the selected — including a live —
 transcript in-window, with rename and find-in-transcript.
 
+### PT-R114 · Functional — First-launch onboarding tour
+
+After first launch, the menubar app offers a short onboarding tour that orients a new user to
+recording, the transcript view, and the speaker library; it does not recur once dismissed or
+completed.
+
 ## Robustness & resilience
 
 ### PT-R92 · Functional — Crash-safe incremental recording

@@ -11,7 +11,7 @@ holding the live diarizer's one in-flight slot forever, so every later window is
 system stream collapses to one speaker. Also fix the §2b **label collapse** where a no-coverage live
 utterance silently inherits the first speaker's name. This is a reliability revision of PT-P5-E2's
 live diarization; it proposes **no new product requirement** — it hardens the existing live-pass
-guarantees (PT-R15/R16, and the wedged-decode isolation intent that PT-P5-R4 carries) rather than
+guarantees (PT-R15/PT-R16, and the wedged-decode isolation intent that PT-P5-R4 carries) rather than
 adding one. Touches Live Diarization (PT-C13), the engine record orchestrator's subprocess-pipe
 drain (PT-C9), and live system-label resolution (PT-C12/PT-C14).
 
@@ -24,7 +24,7 @@ live diarization in-process and fixes the wedge at its real root cause.
   never starves the live transcription pass.
 - Live diarization runs in-process (no diarizer worker subprocess) and the invariant "a wedged
   diarizer never stalls transcription or `live.md`" holds.
-- A no-coverage live utterance is labelled with a neutral `Speaker?` marker and skips the R18
+- A no-coverage live utterance is labelled with a neutral `Speaker?` marker and skips the PT-R18
   library lookup, so it can never inherit the first speaker's name.
 
 ## Tasks
@@ -41,4 +41,4 @@ live diarization in-process and fixes the wedge at its real root cause.
   `DiarizerEngineRawAdapter` over the resident `DiarizerEngine`; `DiarGate` back to a plain
   ≤1-in-flight gate (PT-P5-D7).
 - PT-P5-E2-rev2-T5 — §2b: no-coverage live utterances get the neutral `Speaker?` label and skip the
-  R18 lookup (PT-P5-D8).
+  PT-R18 lookup (PT-P5-D8).

@@ -6,7 +6,7 @@ import PulsarTraceEngine
 /// output into fixed 320-sample (20 ms) frames.
 ///
 /// Resampling and downmixing happen here, at the capture-source boundary, so
-/// the engine never sees 48 kHz stereo audio: storage is 16 kHz mono (R54e),
+/// the engine never sees 48 kHz stereo audio: storage is 16 kHz mono (PT-R54e),
 /// and the wire format is the 320-sample frame every `AudioFrameSource`
 /// produces (Hard Invariant #9).
 ///

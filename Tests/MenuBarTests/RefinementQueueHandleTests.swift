@@ -141,7 +141,7 @@ struct RefinementQueueHandleTests {
             recordingId: "rec_live")
         let live = try await waitForRecent(queue, recordingId: "rec_live")
         #expect(live?.modelName == "large-v3-whisperkit")
-        #expect(live?.modelSHA256 == "")   // CoreML bundles carry no pin (D39)
+        #expect(live?.modelSHA256 == "")   // CoreML bundles carry no pin (PT-P5-D2)
 
         // An unknown model name falls back to the catalog default.
         settings.refineModelName = "no-such-model"

@@ -15,7 +15,7 @@ public protocol RawWindowDiarizing: Sendable {
     /// degrades for that window, never crashes.
     func diarizeRawWindow(samples: [Float]) async -> DiarWindowResult?
 
-    /// The diarization model's content digest, for the R18 speaker-library
+    /// The diarization model's content digest, for the PT-R18 speaker-library
     /// revision scoping. Empty string when unknown (degrades safely).
     func modelRevision() async -> String
 }

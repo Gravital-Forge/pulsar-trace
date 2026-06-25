@@ -3,7 +3,7 @@ import Foundation
 import ScreenCaptureKit
 import Testing
 
-/// Layer 3 — live system-audio capture via ScreenCaptureKit (R2).
+/// Layer 3 — live system-audio capture via ScreenCaptureKit (PT-R2).
 ///
 /// PulsarTrace captures system audio with ScreenCaptureKit, never BlackHole —
 /// BlackHole is only the loopback *test fixture*. This proves the host can open

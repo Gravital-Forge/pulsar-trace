@@ -3,9 +3,9 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Layer 1 — `CLIInstaller`, the symlink state machine behind
-/// `pulsartrace install-cli` (R51). Runs against a temp `bin` directory so it
+/// `pulsartrace install-cli` (PT-R51). Runs against a temp `bin` directory so it
 /// never touches the real `/usr/local/bin`.
-@Suite("CLIInstaller (install-cli, R51)")
+@Suite("CLIInstaller (install-cli, PT-R51)")
 struct CLIInstallerTests {
 
     /// A temp `bin` dir + a stand-in executable file, cleaned up by the caller.

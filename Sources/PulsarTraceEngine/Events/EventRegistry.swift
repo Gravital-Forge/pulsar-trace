@@ -2,11 +2,11 @@ import Foundation
 
 /// The catalogue of event types known to this build.
 ///
-/// `docs/events-schema.md` is the human-facing contract; this registry is the
+/// `.erratum/product/architecture/events-log.md` is the human-facing contract; this registry is the
 /// machine-facing one. New event types extend it by appending entries — the
 /// `EventWriter` does not need to change. Keeping every type registered in one
 /// place makes it cheap to verify "every significant operation emits exactly
-/// one event" (R82) by diffing this list against the product's operations.
+/// one event" (PT-R82) by diffing this list against the product's operations.
 public enum EventRegistry {
 
     /// A registered event type: its `type` string and current schema version.

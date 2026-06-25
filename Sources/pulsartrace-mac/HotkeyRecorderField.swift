@@ -2,7 +2,7 @@ import AppKit
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// Click-to-record hotkey field for the Settings pane (R41).
+/// Click-to-record hotkey field for the Settings pane (PT-R41).
 ///
 /// Focus/keyDown contract (owned by the invisible `KeyCaptureView` AppKit
 /// layer; all visuals are SwiftUI reading the same state):

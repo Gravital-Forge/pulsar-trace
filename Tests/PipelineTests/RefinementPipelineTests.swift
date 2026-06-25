@@ -3,11 +3,11 @@ import Foundation
 @testable import PulsarTraceEngine
 
 /// Pipeline coverage of the refinement pass (`pulsartrace refine`):
-/// R20, R21, R24, R27, R38, R39, plus the refinement event sequence.
+/// PT-R20, PT-R21, PT-R24, PT-R48, PT-R38, PT-R39, plus the refinement event sequence.
 ///
 /// These tests run the **real** pipeline end-to-end — real WhisperKit
-/// (`large-v3-turbo`, D39) and the real in-process FluidAudio diarizer
-/// (community-1 on the ANE, D40) — on a committed fixture, so a genuine
+/// (`large-v3-turbo`, PT-P5-D1) and the real in-process FluidAudio diarizer
+/// (community-1 on the ANE, PT-P5-D3) — on a committed fixture, so a genuine
 /// integration break is caught. They are slow (model loads) and download the
 /// CoreML bundles on first run; subsequent runs are offline. `.serialized`
 /// keeps the suite's shared model loads from racing each other.
@@ -17,7 +17,7 @@ import Foundation
 @Suite("Refinement pipeline", .serialized)
 struct RefinementPipelineTests {
 
-    /// One lazily-loading WhisperKit transcriber per process (D39 backend).
+    /// One lazily-loading WhisperKit transcriber per process (PT-P5-D1 backend).
     private static let whisperKit = WhisperKitRegionTranscriber(
         configuration: .init(
             model: WhisperKitModelCatalog.largeV3Turbo,
@@ -34,7 +34,7 @@ struct RefinementPipelineTests {
 
     // MARK: - Environment
 
-    /// The real in-process FluidAudio diarizer (D40). Models load lazily from
+    /// The real in-process FluidAudio diarizer (PT-P5-D3). Models load lazily from
     /// the shared cache root on the first diarize call (~21 MB download on a
     /// cold cache, offline thereafter).
     private static func makeDiarizer() -> Diarizer {
@@ -72,18 +72,18 @@ struct RefinementPipelineTests {
             whisperModelSHA256: "",
             recordingStart: Self.recordingStart)
 
-        // The output folder is a sibling of the WAV, named for its stem (D13).
+        // The output folder is a sibling of the WAV, named for its stem (PT-P1-D13).
         #expect(output.recordingDirectory.lastPathComponent
             == "two-speakers-alternating")
         #expect(FileManager.default.fileExists(atPath: output.finalURL.path))
         #expect(FileManager.default.fileExists(atPath: output.metadataURL.path))
 
         let markdown = try String(contentsOf: output.finalURL, encoding: .utf8)
-        // R38: the final-pass marker is the first line.
+        // PT-R38: the final-pass marker is the first line.
         #expect(markdown.hasPrefix("<!-- pulsartrace:final -->\n"))
         #expect(markdown.contains("## Transcript — "))
-        // R13 utterance lines carry diarized Speaker_N labels — both voices
-        // of the alternating clip (separation tuned in DiarizerEngine, D40).
+        // PT-R13 utterance lines carry diarized Speaker_N labels — both voices
+        // of the alternating clip (separation tuned in DiarizerEngine, PT-P5-D3).
         #expect(markdown.contains("] Speaker_0:**"))
         #expect(markdown.contains("] Speaker_1:**"))
         // A bare WAV has no mic stream — no "You" label.
@@ -105,7 +105,7 @@ struct RefinementPipelineTests {
         #expect(metadata.language == "en")
         #expect(metadata.sourceBasename == "two-speakers-alternating.wav")
 
-        // Distinctive fixture words instead of a byte snapshot (D39):
+        // Distinctive fixture words instead of a byte snapshot (PT-P5-D1):
         // extracted from the retired whisper snapshot (git history:
         // __Snapshots__/RefinementPipelineTests/bareWavEndToEnd.1.txt).
         let lower = markdown.lowercased()
@@ -114,7 +114,7 @@ struct RefinementPipelineTests {
         }
     }
 
-    // MARK: - Re-refine (R27)
+    // MARK: - Re-refine (PT-R48)
 
     @Test("re-refine backs up final.md and emits final_md_rewritten")
     func reRefineBackupAndEvent() async throws {
@@ -146,7 +146,7 @@ struct RefinementPipelineTests {
             .appendingPathComponent("final.md.bak")
         #expect(!FileManager.default.fileExists(atPath: backup.path))
 
-        // Second refine — re-refine (R27).
+        // Second refine — re-refine (PT-R48).
         let second = try await pipeline.run(
             inputPath: wav,
             transcriber: Self.makeTranscriber(),
@@ -155,7 +155,7 @@ struct RefinementPipelineTests {
             whisperModelSHA256: "",
             recordingStart: Self.recordingStart)
         #expect(second.wasReRefine == true)
-        // R27: the prior final.md is preserved as final.md.bak.
+        // PT-R48: the prior final.md is preserved as final.md.bak.
         #expect(FileManager.default.fileExists(atPath: backup.path))
 
         await events.flush()
@@ -254,12 +254,12 @@ struct RefinementPipelineTests {
         #expect(metadata.speakers.isEmpty)
     }
 
-    // MARK: - Causal ordering across a mid-recording pause (D26)
+    // MARK: - Causal ordering across a mid-recording pause (PT-P2-D8)
 
     @Test("a mid-recording mic pause keeps the resumed turn after the other speaker")
     func interleavedTurnsStayInCausalOrder() async throws {
         // Assemble a paired recording from the committed ElevenLabs fixtures
-        // that reproduces the two-party shape behind D26: the mic speaker
+        // that reproduces the two-party shape behind PT-P2-D8: the mic speaker
         // talks, pauses to listen, then resumes — while the system speaker
         // talks during that pause. The mic monologue is split 14s in (a long
         // turn + a short ~2s resumed turn) with a 10s silence between; the
@@ -300,7 +300,7 @@ struct RefinementPipelineTests {
         #expect(labels.contains("Speaker_0"),
                 "expected the system stream to produce utterances")
 
-        // The D26 bug: the offline mic decode glued the speaker's two turns
+        // The PT-P2-D8 bug: the offline mic decode glued the speaker's two turns
         // into one segment stamped at the first turn's start, so the resumed
         // turn sorted *ahead* of the system speaker — no `You` line followed
         // the system speaker's last line. With per-region decoding the resumed
@@ -321,7 +321,7 @@ struct RefinementPipelineTests {
     }
 
     /// Assemble `audio-mic.wav` + `audio-system.wav` in `dir` from the paired
-    /// ElevenLabs fixtures, interleaved with a mid-recording pause (D26):
+    /// ElevenLabs fixtures, interleaved with a mid-recording pause (PT-P2-D8):
     ///
     ///   mic:    [turn 1  0–14s][silence 14–24s][turn 2  24–26s]
     ///   system: [silence 0–15s][turn   15–23s ][silence 23–26s]

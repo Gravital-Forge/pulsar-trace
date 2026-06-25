@@ -3,7 +3,7 @@ import PulsarTraceCapture
 import PulsarTraceEngine
 
 /// `pulsartrace doctor --capture-test` — the end-to-end capture self-check
-/// (R68): a 440 Hz tone is played, captured back through the real microphone
+/// (PT-R68): a 440 Hz tone is played, captured back through the real microphone
 /// path, and its dominant frequency verified.
 ///
 /// Unlike the rest of `doctor` (which only inspects state), this exercises the

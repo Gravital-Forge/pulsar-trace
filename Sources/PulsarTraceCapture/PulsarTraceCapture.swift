@@ -8,5 +8,5 @@
 /// fixture WAV — the `AudioFrameSource` seam (Hard Invariant #3).
 ///
 /// `pulsartrace-capture` is the *only* process that requires TCC permissions
-/// (Microphone + Screen Recording, R4).
+/// (Microphone + Screen Recording, PT-R4).
 enum PulsarTraceCapture {}

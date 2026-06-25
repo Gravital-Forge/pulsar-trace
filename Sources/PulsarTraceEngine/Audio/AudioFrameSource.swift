@@ -4,18 +4,18 @@ import Foundation
 ///
 /// Every source produces a homogeneous stream of these so the engine can
 /// handle pacing gaps and end-of-stream identically regardless of whether the
-/// bytes came from a device, a fixture WAV, a pipe, or a socket (R75).
+/// bytes came from a device, a fixture WAV, a pipe, or a socket (PT-R75).
 public enum AudioStreamEvent: Sendable, Equatable {
     /// A 20 ms PCM frame.
     case frame(AudioFrame)
-    /// The source paused (e.g. system sleep, R77). Carries the wall-clock
+    /// The source paused (e.g. system sleep, PT-R77). Carries the wall-clock
     /// duration of the gap once known; the engine logs the gap.
     case paused
     /// The source resumed after a pause. `gap` is the elapsed paused time.
     case resumed(gap: Duration)
 }
 
-/// The central audio abstraction (R70).
+/// The central audio abstraction (PT-R70).
 ///
 /// Everything above this protocol — chunking, transcription, diarization,
 /// file output — is written against `AudioFrameSource` and cannot tell whether

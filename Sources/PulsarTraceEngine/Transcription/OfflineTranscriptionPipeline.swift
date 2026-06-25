@@ -7,7 +7,7 @@ import Logging
 /// The engine consumes audio *only* through `AudioFrameSource` (invariant 3).
 /// For the offline path the whole stream is accumulated into one buffer before
 /// transcription — with no chunking there are no chunk-boundary artifacts,
-/// satisfying R11. True streaming/overlap-windowing is the separate live pass
+/// satisfying PT-R11. True streaming/overlap-windowing is the separate live pass
 /// (`StreamingPipeline`).
 public struct OfflineTranscriptionPipeline: Sendable {
 

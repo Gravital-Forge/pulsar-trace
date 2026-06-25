@@ -2,7 +2,7 @@ import AppKit
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// PulsarTrace's menubar app (D27).
+/// PulsarTrace's menubar app (PT-P2-D9).
 ///
 /// A thin SwiftUI shell over `PulsarTraceMenuBar`'s ViewModels — no logic
 /// lives here. It is a `MenuBarExtra` app: an accessory-policy process with no
@@ -16,12 +16,12 @@ struct PulsarTraceMacApp: App {
     @State private var environment: AppEnvironment
 
     /// The NSEvent global-hotkey monitor — the AppKit piece that stays in
-    /// this target (D27); `AppEnvironment` itself is AppKit-free.
+    /// this target (PT-P2-D9); `AppEnvironment` itself is AppKit-free.
     @State private var hotkey: HotkeyController
 
     init() {
         // No Dock icon, no app-switcher entry — PulsarTrace lives in the
-        // menubar (D27). Set in code; there is no `.app` bundle yet.
+        // menubar (PT-P2-D9). Set in code; there is no `.app` bundle yet.
         //
         // `NSApplication.shared` — not the `NSApp` global — because `App.init()`
         // runs before SwiftUI has created the application object: `NSApp` is
@@ -51,7 +51,7 @@ struct PulsarTraceMacApp: App {
                 // The dropdown reads `settings.globalHotkey` to show the
                 // shortcut hint next to Start/Stop Recording.
                 .environment(environment.settings)
-                // R41: re-install the global-hotkey monitor whenever the
+                // PT-R41: re-install the global-hotkey monitor whenever the
                 // combo changes in Settings (`install` removes the prior
                 // monitor first). The popover content isn't mounted until
                 // its first open, so the main window carries a parallel
@@ -82,7 +82,7 @@ struct PulsarTraceMacApp: App {
         // carries the intent that makes activation succeed.
         // (`restorationBehavior(.disabled)` is this exact switch as a scene
         // modifier, but it needs macOS 15 and `SceneBuilder` cannot branch
-        // on `#available` — the PRD floor is macOS 14, so the opt-out is
+        // on `#available` — the minimum supported OS is macOS 14, so the opt-out is
         // applied at the AppKit level instead.)
         mainWindow
         liveTranscriptWindow
@@ -129,7 +129,7 @@ struct PulsarTraceMacApp: App {
 }
 
 /// The menubar icon, a pure function of recording status + refine activity —
-/// the three states R40 requires to be distinct at a glance: idle, recording
+/// the three states PT-R40 requires to be distinct at a glance: idle, recording
 /// (the waveform with a red dot badge), and refining (pulsing sync symbol).
 private struct MenuBarLabel: View {
     let status: RecordingStatus
@@ -139,7 +139,7 @@ private struct MenuBarLabel: View {
         switch status {
         case .recording:
             // The app's normal waveform glyph with a red dot badged at its
-            // bottom-right corner — unambiguous "live" state (R40) that keeps
+            // bottom-right corner — unambiguous "live" state (PT-R40) that keeps
             // the icon recognizable (QA round 5: the tiny microphone in
             // `waveform.badge.microphone` was too small to read). MenuBarExtra
             // labels are template-rendered, so the red may be flattened to

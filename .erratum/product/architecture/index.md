@@ -202,7 +202,8 @@ refinement completion or failure, and exposes accessibility labels on its contro
 *Interactions:* drives recording and the in-process refiner (PT-C4); reads the live transcript;
 edits the Speaker Library (PT-C5); surfaces the Refinement Job Queue (PT-C17).
 
-*Satisfies:* PT-R31, PT-R40, PT-R41, PT-R42, PT-R43, PT-R44, PT-R45, PT-R103, PT-R104, PT-R106
+*Satisfies:* PT-R31, PT-R40, PT-R41, PT-R42, PT-R43, PT-R44, PT-R45, PT-R103, PT-R104, PT-R106,
+PT-R114
 
 ### PT-C17 · Refinement Job Queue
 

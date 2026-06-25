@@ -1,21 +1,22 @@
 import Foundation
 
-/// Resolves the per-recording folder layout (PRD §6 — "one folder per
-/// recording") and dispatches the two `pulsartrace refine` input shapes.
+/// Resolves the per-recording folder layout (the "one folder per
+/// recording" storage model) and dispatches the two `pulsartrace refine`
+/// input shapes.
 ///
-/// PRD §6 storage model: a recording lives in its own folder holding the audio
+/// Storage model: a recording lives in its own folder holding the audio
 /// WAV(s), `final.md`, `metadata.json` and `live.md`:
 ///
 /// ```
 /// 2026-04-30-team-standup/
 ///   audio-system.wav      ← system stream, diarized
-///   audio-mic.wav         ← mic stream, label "You", never diarized (R17)
+///   audio-mic.wav         ← mic stream, label "You", never diarized (PT-R17)
 ///   live.md               ← provisional transcript
 ///   final.md              ← refined transcript
 ///   metadata.json         ← machine-readable sidecar
 /// ```
 ///
-/// `refine` accepts two input shapes (project-docs/DECISIONS.md D13):
+/// `refine` accepts two input shapes (PT-P1-D13):
 ///
 /// 1. **A recording folder** — already in the layout above. Outputs are
 ///    written back into it.
@@ -25,7 +26,7 @@ import Foundation
 ///    where it is — the folder's `metadata.json` records the source path's
 ///    basename. Putting outputs in a dedicated sibling folder keeps the user's
 ///    original audio file untouched and groups `final.md` + `metadata.json`
-///    together, matching the §6 "one folder per recording" model.
+///    together, matching the "one folder per recording" model.
 public struct RecordingFolder: Sendable {
 
     /// Canonical file names inside a recording folder.
@@ -64,7 +65,7 @@ public struct RecordingFolder: Sendable {
     public struct Stream: Sendable {
         /// The WAV file backing this stream.
         public let url: URL
-        /// True for the microphone stream — labelled `You`, never diarized (R17).
+        /// True for the microphone stream — labelled `You`, never diarized (PT-R17).
         public let isMicrophone: Bool
     }
 

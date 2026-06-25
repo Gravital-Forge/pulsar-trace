@@ -1,7 +1,7 @@
 import Foundation
 
 /// Incrementally writes the canonical PulsarTrace storage format — 16 kHz mono
-/// **Int16** PCM RIFF/WAVE (R54e) — straight to disk as samples arrive.
+/// **Int16** PCM RIFF/WAVE (PT-R54e) — straight to disk as samples arrive.
 ///
 /// `WAVWriter` only encodes a complete in-RAM buffer in one shot, so until the
 /// live pass finishes nothing is on disk: a crash/kill mid-recording loses

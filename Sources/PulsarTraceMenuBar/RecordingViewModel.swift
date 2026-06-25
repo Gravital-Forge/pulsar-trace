@@ -2,7 +2,7 @@ import Foundation
 import PulsarTraceCapture
 import PulsarTraceEngine
 
-/// The orchestration seam the `RecordingViewModel` drives (R40, R45).
+/// The orchestration seam the `RecordingViewModel` drives (PT-R40, PT-R45).
 ///
 /// `RecordOrchestrator` (an `actor` spawning real subprocesses) is the
 /// production conformer; tests inject a stub so the status machine can be
@@ -64,7 +64,7 @@ public struct PermissionPreflight: Sendable {
 }
 
 /// Drives one menubar recording session: start → record → idle, with crash
-/// detection (R40, R45). Post-recording refinement is enqueued onto the
+/// detection (PT-R40, PT-R45). Post-recording refinement is enqueued onto the
 /// `RefinementJobQueue` via the injected `enqueueAutoRefine` closure and runs
 /// asynchronously — the recording state machine returns to `.idle` immediately,
 /// enabling back-to-back meetings without blocking on refine.
@@ -84,7 +84,7 @@ public final class RecordingViewModel {
     /// The current recording state — the menubar icon/menu is a function of it.
     public private(set) var status: RecordingStatus = .idle
 
-    /// A short human-readable progress line for the menu (R26-style).
+    /// A short human-readable progress line for the menu (PT-R26-style).
     public private(set) var progressMessage: String = ""
 
     /// The in-flight recording's `live.md` URL while a recording is running,
@@ -112,7 +112,7 @@ public final class RecordingViewModel {
 
     /// Enqueues a finished (or partial) recording folder onto the async refine
     /// queue. Receives the folder URL and the `rec_<short>` id. The production
-    /// implementation enqueues onto `RefinementJobQueue` (wired in D2); tests
+    /// implementation enqueues onto `RefinementJobQueue` (wired in PT-P1-D2); tests
     /// inject a capturing closure or pass `nil` for a no-op default.
     private let enqueueAutoRefine: @Sendable (URL, String) async -> Void
 
@@ -144,13 +144,13 @@ public final class RecordingViewModel {
     ///   - settings: source of the mic, model, output folder, system-audio flag.
     ///   - paths: resolves socket locations (default `.standard`).
     ///   - events: unused — retained for API compatibility; will be removed
-    ///     once D2 wires `AppEnvironment` to pass an `enqueueAutoRefine` closure.
+    ///     once PT-P1-D2 wires `AppEnvironment` to pass an `enqueueAutoRefine` closure.
     ///   - clock: injectable wall clock (deterministic tests).
     ///   - binaryURLResolver: name → binary URL (default `.build/debug/<name>`).
     ///   - orchestratorFactory: builds the orchestration seam — default builds a
     ///     real `RecordOrchestrator`; tests inject a stub factory.
     ///   - enqueueAutoRefine: called with `(folderURL, recordingId)` after a
-    ///     successful stop or crash recovery. Default is a no-op; D2 injects the
+    ///     successful stop or crash recovery. Default is a no-op; PT-P1-D2 injects the
     ///     real `RefinementJobQueue.enqueue` closure.
     ///   - pauseRefinement: called before the recording subprocess starts to
     ///     ask the queue to yield resources to the live pass. Default is a no-op.
@@ -188,7 +188,7 @@ public final class RecordingViewModel {
 
     // MARK: - Start
 
-    /// Start a recording (R40). A no-op if a recording is not startable from
+    /// Start a recording (PT-R40). A no-op if a recording is not startable from
     /// the current state — a second start while not `.idle` is rejected.
     public func startRecording() async {
         guard status.canStartRecording else { return }
@@ -247,7 +247,7 @@ public final class RecordingViewModel {
 
         // TCC grants were requested up front by the permission preflight
         // above, so `orchestrator.start` no longer races the OS prompts.
-        // Remaining gap (future work, R46 first-run wizard): a user revoking
+        // Remaining gap (future work, PT-R114 first-run wizard): a user revoking
         // a grant *mid-recording* is only surfaced as an engine exit, and
         // there is no guided first-run permissions walkthrough yet.
 
@@ -275,7 +275,7 @@ public final class RecordingViewModel {
         progressMessage = "Recording…"
 
         // Crash watch: if the engine exits while still `.recording`, the live
-        // pass died unexpectedly (R45). A normal stop cancels this task before
+        // pass died unexpectedly (PT-R45). A normal stop cancels this task before
         // the engine exits, so it does not misfire on the happy path.
         let recordingId = plan.recordingId
         crashWatch = Task { [weak self] in
@@ -291,7 +291,7 @@ public final class RecordingViewModel {
 
     // MARK: - Stop
 
-    /// Stop the in-flight recording and enqueue an auto-refine job (R40).
+    /// Stop the in-flight recording and enqueue an auto-refine job (PT-R40).
     ///
     /// Returns to `.idle` immediately after stopping the subprocess pair —
     /// the offline refine pass runs asynchronously on the `RefinementJobQueue`,
@@ -321,7 +321,7 @@ public final class RecordingViewModel {
 
     // MARK: - Crash handling
 
-    /// Move to `.crashed` when the engine exits while still recording (R45).
+    /// Move to `.crashed` when the engine exits while still recording (PT-R45).
     /// On the happy path the crash watch is cancelled before the engine exits,
     /// so reaching here genuinely means an unexpected death.
     private func handleEngineExit(recordingId: String, partialFolder: URL) async {
@@ -337,7 +337,7 @@ public final class RecordingViewModel {
         await resumeRefinement()
     }
 
-    /// Enqueue the partial recording for refine and return to `.idle` (R45 recovery).
+    /// Enqueue the partial recording for refine and return to `.idle` (PT-R45 recovery).
     public func recoverFromCrash() async {
         guard case .crashed(let id, let partialFolder) = status,
               let partialFolder else {

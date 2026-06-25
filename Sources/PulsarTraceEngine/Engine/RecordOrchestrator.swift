@@ -2,10 +2,10 @@ import Foundation
 
 /// Drives one `pulsartrace record` session: spawns `pulsartrace-capture`,
 /// waits for its `ready` handshake, spawns `pulsartrace-engine --live`, and
-/// tears the pair down cleanly (R47).
+/// tears the pair down cleanly (PT-R47).
 ///
 /// The capture daemon must be a separate process — it is the only TCC-gated
-/// PulsarTrace process (R4) — and the engine is spawned separately so the
+/// PulsarTrace process (PT-R4) — and the engine is spawned separately so the
 /// menubar can detect its death. This orchestrator is the reusable code
 /// path: `RecordCommand` (CLI) and the menubar both drive it.
 ///
@@ -312,8 +312,7 @@ public actor RecordOrchestrator {
     /// cooperative pool) can lag behind a chatty subprocess: FluidAudio mirrors
     /// every log line to stderr in DEBUG builds, so a slow drain lets the 64 KB
     /// pipe fill and parks the writer in `write()` — the real cause of the
-    /// live-diarizer "wedge" (see the 2026-06-19 resolution in
-    /// docs/specs/2026-06-18-live-pass-lag-investigation.md).
+    /// live-diarizer "wedge" (see PT-P5-D7).
     private func drainToVoid(_ handle: FileHandle) {
         DispatchQueue.global().async {
             _ = try? handle.readToEnd()

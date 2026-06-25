@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Pipeline coverage of the live pass (R10, R12, R14, R16, R35a, R36, R37).
+/// Pipeline coverage of the live pass (PT-R10, PT-R12, PT-R14, PT-R16, PT-R35a, PT-R36, PT-R37).
 ///
 /// Drives a real fixture WAV through `FixturePlaybackSource` →
 /// `StreamingTranscriber` (sliding-window Parakeet + LocalAgreement-2) →
@@ -12,7 +12,7 @@ import Foundation
 ///
 /// Determinism: Parakeet's greedy TDT decode is deterministic, so structure
 /// and keyword assertions are stable. Transcript text is asserted via
-/// fixture keywords (D39 supersedes the old whisper snapshot strategy —
+/// fixture keywords (PT-P5-D1 supersedes the old whisper snapshot strategy —
 /// keywords survive small wording drift between decoder versions; the
 /// retired snapshot lives in git history).
 ///
@@ -46,7 +46,7 @@ struct StreamingPipelineTests {
         let transcriber = ParakeetWindowTranscriber(engine: engine)
         let pipeline = StreamingPipeline()
         // Fast mode keeps the suite quick; the realtime/lag test below
-        // covers R10 pacing.
+        // covers PT-R10 pacing.
         let source = FixturePlaybackSource(
             file: FixtureLocator.audio("two-speakers-alternating.wav"),
             realtime: false)
@@ -59,13 +59,13 @@ struct StreamingPipelineTests {
             systemSource: source,
             library: nil)
 
-        // R35a/R37: file created with marker + header.
+        // PT-R35a/PT-R37: file created with marker + header.
         let text = try String(contentsOf: output.liveURL, encoding: .utf8)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         #expect(lines[0] == "<!-- pulsartrace:live -->")
         #expect(lines[1].hasPrefix("## Transcript — "))
 
-        // R16/§2b: this run has no live diarizer, so the live pass has no
+        // PT-R16/§2b: this run has no live diarizer, so the live pass has no
         // diarization coverage for any utterance. A no-coverage utterance is
         // labelled with the neutral provisional marker `Speaker?` — never
         // `Them?`, which would falsely attribute it to the first tracked
@@ -144,7 +144,7 @@ struct StreamingPipelineTests {
     /// Real-time-paced run: assert `live.md` grows monotonically and lag stays
     /// **bounded** under backpressure.
     ///
-    /// Note on R10: Parakeet on the ANE decodes far faster than real time,
+    /// Note on PT-R10: Parakeet on the ANE decodes far faster than real time,
     /// so lag should stay small here; the assertion below is deliberately
     /// the same *bounded*-lag invariant as before (not a tight latency
     /// target — that's the manual smoke test's job), so a slow first-run
@@ -156,7 +156,7 @@ struct StreamingPipelineTests {
         defer { try? FileManager.default.removeItem(at: folder) }
 
         // Sample live.md's size on a background poller while the realtime run
-        // proceeds, to assert strictly monotonic growth (R36).
+        // proceeds, to assert strictly monotonic growth (PT-R36).
         let liveURL = folder.appendingPathComponent("live.md")
         let sizes = SizeSamples()
         let poller = Task {
@@ -170,7 +170,7 @@ struct StreamingPipelineTests {
 
         let transcriber = ParakeetWindowTranscriber(engine: engine)
         let pipeline = StreamingPipeline()
-        // realtime: true — frames at wall-clock pace, exercising R10.
+        // realtime: true — frames at wall-clock pace, exercising PT-R10.
         let source = FixturePlaybackSource(
             file: FixtureLocator.audio("two-speakers-alternating.wav"),
             realtime: true)
@@ -191,7 +191,7 @@ struct StreamingPipelineTests {
         // whole-recording length — i.e. it does not grow without limit.
         #expect(output.maxLagSeconds < 24.0)
 
-        // R36/R12: every observed live.md size is ≥ the previous — strictly
+        // PT-R36/PT-R12: every observed live.md size is ≥ the previous — strictly
         // monotonic growth, never a shrink or rewrite.
         let observed = await sizes.values
         for i in 1..<max(observed.count, 1) {
@@ -199,7 +199,7 @@ struct StreamingPipelineTests {
         }
     }
 
-    /// R19 mic-echo dedup, proven deterministically at the `LiveSink` level.
+    /// PT-R19 mic-echo dedup, proven deterministically at the `LiveSink` level.
     ///
     /// Why not a full two-stream pipeline run: the system and mic streams are
     /// consumed through one merged `AsyncStream`, and under `realtime: false`
@@ -213,8 +213,8 @@ struct StreamingPipelineTests {
     /// real `MicEchoDedup` — and proves that a mic utterance echoing a
     /// previously-seen system utterance is dropped, while a distinct mic
     /// utterance is kept. The `MicEchoDedup` decision core has its own unit
-    /// suite; this proves `LiveSink`'s *use* of it (R19 integration).
-    @Test("mic-echo: LiveSink drops a mic utterance echoing system audio (R19)")
+    /// suite; this proves `LiveSink`'s *use* of it (PT-R19 integration).
+    @Test("mic-echo: LiveSink drops a mic utterance echoing system audio (PT-R19)")
     func liveSinkDropsMicEcho() async throws {
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -234,7 +234,7 @@ struct StreamingPipelineTests {
             realElapsed: .seconds(6))
 
         // The mic picks the *same words* up off the speakers, 0.4 s later —
-        // a textbook R19 echo, well within the ±5 s window.
+        // a textbook PT-R19 echo, well within the ±5 s window.
         let micEcho = CommittedUtterance(
             start: .milliseconds(2_400), end: .milliseconds(5_400),
             text: "lets review the auth flow before the demo")
@@ -250,7 +250,7 @@ struct StreamingPipelineTests {
         await writer.finish()
         let stats = await sink.stats()
 
-        // R19: exactly the echo was dropped — the distinct mic line was kept.
+        // PT-R19: exactly the echo was dropped — the distinct mic line was kept.
         #expect(stats.micEchoesDropped == 1)
         // 2 lines written: the system utterance + the real mic utterance.
         #expect(stats.utteranceLines == 2)

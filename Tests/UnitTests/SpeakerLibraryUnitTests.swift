@@ -5,7 +5,7 @@ import Foundation
 /// Unit coverage of the speaker library: centroid math, cosine
 /// matching, the SQLite-backed `SpeakerLibrary` actor, soft-delete + undo,
 /// merge/split and their undos, cross-model-revision refusal, and the
-/// `spk_<ulid>` ID stability invariant (R83).
+/// `spk_<ulid>` ID stability invariant (PT-R83).
 ///
 /// Uses synthetic embeddings for sharp threshold control AND the real 256-d
 /// embeddings committed at `Tests/Fixtures/diarization/*.json`.
@@ -88,7 +88,7 @@ struct SpeakerLibraryUnitTests {
         #expect(Centroid.cosineSimilarity([1, 0], [1, 0, 0]) == 0)
     }
 
-    @Test("centroid running mean: count-weighted average (R30)")
+    @Test("centroid running mean: count-weighted average (PT-R30)")
     func runningMeanMath() {
         // existing = [2,2], count = 3, appearance = [10,10]
         // new = (2*3 + 10) / 4 = 4
@@ -168,9 +168,9 @@ struct SpeakerLibraryUnitTests {
         #expect(sameRev != nil)
     }
 
-    // MARK: - Centroid update (R30)
+    // MARK: - Centroid update (PT-R30)
 
-    @Test("recordAppearance averages the new embedding into the centroid (R30)")
+    @Test("recordAppearance averages the new embedding into the centroid (PT-R30)")
     func centroidRunningMeanUpdate() async throws {
         let (library, dir) = try await makeLibrary()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -213,9 +213,9 @@ struct SpeakerLibraryUnitTests {
         }
     }
 
-    // MARK: - Rename + ID stability (R83)
+    // MARK: - Rename + ID stability (PT-R83)
 
-    @Test("rename changes the name but never the spk_ id (R83)")
+    @Test("rename changes the name but never the spk_ id (PT-R83)")
     func renameKeepsStableID() async throws {
         let (library, dir) = try await makeLibrary()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -227,7 +227,7 @@ struct SpeakerLibraryUnitTests {
 
         try await library.rename(speakerId: stableID, to: "Steve")
         let after = try await library.speaker(id: stableID)
-        #expect(after?.id == stableID)            // R83: id unchanged
+        #expect(after?.id == stableID)            // PT-R83: id unchanged
         #expect(after?.name == "Steve")           // only the name moved
 
         try await library.rename(speakerId: stableID, to: "Steven")
@@ -235,7 +235,7 @@ struct SpeakerLibraryUnitTests {
         #expect(try await library.speaker(id: stableID)?.name == "Steven")
     }
 
-    // MARK: - Soft delete + undo (R32b)
+    // MARK: - Soft delete + undo (PT-R32b)
 
     @Test("delete is soft and recoverable; undelete restores within the window")
     func softDeleteAndUndelete() async throws {
@@ -277,7 +277,7 @@ struct SpeakerLibraryUnitTests {
             try await library.delete(speakerId: created.id)
         }
         // Re-open with a clock 31 days later — the delete is no longer
-        // recoverable (R32b: 30-day window).
+        // recoverable (PT-R32b: 30-day window).
         let later = deleteTime.addingTimeInterval(31 * 86_400)
         let library = try await SpeakerLibrary(
             databaseURL: dir.appendingPathComponent("speakers.sqlite"),
@@ -700,7 +700,7 @@ struct SpeakerLibraryUnitTests {
 
     // MARK: - Schema migration
 
-    /// v2 → v3 (D40): the embedding space changed from pyannote to WeSpeaker,
+    /// v2 → v3 (PT-P5-D3): the embedding space changed from pyannote to WeSpeaker,
     /// so every stored centroid is permanently unmatchable. Opening a pre-v3
     /// database must archive the whole file to `speakers.sqlite.pre-v3.bak`
     /// and start fresh rather than carry dead rows forward.

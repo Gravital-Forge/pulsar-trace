@@ -1,8 +1,8 @@
 import Foundation
 import Logging
 
-/// The persistent, cross-recording speaker library (R28, R30, R32a,
-/// R32b, R83).
+/// The persistent, cross-recording speaker library (PT-R28, PT-R30, PT-R32a,
+/// PT-R32b, PT-R83).
 ///
 /// An `actor` over a single SQLite database (`speakers.sqlite`). Diarization
 /// produces a per-speaker 256-d embedding per recording; this library grows a
@@ -11,7 +11,7 @@ import Logging
 ///
 /// Why an actor: the database file is mutable shared state and corruption
 /// recovery / backup must not interleave with a write. SQLite's own WAL mode
-/// (R32a) handles a *separate process* reading/writing concurrently; the actor
+/// (PT-R32a) handles a *separate process* reading/writing concurrently; the actor
 /// serializes the *in-process* callers (the refine pipeline and the
 /// `pulsartrace speakers` CLI). This mirrors the `swift-actor-persistence`
 /// pattern: an actor fronting file-backed storage.
@@ -21,15 +21,15 @@ import Logging
 /// connection / integrity check restores from that `.bak`.
 public actor SpeakerLibrary {
 
-    /// Default cosine-similarity match threshold (R18/R22, configurable).
-    /// Calibrated for the WeSpeaker embedding space (D40): on the committed
+    /// Default cosine-similarity match threshold (PT-R18/PT-R22, configurable).
+    /// Calibrated for the WeSpeaker embedding space (PT-P5-D4): on the committed
     /// fixtures, same-speaker similarity measured ~0.93, cross-speaker ~0.35
     /// (see the DiarizationE2E calibration suite). Pinned below the midpoint to
     /// favour recall of returning speakers — cross-session same-speaker
     /// similarity runs lower than the in-clip measurement.
     public static let defaultMatchThreshold = 0.45
 
-    /// Soft-delete recovery window (R32b — 30 days).
+    /// Soft-delete recovery window (PT-R32b — 30 days).
     public static let recoveryWindow: TimeInterval = 30 * 86_400
 
     public enum LibraryError: Error, CustomStringConvertible {
@@ -199,7 +199,7 @@ public actor SpeakerLibrary {
         return SHA256Verifier.hexDigest(of: data)
     }
 
-    // MARK: - Schema (R28)
+    // MARK: - Schema (PT-R28)
 
     /// The current speaker-library schema version. Stored in `PRAGMA
     /// user_version` (S3) so a future schema migration can tell what is applied.
@@ -211,7 +211,7 @@ public actor SpeakerLibrary {
     ///   tombstone) and its index. The base CREATE on a fresh DB already
     ///   includes the column; the migration ran `ALTER TABLE` for an
     ///   existing v1 database.
-    /// - v3: D40 — diarization moved to FluidAudio/WeSpeaker embeddings.
+    /// - v3: PT-P5-D3 — diarization moved to FluidAudio/WeSpeaker embeddings.
     ///   `pyannote_model_revision` → `model_revision`, and a pre-v3 database
     ///   is archived to `speakers.sqlite.pre-v3.bak` and reset: pyannote-space
     ///   centroids can never match WeSpeaker embeddings, so carrying the rows
@@ -219,7 +219,7 @@ public actor SpeakerLibrary {
     private static let schemaVersion: Int32 = 3
 
     private static func migrate(_ db: SQLiteDatabase) throws {
-        // v2 → v3 (D40): the embedding space changed (pyannote → WeSpeaker), so
+        // v2 → v3 (PT-P5-D3): the embedding space changed (pyannote → WeSpeaker), so
         // every stored centroid is permanently unmatchable. Archive the whole
         // database file and start fresh rather than carrying dead rows.
         //
@@ -249,7 +249,7 @@ public actor SpeakerLibrary {
         // crash mid-`migrate` leaves the database fully unmigrated rather
         // than half-built (S1).
         try db.transaction {
-            // `model_revision` is per-row so a model upgrade (Open Q #3 / D40)
+            // `model_revision` is per-row so a model upgrade (Open Q #3 / PT-P5-D3)
             // can coexist with old centroids without cross-matching them.
             try db.exec("""
                 CREATE TABLE IF NOT EXISTS speakers (
@@ -323,7 +323,7 @@ public actor SpeakerLibrary {
     private func invalidateCache() { cachedLiveSpeakers = nil }
 
     /// Every soft-deleted speaker still inside the 30-day recovery window
-    /// (R32b "Recently deleted").
+    /// (PT-R32b "Recently deleted").
     public func recoverableSpeakers() throws -> [Speaker] {
         let cutoff = Timestamps.event(clock().addingTimeInterval(-Self.recoveryWindow))
         return try selectSpeakers(
@@ -381,14 +381,14 @@ public actor SpeakerLibrary {
         }
     }
 
-    // MARK: - Matching (R22)
+    // MARK: - Matching (PT-R22)
 
     /// Find the best live-speaker match for a query centroid.
     ///
     /// Cosine similarity in memory over every live speaker — fast even at
     /// ~10k speakers (256-d dot product × N). A centroid from a *different*
     /// `model_revision` is not comparable and is skipped entirely
-    /// (Open Question #3 / D40): a returning speaker recorded under a new model
+    /// (Open Question #3 / PT-P5-D3): a returning speaker recorded under a new model
     /// checkpoint becomes a fresh `Unknown #N` rather than a false match.
     ///
     /// - Returns: the best match at or above `threshold`, else `nil`.
@@ -409,7 +409,7 @@ public actor SpeakerLibrary {
         return best
     }
 
-    // MARK: - Create (R22 — new speaker → speaker_created)
+    // MARK: - Create (PT-R22 — new speaker → speaker_created)
 
     /// Insert a brand-new speaker discovered by refinement and record its
     /// first appearance. Emits `speaker_created`.
@@ -451,10 +451,10 @@ public actor SpeakerLibrary {
         return speaker
     }
 
-    // MARK: - Centroid update (R30 — returning speaker → speaker_centroid_updated)
+    // MARK: - Centroid update (PT-R30 — returning speaker → speaker_centroid_updated)
 
     /// Fold a returning speaker's new appearance into its centroid via the
-    /// count-weighted running mean (R30) and record the appearance. Emits
+    /// count-weighted running mean (PT-R30) and record the appearance. Emits
     /// `speaker_centroid_updated`.
     ///
     /// - Returns: the updated `Speaker`.
@@ -515,10 +515,10 @@ public actor SpeakerLibrary {
         return speaker
     }
 
-    // MARK: - Rename (R83 — speaker_renamed)
+    // MARK: - Rename (PT-R83 — speaker_renamed)
 
-    /// Change a speaker's display name. The `id` is unchanged (R83). This
-    /// method does NOT retroactively rewrite past `final.md` files (D16 — the
+    /// Change a speaker's display name. The `id` is unchanged (PT-R83). This
+    /// method does NOT retroactively rewrite past `final.md` files (PT-P1-D16 — the
     /// rewrite is a separate step), so `applied_to_recordings` is empty and no
     /// `final_md_rewritten` is paired with this event.
     ///
@@ -556,9 +556,9 @@ public actor SpeakerLibrary {
         return speaker.name
     }
 
-    // MARK: - Delete + undo (R32b)
+    // MARK: - Delete + undo (PT-R32b)
 
-    /// Soft-delete a speaker (R32b). The row is hidden but recoverable for 30
+    /// Soft-delete a speaker (PT-R32b). The row is hidden but recoverable for 30
     /// days. Emits `speaker_deleted`.
     public func delete(speakerId: String) async throws {
         guard let speaker = try speaker(id: speakerId), !speaker.isDeleted else {
@@ -686,11 +686,11 @@ public actor SpeakerLibrary {
         return speaker.name
     }
 
-    // MARK: - Merge + undo (R32b — speaker_merged / speaker_unmerged)
+    // MARK: - Merge + undo (PT-R32b — speaker_merged / speaker_unmerged)
 
     /// Merge `other` into `primary`: `other` is soft-deleted, its appearances
     /// are re-attributed to `primary`, and `primary`'s centroid is recomputed
-    /// as the count-weighted mean of the two (R30). Emits `speaker_merged`.
+    /// as the count-weighted mean of the two (PT-R30). Emits `speaker_merged`.
     ///
     /// A false merge of two genuinely-distinct speakers is recoverable via
     /// `unmerge` (edge case "two distinct speakers within threshold").
@@ -733,7 +733,7 @@ public actor SpeakerLibrary {
 
         var merged = primary
         // Count-weighted mean of the two centroids — equivalent to averaging
-        // every underlying appearance embedding (R30).
+        // every underlying appearance embedding (PT-R30).
         let totalCount = primary.appearanceCount + other.appearanceCount
         if totalCount > 0 {
             var weighted = [Float](repeating: 0, count: primary.centroid.count)
@@ -789,7 +789,7 @@ public actor SpeakerLibrary {
     /// pre-merge count `no` are preserved on the soft-deleted loser, and `np`
     /// is `primary.appearanceCount - no`. When the inversion cannot be exact
     /// (`np <= 0` or a dimension mismatch) `primary`'s centroid is left at the
-    /// merged value — the documented best-effort fallback (project-docs/DECISIONS.md D18).
+    /// merged value — the documented best-effort fallback (PT-P1-D18).
     public func unmerge(primaryId: String, otherId: String) async throws {
         guard let primary = try speaker(id: primaryId), !primary.isDeleted else {
             throw LibraryError.speakerNotFound(primaryId)
@@ -837,7 +837,7 @@ public actor SpeakerLibrary {
             primarySpeakerId: primaryId, mergedSpeakerId: otherId))
     }
 
-    // MARK: - Split + undo (R32b — speaker_split / speaker_unsplit)
+    // MARK: - Split + undo (PT-R32b — speaker_split / speaker_unsplit)
 
     /// Split a subset of `originalId`'s appearances off into a brand-new
     /// speaker. Emits `speaker_split` followed by `speaker_created` for the new

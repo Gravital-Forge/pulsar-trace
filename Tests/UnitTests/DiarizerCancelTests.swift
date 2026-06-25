@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-/// Cancellation and timeout semantics of the in-process `Diarizer` (D40).
+/// Cancellation and timeout semantics of the in-process `Diarizer` (PT-P5-D3).
 ///
 /// Both are exercised through the test-only `operation:` seam, so they run
 /// without CoreML models: the seam stands in for the FluidAudio engine call

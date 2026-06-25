@@ -4,7 +4,7 @@ import Foundation
 
 /// `AutoScrollController` is the shared @Observable state between the
 /// NSScrollView-backed live transcript view and the SwiftUI "Jump to latest"
-/// pill (R45). The "should I scroll on a new line?" decision lives in the
+/// pill (PT-R45). The "should I scroll on a new line?" decision lives in the
 /// scroll view itself — it samples the user's at-bottom state *before* the
 /// new line lays out, which pure SwiftUI can't do. This suite covers the
 /// pill-driving state machine: isAtBottom, pendingNewLines, jump generation.

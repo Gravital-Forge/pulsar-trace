@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Layer 4: IPC integration tests (R67a, §12 "Layer 4").
+/// Layer 4: IPC integration tests (PT-R67a, §12 "Layer 4").
 ///
 /// The `capture.sock` binary frame protocol is a contract that in-process
 /// `Pipeline` tests skip. These tests put a real Unix domain socket between a

@@ -104,7 +104,7 @@ struct WhisperKitRefineTests {
     }
 
     @Test func silentRegionProducesNoStockPhraseLines() async throws {
-        // The D31 regression shape: digital silence must not yield
+        // The PT-P2-D13 regression shape: digital silence must not yield
         // "Thank you."-style hallucinations on the new backend.
         let silence = [Float](repeating: 0, count: AudioFormat.sampleRate * 8)
         let result = try await Self.transcriber.transcribe(
@@ -113,7 +113,7 @@ struct WhisperKitRefineTests {
         // The digital-silence guard skips the decode entirely, so the region
         // yields no segments at all — the strongest statement of the fix.
         #expect(result.segments.isEmpty)
-        // Kept: documents the D31 regression shape (a stock-phrase
+        // Kept: documents the PT-P2-D13 regression shape (a stock-phrase
         // hallucination on silence) the guard exists to prevent.
         for seg in result.segments {
             #expect(!HallucinationFilter.stockPhrases.contains(

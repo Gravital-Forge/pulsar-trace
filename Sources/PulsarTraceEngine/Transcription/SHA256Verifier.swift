@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// SHA-256 hashing for model integrity verification (R54d).
+/// SHA-256 hashing for model integrity verification (PT-R109).
 ///
 /// Files are hashed in a streaming fashion (64 KiB chunks) so a 3 GB model is
 /// never fully resident just to be hashed.

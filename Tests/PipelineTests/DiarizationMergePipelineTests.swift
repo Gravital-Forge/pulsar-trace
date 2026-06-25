@@ -3,7 +3,7 @@ import Foundation
 import SnapshotTesting
 @testable import PulsarTraceEngine
 
-/// Pipeline coverage of the transcript ⨉ diarization merge (R15a, R29).
+/// Pipeline coverage of the transcript ⨉ diarization merge (PT-R111, PT-R112).
 ///
 /// This snapshot-tests the merged `Speaker_N` markdown. It consumes the
 /// **committed** diarization JSON fixture (`Tests/Fixtures/diarization/…`),
@@ -12,9 +12,9 @@ import SnapshotTesting
 /// blow the ~30s budget; real pyannote correctness is verified in the `pytest`
 /// suite and by `DiarizationE2ETests` (filterable, opt-in).
 ///
-/// Determinism (PRD §12): the fixture is committed and never regenerated at
+/// Determinism: the fixture is committed and never regenerated at
 /// test time, and the merge is pure — so the snapshot is stable across runs.
-@Suite("Diarization merge pipeline (R15a/R29)")
+@Suite("Diarization merge pipeline (PT-R111/PT-R112)")
 struct DiarizationMergePipelineTests {
 
     /// A fixed wall-clock start so the document header is deterministic.

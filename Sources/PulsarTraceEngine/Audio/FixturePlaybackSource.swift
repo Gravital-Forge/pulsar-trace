@@ -1,6 +1,6 @@
 import Foundation
 
-/// An `AudioFrameSource` that replays a WAV file (R71).
+/// An `AudioFrameSource` that replays a WAV file (PT-R71).
 ///
 /// Two modes:
 /// - `realtime: true` — frames are emitted at wall-clock pace (one 20 ms frame

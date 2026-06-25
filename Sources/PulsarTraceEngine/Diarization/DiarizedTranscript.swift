@@ -2,7 +2,7 @@ import Foundation
 
 /// Merges whisper transcript utterances with pyannote speaker spans by
 /// timestamp overlap, producing the per-segment `Speaker_N` labels that the
-/// R13 transcript format renders (in place of a single placeholder `Speaker`
+/// PT-R13 transcript format renders (in place of a single placeholder `Speaker`
 /// when diarization is unavailable).
 ///
 /// Attribution rule: each utterance is
@@ -40,7 +40,7 @@ public enum DiarizationMerge {
     /// - Parameters:
     ///   - segments: whisper utterances, in time order, offsets relative to
     ///     recording start.
-    ///   - diarization: the diarization result for the *system stream* (R17).
+    ///   - diarization: the diarization result for the *system stream* (PT-R17).
     /// - Returns: one label per segment, index-aligned with `segments`.
     public static func speakerLabels(
         for segments: [TranscriptSegment],

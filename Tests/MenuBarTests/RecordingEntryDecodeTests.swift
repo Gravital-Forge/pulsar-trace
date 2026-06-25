@@ -6,7 +6,7 @@ import PulsarTraceEngine
 /// `RecordingEntry.decode(folderURL:)` reads a refined recording's
 /// `metadata.json` sidecar and turns it into the richer
 /// `[RecordingSpeaker]` shape the recordings-list UI renders as pills
-/// (R31). This suite verifies the speaker fields — `label`, `speakerId`,
+/// (PT-R31). This suite verifies the speaker fields — `label`, `speakerId`,
 /// `isMicrophone` — flow through verbatim, and that the
 /// `isUnknownPlaceholder` regex matches the precise
 /// `Unknown #<digits>` shape `SpeakerReconciler.nextUnknownName()` emits.

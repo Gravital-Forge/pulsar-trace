@@ -1,7 +1,7 @@
 import Testing
 @testable import PulsarTraceEngine
 
-/// Unit coverage of the offline silence-hallucination filter (D31).
+/// Unit coverage of the offline silence-hallucination filter (PT-P2-D13).
 ///
 /// The load-bearing guarantee under test: a stock phrase is dropped ONLY when
 /// an objective per-segment confidence signal also says the audio is silence.

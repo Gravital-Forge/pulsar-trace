@@ -6,38 +6,38 @@ import Logging
 /// Drives one or two `AudioFrameSource`s at real-time pace and grows an
 /// append-only `live.md` so an external AI agent can `tail -f` it during a
 /// meeting. The offline `pulsartrace refine` pass remains the source of truth;
-/// this is the low-latency companion (PRD §6 two-pass model).
+/// this is the low-latency companion (the two-pass live/refine model).
 ///
 /// ## What it wires together
 ///
 /// - `StreamingTranscriber` — sliding-window decode + LocalAgreement-2,
-///   producing **committed** utterances ≤ 5 s behind real time (R10).
+///   producing **committed** utterances ≤ 5 s behind real time (PT-R10).
 /// - `LiveDiarizer` — windowed in-process (ANE) provisional speaker IDs for the
-///   system stream (R15, R16). Optional: when unavailable the system stream is
+///   system stream (PT-R15, PT-R16). Optional: when unavailable the system stream is
 ///   still transcribed, but with no diarization coverage every system utterance
 ///   is labelled the neutral `Speaker?` (§2b).
-/// - `SpeakerLibrary` — opened **read-only** (R18, R32): a provisional speaker
+/// - `SpeakerLibrary` — opened **read-only** (PT-R18, PT-R32): a provisional speaker
 ///   whose centroid matches a known library speaker is shown by name. The live
 ///   pass **never writes** to the library — invariant #5.
 /// - `MicEchoDedup` — drops a mic utterance that is an echo of a system
-///   utterance (R19).
-/// - `LiveMarkdownWriter` — strictly append-only `live.md` (R12, R35a, R36).
+///   utterance (PT-R19).
+/// - `LiveMarkdownWriter` — strictly append-only `live.md` (PT-R12, PT-R35a, PT-R36).
 ///
 /// ## Stream mapping (single-pipe input)
 ///
 /// A single `--stdin` / `--source fixture` stream is treated as the **system
 /// stream**: it is diarized and labelled `Them …`. This matches the
-/// bare-WAV rule (a lone stream is system audio) and the PRD's framing that the
+/// bare-WAV rule (a lone stream is system audio) and the framing that the
 /// system stream is "the one or more Them-speakers". The mic stream is opt-in:
 /// when a paired mic source is supplied, its utterances are `You` and never
-/// diarized (R17), and run through mic-echo dedup against the system stream.
+/// diarized (PT-R17), and run through mic-echo dedup against the system stream.
 public struct StreamingPipeline: Sendable {
 
     /// Inputs and tunables for one live run.
     public struct Configuration: Sendable {
         /// The system-audio source — diarized, `Them …` labels.
         public let recordingFolder: URL
-        /// Wall-clock recording start (R35a header, transcript offsets).
+        /// Wall-clock recording start (PT-R35a header, transcript offsets).
         public let recordingStart: Date
         /// Recording id for the `live_md_started` event.
         public let recordingId: String
@@ -85,9 +85,9 @@ public struct StreamingPipeline: Sendable {
         public let bytesWritten: Int
         /// Utterance lines appended (excludes the marker + header).
         public let utteranceLines: Int
-        /// Mic utterances dropped as echoes of system audio (R19).
+        /// Mic utterances dropped as echoes of system audio (PT-R19).
         public let micEchoesDropped: Int
-        /// Median live transcription lag — the R10 metric: the median gap
+        /// Median live transcription lag — the PT-R10 metric: the median gap
         /// between real time and a committed utterance's end, over mid-stream
         /// commits (the end-of-stream flush is excluded).
         public let medianLagSeconds: Double
@@ -113,7 +113,7 @@ public struct StreamingPipeline: Sendable {
     /// - Parameters:
     ///   - configuration: inputs + tunables.
     ///   - systemTranscriber: a `WindowTranscribing` conformer for the system
-    ///     stream — `ParakeetWindowTranscriber` in production live runs (D39),
+    ///     stream — `ParakeetWindowTranscriber` in production live runs (PT-P5-D1),
     ///     one transcriber per stream.
     ///   - micTranscriber: a separate `WindowTranscribing` for the mic stream,
     ///     when a `micSource` is supplied.
@@ -121,7 +121,7 @@ public struct StreamingPipeline: Sendable {
     ///     source — fixture, pipe, socket).
     ///   - micSource: optional mic `AudioFrameSource` (paired-stream mode).
     ///   - library: speaker library opened **read-only** for the live name
-    ///     lookup (R18). `nil` → generic `Them` labels only.
+    ///     lookup (PT-R18). `nil` → generic `Them` labels only.
     public func run(
         configuration: Configuration,
         systemTranscriber: any WindowTranscribing,
@@ -131,7 +131,7 @@ public struct StreamingPipeline: Sendable {
         library: SpeakerLibrary? = nil
     ) async throws -> Output {
 
-        // --- live.md created at session start (R35a) ------------------------
+        // --- live.md created at session start (PT-R35a) ------------------------
         let writer = LiveMarkdownWriter(
             fileURL: configuration.liveURL,
             recordingStart: configuration.recordingStart)

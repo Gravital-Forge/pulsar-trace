@@ -3,7 +3,7 @@ import IOKit
 import IOKit.pwr_mgt
 
 /// Watches for system sleep and wake so `DeviceCaptureSource` can pause and
-/// resume capture across a sleep, annotating the gap (R7).
+/// resume capture across a sleep, annotating the gap (PT-R7).
 ///
 /// Backed by `IORegisterForSystemPower` delivered onto a dispatch queue
 /// (`IONotificationPortSetDispatchQueue`) — no run loop is required, so the
