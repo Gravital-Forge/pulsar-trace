@@ -39,5 +39,6 @@ None.
 ## To flow into the product layer
 
 - Mint components: Audio Source Layer, Events Log, Operational Logging, IPC Layer.
-- Mint product requirements PT-R70–R73, R75, R76 (sources); R78–R82, R84, R85 (events); R57–R61
-  (logging); R62–R65, R67a (tests); R88 (open-source-only); R89 (versioned contracts).
+- Mint product requirements PT-R70–PT-R73, PT-R75, PT-R76 (sources); PT-R78–PT-R82, PT-R84, PT-R85
+  (events); PT-R57–PT-R61 (logging); PT-R62–PT-R65, PT-R67a (tests); PT-R88 (open-source-only);
+  PT-R89 (versioned contracts).

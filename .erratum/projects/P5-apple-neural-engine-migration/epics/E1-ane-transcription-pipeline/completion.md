@@ -21,7 +21,7 @@ accuracy fallback), chosen in Settings or via `refine --model` / `record --refin
 `WhisperKitRegionTranscriber` decodes each region with a non-reentrant decode lock, a truthful
 deadline, and a budgeted language detect; `WhisperKitLanguagePolicy` resolves pin / detect-among /
 auto from the language allow-list and an explicit `--language` override; `WhisperKitSegmentMapper`
-maps segments with the D31 hallucination gate ported onto WhisperKit's per-segment
+maps segments with the PT-P2-D13 hallucination gate ported onto WhisperKit's per-segment
 `noSpeechProb`/`avgLogprob`. A wedged refine decode stops at a per-token callback boundary; pausing
 for a recording cancels the in-flight decode, drops the WhisperKit actor (ARC frees the CoreML
 models), and requeues the job to resume from its checkpoint.
@@ -77,7 +77,7 @@ At project close-out (when this branch merges to main), reconcile per `reference
   **Retired**; update PT-C18 (Recording Durability) to drop the offload to PT-C19. Add a new
   component for the content-digest model identity if close-out judges `DirectoryDigest` large enough
   to warrant one (otherwise fold it into PT-C2).
-- **Traceability:** two-write supersession rows for R9→R107, R54c→R108, R54d→R109; a write-once row
-  for R110; terminal Retired flip on R97.
+- **Traceability:** two-write supersession rows for PT-R9→PT-R107, PT-R54c→PT-R108,
+  PT-R54d→PT-R109; a write-once row for PT-R110; terminal Retired flip on PT-R97.
 - **Reference sweep:** grep for any lingering reference to PT-R9 / PT-R54c / PT-R54d / PT-R97 and to
   the retired components, and resolve each.

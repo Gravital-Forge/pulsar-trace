@@ -19,7 +19,7 @@ Diarization (PT-C13), the Speaker Library (PT-C5), and the Refinement Pipeline (
 - A resident `DiarizerEngine` actor owns the `OfflineDiarizerManager`, loaded once per process and
   shared by the live pass; the offline `Diarizer` keeps the `diarizeSystemStream(wavPath:)` entry
   point and `RefinementCancellable`, with cancellation mapped onto Swift `Task` cancellation.
-- Live, offline, and library embeddings come from one FluidAudio WeSpeaker model (R29 holds by
+- Live, offline, and library embeddings come from one FluidAudio WeSpeaker model (PT-R29 holds by
   construction); `clustering.warmStartFa = 0.2`, `SpeakerLibrary.defaultMatchThreshold = 0.45`, and
   `LiveDiarizer.stitchThreshold = 0.45`, all pinned by the threshold-calibration tests.
 - `modelRevision` is the `DirectoryDigest` of the model directory; the library refuses to match
