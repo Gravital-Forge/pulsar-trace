@@ -2,11 +2,11 @@ import Foundation
 import PulsarTraceEngine
 
 /// `pulsartrace refine PATH [--model large-v3-turbo|large-v3-whisperkit]
-/// [--language CODE]` — the v0.1 offline command (R48). Drives
+/// [--language CODE]` — the v0.1 offline command (PT-R48). Drives
 /// `RefinementPipeline`: an audio file or recording folder →
 /// `final.md` + `metadata.json`.
 ///
-/// Progress (R26) is reported as lightweight stderr lines. The menubar
+/// Progress (PT-R26) is reported as lightweight stderr lines. The menubar
 /// consuming progress over `control.sock` is a future addition — not built
 /// here; for the CLI, stderr is the whole progress surface.
 enum RefineCommand {
@@ -65,7 +65,7 @@ enum RefineCommand {
             // The whole refine orchestration — model prep, VAD, diarizer
             // wiring, speaker library, pipeline — lives in `OfflineRefiner`
             // so the menubar can run an identical refine in-process
-            // without shelling to this CLI (D23).
+            // without shelling to this CLI (PT-P2-D5).
             let refiner = OfflineRefiner(events: events, paths: .standard)
             let output = try await refiner.refine(
                 inputPath: options.inputPath,

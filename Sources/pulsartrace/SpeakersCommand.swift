@@ -2,15 +2,15 @@ import Foundation
 import PulsarTraceEngine
 
 /// `pulsartrace speakers <list|rename|merge|delete>` — terminal management of
-/// the persistent speaker library (R49).
+/// the persistent speaker library (PT-R49).
 ///
 /// Operates directly on `~/Library/Application Support/PulsarTrace/speakers.sqlite`
 /// and emits the corresponding `speaker_*` events.
 ///
-/// Scope note (project-docs/DECISIONS.md D16): `rename`/`merge` here update the library and
+/// Scope note (PT-P1-D16): `rename`/`merge` here update the library and
 /// emit the speaker event, but do NOT retroactively rewrite past `final.md`
 /// files — that retroactive rewrite (and the paired `final_md_rewritten`
-/// event) is the menubar speaker editor's job per PRD §15. From the CLI, the
+/// event) is the menubar speaker editor's job. From the CLI, the
 /// new name takes effect on the next `pulsartrace refine` of a recording,
 /// when reconciliation applies it.
 enum SpeakersCommand {

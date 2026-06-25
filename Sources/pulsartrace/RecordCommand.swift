@@ -4,9 +4,9 @@ import PulsarTraceEngine
 
 /// `pulsartrace record [--output PATH] [--duration MIN] [--mic INDEX]
 /// [--no-system-audio] [--refine-model large-v3-turbo|large-v3-whisperkit]
-/// [--list-mics]` — headless recording (R47).
+/// [--list-mics]` — headless recording (PT-R47).
 ///
-/// `record` spawns `pulsartrace-capture` (the TCC-gated daemon, R4) and
+/// `record` spawns `pulsartrace-capture` (the TCC-gated daemon, PT-R4) and
 /// `pulsartrace-engine --live`, runs the live pass for `--duration` minutes
 /// (or until Ctrl-C), then refines the recording into `final.md`. It produces
 /// the same recording folder a menubar recording would, with no UI involved.
@@ -186,7 +186,7 @@ enum RecordCommand {
 
     /// The directory holding the `pulsartrace-capture` / `pulsartrace-engine`
     /// binaries — siblings of the running `pulsartrace`. `PULSARTRACE_BIN_DIR`
-    /// overrides it (tests, and running off the build host — project-docs/DECISIONS.md D3).
+    /// overrides it (tests, and running off the build host — PT-P1-D3).
     static func binaryDirectory() -> URL? {
         if let override = ProcessInfo.processInfo.environment["PULSARTRACE_BIN_DIR"],
            !override.isEmpty {
@@ -281,7 +281,7 @@ enum RecordCommand {
 
     /// Interpret `--output PATH` as the recording-folder directory. A trailing
     /// `.md` is stripped as a courtesy so `--output meeting.md` produces the
-    /// folder `meeting/` (final.md lands inside it) — project-docs/DECISIONS.md D24.
+    /// folder `meeting/` (final.md lands inside it) — PT-P2-D6.
     private static func recordingFolderURL(from path: String) -> URL {
         let url = URL(fileURLWithPath: path)
         if url.pathExtension.lowercased() == "md" {

@@ -2,7 +2,7 @@ import Foundation
 import PulsarTraceEngine
 
 /// `pulsartrace events tail [--type TYPE]… [--no-follow]` — live-tail today's
-/// events log (R86).
+/// events log (PT-R86).
 ///
 /// The events log is a public API surface (`docs/events-schema.md`). `tail`
 /// streams it verbatim — one JSONL line per event — so scripts and agents can

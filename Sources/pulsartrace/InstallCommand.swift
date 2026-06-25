@@ -2,9 +2,9 @@ import Foundation
 import PulsarTraceEngine
 
 /// `pulsartrace install-cli [--uninstall]` — symlink `pulsartrace` into
-/// `/usr/local/bin` so it is on `PATH` (R51).
+/// `/usr/local/bin` so it is on `PATH` (PT-R51).
 ///
-/// R51 requires user consent rather than a silent install. Running this
+/// PT-R51 requires user consent rather than a silent install. Running this
 /// subcommand explicitly *is* that consent — the command prints exactly what
 /// it links and where, and never installs as a side effect of another action.
 /// When `/usr/local/bin` is not user-writable it prints the `sudo` command to
