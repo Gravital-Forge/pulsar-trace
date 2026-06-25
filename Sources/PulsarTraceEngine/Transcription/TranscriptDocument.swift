@@ -1,8 +1,8 @@
 import Foundation
 
-/// Renders a transcript to the R13 markdown format.
+/// Renders a transcript to the PT-R13 markdown format.
 ///
-/// The format (PRD §8.3 R13, Appendix):
+/// The format (PT-R13, Appendix):
 ///
 /// ```
 /// <!-- pulsartrace:final -->
@@ -16,7 +16,7 @@ import Foundation
 ///   captured once. This renderer only writes the header; the wall-clock is
 ///   also stored in `metadata.json` by the recording pipeline.
 /// - Each utterance line's `[HH:MM:SS]` is **seconds-since-recording-start**,
-///   not wall-clock — this is the R13 wording and it sidesteps DST / timezone
+///   not wall-clock — this is the PT-R13 wording and it sidesteps DST / timezone
 ///   shifts mid-recording.
 /// - When no speaker labels are supplied, every line uses the single
 ///   placeholder speaker label `Speaker`; callers with diarization pass
@@ -67,7 +67,7 @@ public struct TranscriptDocument: Sendable, Equatable {
         }
     }
 
-    /// Render the full R13 markdown document.
+    /// Render the full PT-R13 markdown document.
     public func render() -> String {
         var lines: [String] = []
         lines.append(marker.rawValue)
@@ -82,7 +82,7 @@ public struct TranscriptDocument: Sendable, Equatable {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// Format a Duration as `HH:MM:SS` seconds-since-start (R13).
+    /// Format a Duration as `HH:MM:SS` seconds-since-start (PT-R13).
     ///
     /// Handles long recordings: a 4-hour+ recording renders as `04:12:33`, the
     /// hours field simply grows (no wraparound, no day rollover).

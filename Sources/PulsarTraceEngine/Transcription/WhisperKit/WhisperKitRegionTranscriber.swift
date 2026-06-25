@@ -43,7 +43,7 @@ public actor WhisperKitRegionTranscriber {
         /// Which WhisperKit variant to load (`WhisperKitModelCatalog`).
         public var model: WhisperKitModel
         /// Hub root for model + tokenizer downloads — keep it under
-        /// `<models cache root>/whisperkit` (D10/D39). The variant lands at
+        /// `<models cache root>/whisperkit` (PT-P1-D10/PT-P5-D1). The variant lands at
         /// `models/argmaxinc/whisperkit-coreml/<variant>`.
         public var downloadBase: URL
         /// Minimum wall-clock budget per decode call. The effective budget
@@ -262,7 +262,7 @@ public actor WhisperKitRegionTranscriber {
         // in the `pipe.transcribe` callback, and (4) post-decode before returning.
         if cancelFlag.didFire { throw CancellationError() }
 
-        // Pre-decode digital-silence guard (D31). The legacy whisper.cpp path
+        // Pre-decode digital-silence guard (PT-P2-D13). The legacy whisper.cpp path
         // dropped silent regions *inside* `whisper_full` via its built-in
         // Silero VAD before any tokens were sampled; on the WhisperKit backend
         // that VAD has moved upstream (`FluidVADRegionDetector`), so a region
@@ -270,7 +270,7 @@ public actor WhisperKitRegionTranscriber {
         // be decoded by WhisperKit — which confidently hallucinates a stock
         // phrase on pure-zero input (observed: `" Thank you."` with
         // noSpeechProb=0.0, avgLogprob=-0.13, so BOTH WhisperKit's own
-        // no-speech gate AND the D31 `HallucinationFilter` confidence gate are
+        // no-speech gate AND the PT-P2-D13 `HallucinationFilter` confidence gate are
         // bypassed). An objective energy measurement is the only signal that
         // survives the decoder lying, and it can never drop a real utterance:
         // genuine speech is orders of magnitude above this floor, while
@@ -342,7 +342,7 @@ public actor WhisperKitRegionTranscriber {
         decodeOptions.detectLanguage = pinnedLanguage == nil
 
         // Deterministic-first decode with whisper's own fallback ladder —
-        // the D25 posture, expressed in WhisperKit terms.
+        // the PT-P2-D7 posture, expressed in WhisperKit terms.
         decodeOptions.temperature = 0
         decodeOptions.temperatureIncrementOnFallback = 0.2
         decodeOptions.temperatureFallbackCount = 5

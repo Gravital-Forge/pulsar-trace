@@ -2,7 +2,7 @@ import Foundation
 
 /// Maps WhisperKit's per-segment output onto PulsarTrace `TranscriptSegment`s,
 /// applying the same offline-path filters the whisper.cpp transcriber applied
-/// in `collectSegments` (BlankTokenFilter + the D31 hallucination double-gate).
+/// in `collectSegments` (BlankTokenFilter + the PT-P2-D13 hallucination double-gate).
 ///
 /// Pure: takes its own `InputSegment` (mirroring the fields we consume from
 /// `WhisperKit.TranscriptionSegment`) so unit tests fabricate inputs without
@@ -22,7 +22,7 @@ enum WhisperKitSegmentMapper {
     /// - Parameters:
     ///   - shiftedBy: offset of the decoded slice on the recording timeline
     ///     (the region's start; `.zero` for a whole-buffer decode).
-    ///   - dropHallucinations: apply the D31 double-gate. Always `true` on
+    ///   - dropHallucinations: apply the PT-P2-D13 double-gate. Always `true` on
     ///     the refine path; the flag exists so a future caller can opt out,
     ///     mirroring the old `collectSegments(dropHallucinations:)`.
     static func segments(

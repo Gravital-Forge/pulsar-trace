@@ -5,7 +5,7 @@ import Foundation
 /// `name` is the PulsarTrace-facing string (settings / `refine --model` /
 /// `record --refine-model`); `variant` is the folder name inside the
 /// `argmaxinc/whisperkit-coreml` Hugging Face repo. No pinned SHA-256:
-/// WhisperKit manages the multi-file CoreML bundle itself (DECISIONS D39) —
+/// WhisperKit manages the multi-file CoreML bundle itself (PT-P5-D2) —
 /// `model_downloaded` carries a computed `DirectoryDigest` instead, and
 /// `RefinementJob.modelSHA256` / `metadata.json` record `""`.
 public struct WhisperKitModel: Sendable, Equatable {
@@ -34,7 +34,7 @@ public enum WhisperKitModelCatalog {
         approximateDownloadMB: 626)
 
     /// Full Whisper large-v3, quantized (~947 MB) — the accuracy fallback
-    /// if turbo hallucinates on real audio (the D39 fallback rule: a
+    /// if turbo hallucinates on real audio (the PT-P5-D1 fallback rule: a
     /// Settings change, not a code change). Slower (32 decoder layers vs
     /// turbo's 4) but still on the ANE, off the GPU.
     public static let largeV3 = WhisperKitModel(
