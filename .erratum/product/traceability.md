@@ -117,3 +117,4 @@ project requirement), the epic that implemented it, and its current status.
 | PT-R111 | PT-P5-R6  | PT-P5-E2       | Active     | PT-R15a    | —             |
 | PT-R112 | PT-P5-R7  | PT-P5-E2       | Active     | PT-R29     | —             |
 | PT-R113 | PT-P5-R8  | PT-P5-E2       | Active     | —          | —             |
+| PT-R114 | —         | PT-P2-E4       | Active     | —          | —             |
