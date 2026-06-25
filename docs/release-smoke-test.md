@@ -1,8 +1,8 @@
 # PulsarTrace release smoke-test checklist
 
-A short manual checklist run by a human before tagging each release (R69, PRD
-§12 "Layer 6"). It covers what automation genuinely cannot — TCC permission
-flows, Gatekeeper, real device switching.
+A short manual checklist run by a human before tagging each release (PT-R69). It
+covers what automation genuinely cannot — TCC permission flows, Gatekeeper, real
+device switching.
 
 > Status: Epic 1 creates this file. Items are added as the relevant epics land
 > their user-facing surfaces. v0.1 (offline CLI) needs only the CLI items;

@@ -64,7 +64,7 @@ Transcription and diarization both run on the Apple Neural Engine — Parakeet
 (FluidAudio) for the live pass, WhisperKit for the refine pass, and FluidAudio's
 CoreML diarizer (pyannote community-1) for speaker spans. There is no native
 build step and no Python: the CoreML model bundles download automatically on
-first use (see project-docs/DECISIONS.md D39, D40).
+first use (see PT-P5-D1, PT-P5-D3 in `.erratum/`).
 
 This produces four binaries under `.build/debug/` (or `.build/release/`):
 
@@ -243,11 +243,11 @@ The operational log is for debugging and is safe to attach to a bug report — i
 
 The engine consumes an abstract `AudioFrameSource` — it cannot tell whether frames came from a microphone, a WAV file, a Unix socket, or a pipe. This is why the whole pipeline is buildable and testable without audio hardware, and why "bring your own audio" works: pipe PCM in and you get transcripts out.
 
-- **Transcription** — runs on the Apple Neural Engine: Parakeet TDT (FluidAudio) for the live pass, WhisperKit for the refine pass; the model stays resident. See [`DECISIONS.md`](project-docs/DECISIONS.md) D39.
-- **Diarization** — FluidAudio offline diarization (CoreML/ANE) — speaker spans + embeddings in-process. Runs FluidInference's CoreML conversion of `pyannote/speaker-diarization-community-1` (segmentation + WeSpeaker embeddings + VBx/PLDA clustering). See [`DECISIONS.md`](project-docs/DECISIONS.md) D40.
+- **Transcription** — runs on the Apple Neural Engine: Parakeet TDT (FluidAudio) for the live pass, WhisperKit for the refine pass; the model stays resident. See PT-P5-D1 in `.erratum/`.
+- **Diarization** — FluidAudio offline diarization (CoreML/ANE) — speaker spans + embeddings in-process. Runs FluidInference's CoreML conversion of `pyannote/speaker-diarization-community-1` (segmentation + WeSpeaker embeddings + VBx/PLDA clustering). See PT-P5-D3 in `.erratum/`.
 - **Speaker library** — SQLite with WAL journaling; voices matched by cosine similarity of WeSpeaker embeddings, centroids refined by a running mean across appearances.
 
-Architectural decisions and deviations from the original PRD are recorded in [`DECISIONS.md`](project-docs/DECISIONS.md).
+Requirements, architecture, traceability, and the rationale for every architectural decision live in the Erratum layer under [`.erratum/`](.erratum/) — the product docs in `.erratum/product/` and each initiative's PRD and decision log under `.erratum/projects/`.
 
 ---
 
@@ -266,9 +266,10 @@ Sources/pulsartrace-mac/     The menubar app (SwiftUI MenuBarExtra)
 Tests/                       Unit / Pipeline / Capture / MenuBar test targets
                              + fixtures
 scripts/make-dev-app.sh      Wraps `pulsartrace-mac` in a launchable dev `.app`
-docs/                        file-format.md, events-schema.md, release-smoke-test.md
-project-docs/                PRD.md, PLAN.md, DECISIONS.md — requirements,
-                             implementation plan, architectural decisions
+docs/                        file-format.md, events-schema.md, release-smoke-test.md,
+                             development.md (end-user & contributor docs)
+.erratum/                    Erratum layer (source of truth) — product requirements,
+                             architecture, traceability, and per-project decision logs
 ```
 
 ---

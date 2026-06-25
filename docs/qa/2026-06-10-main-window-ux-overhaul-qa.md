@@ -1,9 +1,8 @@
 # Manual QA — Main Window UX Overhaul
 
-Click-through verification for the `feat/main-window-ux-overhaul` branch
-(design: `docs/specs/2026-06-10-main-window-ux-overhaul-design.md`). Every
-automated suite is green; this list covers what only a human at the GUI can
-verify. Budget ~20 minutes, one short recording (~1–2 min of any audio —
+Click-through verification for the in-window recordings & transcript overhaul
+(PT-R106). Every automated suite is green; this list covers what only a human at
+the GUI can verify. Budget ~20 minutes, one short recording (~1–2 min of any audio —
 a YouTube video works for the system stream).
 
 ## Setup

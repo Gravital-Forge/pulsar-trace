@@ -1,8 +1,10 @@
 # PulsarTrace — agent instructions
 
-A local-only macOS meeting transcription app. Source of truth: `project-docs/PRD.md`.
-Status and architecture deviations: `project-docs/PLAN.md`, `project-docs/DECISIONS.md`.
-Dev host + sandbox model: `project-docs/PREWORK.md`.
+A local-only macOS meeting transcription app. Source of truth: the Erratum layer in `.erratum/`
+— product requirements (`.erratum/product/requirements.md`), architecture
+(`.erratum/product/architecture/`), and traceability (`.erratum/product/traceability.md`); each
+initiative's PRD and decision log live under `.erratum/projects/`.
+Dev host + hardware-test setup: `docs/development.md` (build & sandbox rules are below).
 
 ## Running build & tests (Claude Code Bash sandbox)
 
