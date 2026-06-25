@@ -266,10 +266,11 @@ Sources/pulsartrace-mac/     The menubar app (SwiftUI MenuBarExtra)
 Tests/                       Unit / Pipeline / Capture / MenuBar test targets
                              + fixtures
 scripts/make-dev-app.sh      Wraps `pulsartrace-mac` in a launchable dev `.app`
-docs/                        file-format.md, events-schema.md, release-smoke-test.md,
-                             development.md (end-user & contributor docs)
+docs/                        release-smoke-test.md, development.md, qa/ —
+                             end-user & contributor docs
 .erratum/                    Erratum layer (source of truth) — product requirements,
-                             architecture, traceability, and per-project decision logs
+                             architecture (incl. the public live.md/final.md/events
+                             contracts), traceability, and per-project decision logs
 ```
 
 ---

@@ -39,9 +39,10 @@ restate.
 | What changed when | `CHANGELOG.md` / git history |
 | What a function does in detail | the code + its doc comments |
 
-The end-user `docs/file-format.md` and `docs/events-schema.md` are **thin
-pointers** to the normative `.erratum/product/architecture/` contracts — keep
-them as pointers; don't let the spec re-grow in `docs/`.
+The public output contracts live **only** in `.erratum/product/architecture/`
+(`transcript-format.md` = PT-C11, `events-log.md` = PT-C6). Don't re-create a
+`docs/` copy or a redirect stub — code, tests, and the README link straight to
+the `.erratum/` contract.
 
 ## Code links carry Erratum IDs
 
