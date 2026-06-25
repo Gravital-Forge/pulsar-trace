@@ -2,14 +2,14 @@ import Foundation
 import PulsarTraceEngine
 
 /// Scans the output folder(s) for past recordings and surfaces them to the
-/// menubar recordings list (R31).
+/// menubar recordings list (PT-R31).
 ///
 /// A recording is any subdirectory containing a `metadata.json`. The scanner
 /// reads the current output folder plus every previously-used folder (so
 /// recordings made before the user changed the output folder still appear),
 /// decodes each `metadata.json` into a `RecordingEntry`, and sorts newest
 /// first. Malformed folders are skipped per-entry — one bad `metadata.json`
-/// never fails the whole scan (R31 edge case).
+/// never fails the whole scan (PT-R31 edge case).
 @MainActor
 @Observable
 public final class RecordingsScanner {

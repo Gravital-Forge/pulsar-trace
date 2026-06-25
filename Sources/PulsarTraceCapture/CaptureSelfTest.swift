@@ -3,7 +3,7 @@ import Foundation
 import PulsarTraceEngine
 
 /// The end-to-end capture self-check behind `pulsartrace doctor --capture-test`
-/// (R68): play a known tone, capture it back through the real microphone
+/// (PT-R68): play a known tone, capture it back through the real microphone
 /// path, and verify the captured audio carries that frequency.
 ///
 /// This proves the whole capture chain — `AVCaptureSession` → resample/downmix

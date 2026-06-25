@@ -3,7 +3,7 @@ import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// The speaker editor (R44) — list, inline rename, merge/split/delete, undo
+/// The speaker editor (PT-R44) — list, inline rename, merge/split/delete, undo
 /// toast, recently-deleted section. Pure bindings over `SpeakerEditorViewModel`.
 ///
 /// Rendered as a detail pane of `MainWindowView`'s sidebar window (#6). The
@@ -305,7 +305,7 @@ struct SpeakerEditorView: View {
         .animation(.default, value: viewModel.lastError)
     }
 
-    /// The undo affordance shown after a destructive edit (R44).
+    /// The undo affordance shown after a destructive edit (PT-R44).
     private func undoBanner(_ viewModel: SpeakerEditorViewModel) -> some View {
         Group {
             if let toast = viewModel.undoToast {
@@ -332,7 +332,7 @@ struct SpeakerEditorView: View {
         .animation(.default, value: viewModel.undoToast != nil)
     }
 
-    /// R44 edge case — no speakers yet.
+    /// PT-R44 edge case — no speakers yet.
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "person.2")

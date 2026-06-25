@@ -3,13 +3,13 @@ import Logging
 import PulsarTraceEngine
 
 /// Tails a recording's `live.md` and exposes its lines to the menubar live
-/// popover (R40 — the live transcript view).
+/// popover (PT-R40 — the live transcript view).
 ///
 /// READ-ONLY: this type only ever reads `live.md` — it never writes, edits, or
 /// truncates it. `live.md` is strictly append-only (Hard Invariant #4), so a
 /// poll-based tail is sound: a repeating task sleeps ~0.5 s, reads the bytes
 /// that appeared past a tracked file offset, and appends complete lines. This
-/// is deterministic and unit-testable (D27 — no reliance on
+/// is deterministic and unit-testable (PT-P2-D9 — no reliance on
 /// `FileHandle.AsyncBytes` blocking semantics).
 @MainActor
 @Observable

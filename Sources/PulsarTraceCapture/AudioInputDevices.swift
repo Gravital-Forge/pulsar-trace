@@ -1,7 +1,7 @@
 import AVFoundation
 
 /// One audio input device the host exposes — the unit `pulsartrace record
-/// --mic INDEX` (R47) indexes into, and the menubar mic picker (R42) lists.
+/// --mic INDEX` (PT-R47) indexes into, and the menubar mic picker (PT-R42) lists.
 public struct AudioInputDevice: Sendable, Equatable {
     /// `AVCaptureDevice.uniqueID` — what `pulsartrace-capture --mic-device`
     /// expects. Stable for a given physical device.

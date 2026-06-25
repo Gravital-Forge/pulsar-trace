@@ -1,7 +1,7 @@
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// The detached live-transcript window (#5, R40) — a read-only scroll of the
+/// The detached live-transcript window (#5, PT-R40) — a read-only scroll of the
 /// lines `LiveTranscriptWatcher` has tailed from `live.md`.
 ///
 /// Hosted in its own `Window` scene (`WindowID.liveTranscript`) so it stays
@@ -10,7 +10,7 @@ import SwiftUI
 /// not this window is open, so re-opening just re-shows the already-tailed
 /// lines.
 ///
-/// Smart auto-scroll (R45): a view-scoped `AutoScrollController` follows the
+/// Smart auto-scroll (PT-R45): a view-scoped `AutoScrollController` follows the
 /// latest line while the user is at/near the bottom, pauses when they scroll
 /// up, and surfaces a "Jump to latest" pill until they return.
 struct LiveTranscriptView: View {

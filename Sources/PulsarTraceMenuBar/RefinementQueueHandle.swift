@@ -64,7 +64,7 @@ final class RefinementQueueHandle {
             try await queue.enqueueAutoRefine(
                 folderURL: folderURL, recordingId: recordingId,
                 modelName: model.name,
-                modelSHA256: "")   // SDK-managed CoreML bundle (D39)
+                modelSHA256: "")   // SDK-managed CoreML bundle (PT-P5-D1)
         } catch {
             let raw = "pulsartrace-mac: auto-refine enqueue failed: \(error)\n"
             let msg = PathRedactor.redactHome(raw)

@@ -3,7 +3,7 @@ import Foundation
 import PulsarTraceEngine
 
 /// Captures the microphone via AVFoundation and emits canonical 16 kHz mono
-/// Float32 frames as `AudioStreamEvent.frame` values (R1).
+/// Float32 frames as `AudioStreamEvent.frame` values (PT-R1).
 ///
 /// The engine only produces `.frame` events; pause/resume are injected by
 /// `DeviceCaptureSource` around it (sleep/wake, device change). The
@@ -58,14 +58,14 @@ final class MicCaptureEngine: NSObject,
     private var running = false
 
     /// - Parameter deviceID: an `AVCaptureDevice.uniqueID`, or `nil` for the
-    ///   system default microphone (R5).
+    ///   system default microphone (PT-R5).
     init(deviceID: String?) {
         self.requestedDeviceID = deviceID
         super.init()
     }
 
     /// Every audio input device AVFoundation exposes — the source for the
-    /// menubar mic picker and the CLI `--mic-device` flag (R5).
+    /// menubar mic picker and the CLI `--mic-device` flag (PT-R5).
     static func availableDevices() -> [(id: String, name: String)] {
         AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone, .external],

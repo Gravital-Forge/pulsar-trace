@@ -4,7 +4,7 @@ import PulsarTraceEngine
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// The Settings pane (R42, R43, R41) — mic, model, output folder, hotkey,
+/// The Settings pane (PT-R42, PT-R43, PT-R41) — mic, model, output folder, hotkey,
 /// system-audio toggle. Pure bindings over `MenuBarSettings`.
 ///
 /// Rendered as a detail pane of `MainWindowView`'s sidebar window (#6) — it no
@@ -211,7 +211,7 @@ struct SettingsView: View {
     }
 
     /// Open an `NSOpenPanel`, store the chosen folder as a plain filesystem
-    /// path (D30), and keep the prior folder in `previousFolderPaths`.
+    /// path (PT-P2-D12), and keep the prior folder in `previousFolderPaths`.
     private func chooseOutputFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true

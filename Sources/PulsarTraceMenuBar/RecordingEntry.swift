@@ -7,11 +7,11 @@ import PulsarTraceEngine
 /// `metadata.json`.
 ///
 /// `label` is the transcript-facing string as it appears in `final.md`;
-/// `speakerId` is the stable library id (`spk_<ulid>`, R83) when the speaker
+/// `speakerId` is the stable library id (`spk_<ulid>`, PT-R83) when the speaker
 /// was reconciled against the library, `nil` for `You` (the mic stream) and
 /// for system-stream speakers that were never reconciled (no library, or
 /// diarization skipped). `isMicrophone` flags the single "You" speaker — that
-/// stream is never diarized (R17).
+/// stream is never diarized (PT-R17).
 public struct RecordingSpeaker: Identifiable, Sendable, Equatable, Hashable, Codable {
 
     /// Display label as it appears in `final.md` (e.g. `Steve`,
@@ -56,7 +56,7 @@ public struct RecordingSpeaker: Identifiable, Sendable, Equatable, Hashable, Cod
     }
 }
 
-/// One past recording, surfaced in the menubar recordings list (R31).
+/// One past recording, surfaced in the menubar recordings list (PT-R31).
 ///
 /// Decoded from a recording folder's `metadata.json` sidecar — the
 /// machine-readable summary a refine pass writes — when present. A folder

@@ -12,7 +12,7 @@ import SwiftUI
 /// find-in-transcript (⌘F via the system find bar).
 ///
 /// Mode is selected by `autoScroll`: when an `AutoScrollController` is passed,
-/// the view runs the live smart-auto-scroll behavior (R45) and opens at the
+/// the view runs the live smart-auto-scroll behavior (PT-R45) and opens at the
 /// bottom; when it is `nil`, the transcript is static and opens at the top
 /// with no follow-mode and no jump pill.
 struct TranscriptView: View {

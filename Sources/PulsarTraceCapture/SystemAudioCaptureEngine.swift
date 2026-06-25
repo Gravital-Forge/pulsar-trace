@@ -4,7 +4,7 @@ import PulsarTraceEngine
 import ScreenCaptureKit
 
 /// Captures system audio via ScreenCaptureKit and emits canonical 16 kHz mono
-/// Float32 frames as `AudioStreamEvent.frame` values (R2).
+/// Float32 frames as `AudioStreamEvent.frame` values (PT-R2).
 ///
 /// ScreenCaptureKit captures system audio without any virtual audio device —
 /// BlackHole is only a test fixture, never a production dependency. The

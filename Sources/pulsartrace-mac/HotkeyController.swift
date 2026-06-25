@@ -1,10 +1,10 @@
 import AppKit
 import PulsarTraceMenuBar
 
-/// Owns the passive global-hotkey monitor (R41) — the one AppKit dependency
+/// Owns the passive global-hotkey monitor (PT-R41) — the one AppKit dependency
 /// the app environment used to carry. `addGlobalMonitorForEvents` needs NO
 /// Accessibility TCC grant; the keypress also reaching the frontmost app is
-/// an accepted v1 tradeoff (D27). NOT a `CGEventTap`.
+/// an accepted v1 tradeoff (PT-P2-D9). NOT a `CGEventTap`.
 ///
 /// Lives in the app target so `AppEnvironment` (now in `PulsarTraceMenuBar`)
 /// stays free of AppKit. `PulsarTraceMacApp` creates one and calls
@@ -50,7 +50,7 @@ final class HotkeyController {
         }
     }
 
-    /// Start or stop recording — the hotkey's effect (R41).
+    /// Start or stop recording — the hotkey's effect (PT-R41).
     ///
     /// Pause/resume of the refinement queue is owned by `RecordingViewModel`
     /// via the injected hooks, so every path (hotkey, menubar dropdown) is

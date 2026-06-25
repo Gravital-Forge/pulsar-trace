@@ -1,7 +1,7 @@
 import Foundation
 import PulsarTraceEngine
 
-/// A keyboard shortcut for the global record toggle hotkey (R41).
+/// A keyboard shortcut for the global record toggle hotkey (PT-R41).
 ///
 /// `keyCode` is a `CGKeyCode`/`NSEvent.keyCode`; `modifiers` is the raw value
 /// of an `NSEvent.ModifierFlags` (stored as a plain `UInt` so this type stays
@@ -18,7 +18,7 @@ public struct KeyCombo: Codable, Equatable, Sendable {
     }
 }
 
-/// User-configurable menubar settings (R42, R43, R41), persisted to
+/// User-configurable menubar settings (PT-R42, PT-R43, PT-R41), persisted to
 /// `UserDefaults`.
 ///
 /// `@MainActor @Observable` so SwiftUI views observe it directly. Persistence
@@ -26,10 +26,10 @@ public struct KeyCombo: Codable, Equatable, Sendable {
 /// settings live in the app's own domain; tests inject a throwaway suite.
 ///
 /// The output folder is stored as a **plain filesystem path** (`String`).
-/// PulsarTrace v1 is explicitly unsandboxed (PRD §17 non-goals), so a
+/// PulsarTrace v1 is explicitly unsandboxed (a stated non-goal), so a
 /// security-scoped bookmark — an App Sandbox mechanism — buys nothing and was
 /// fragile across unsigned dev rebuilds (it resolved stale and the folder
-/// selection was lost). See D30. A legacy `Data` bookmark from an earlier
+/// selection was lost). See PT-P2-D12. A legacy `Data` bookmark from an earlier
 /// install is migrated to a path once on load.
 @MainActor
 @Observable
@@ -39,7 +39,7 @@ public final class MenuBarSettings {
     public static let defaultSuiteName = "com.gravitalforge.PulsarTrace"
 
     /// Default refine-pass model — Whisper large-v3-turbo on the ANE via
-    /// WhisperKit (D39): near-large-v3 accuracy, ~626 MB, GPU-free.
+    /// WhisperKit (PT-P5-D1): near-large-v3 accuracy, ~626 MB, GPU-free.
     public static let defaultRefineModelName = WhisperKitModelCatalog.defaultModel.name
 
     /// Default output folder when the user has never chosen one:
@@ -56,18 +56,18 @@ public final class MenuBarSettings {
     // MARK: - Persisted properties
 
     /// `AVCaptureDevice.uniqueID` of the chosen microphone, or `nil` for the
-    /// system default mic (R42).
+    /// system default mic (PT-R42).
     public var selectedMicDeviceID: String? {
         didSet { save() }
     }
 
-    /// Refine-pass model name (R43, D39) — a `WhisperKitModelCatalog` name;
+    /// Refine-pass model name (PT-R43, PT-P5-D1) — a `WhisperKitModelCatalog` name;
     /// unknown/retired names re-default on load.
     public var refineModelName: String {
         didSet { save() }
     }
 
-    /// Filesystem path of the output folder (D30). `nil` until the user picks
+    /// Filesystem path of the output folder (PT-P2-D12). `nil` until the user picks
     /// a folder — but note `outputFolderURL` falls back to
     /// `defaultOutputFolderURL` when this is `nil`, so a first run records
     /// into `~/Documents/PulsarTrace` without any setup.
@@ -75,12 +75,12 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
-    /// The global record-toggle hotkey (R41), or `nil` if unset.
+    /// The global record-toggle hotkey (PT-R41), or `nil` if unset.
     public var globalHotkey: KeyCombo? {
         didSet { save() }
     }
 
-    /// Whether system-audio capture is enabled (R6). Default `true`.
+    /// Whether system-audio capture is enabled (PT-R6). Default `true`.
     public var systemAudioEnabled: Bool {
         didSet { save() }
     }
@@ -162,19 +162,19 @@ public final class MenuBarSettings {
         self.defaults = store
 
         self.selectedMicDeviceID = store.string(forKey: Key.micDeviceID)
-        // D39: the live model knob is gone (Parakeet is the only live
-        // backend). Drop both stale keys — the pre-D29 single `modelName`
-        // and the pre-D39 `liveModelName` — so they can never resurface,
+        // PT-P5-D1: the live model knob is gone (Parakeet is the only live
+        // backend). Drop both stale keys — the pre-PT-P2-D11 single `modelName`
+        // and the pre-PT-P5-D1 `liveModelName` — so they can never resurface,
         // same pattern as the legacy bookmark migrations below.
         store.removeObject(forKey: Key.legacyModelName)
         store.removeObject(forKey: Key.legacyLiveModelName)
-        // A persisted pre-D39 refine name ("base"/"large-v3") names a
+        // A persisted pre-PT-P5-D1 refine name ("base"/"large-v3") names a
         // retired ggml backend — re-default to the ANE catalog (clean over
         // compat: no display shims for dead backends).
         self.refineModelName = store.string(forKey: Key.refineModelName)
             .flatMap { WhisperKitModelCatalog.model(named: $0)?.name }
             ?? Self.defaultRefineModelName
-        // D30: the output folder is now a plain path. If the new key is absent
+        // PT-P2-D12: the output folder is now a plain path. If the new key is absent
         // but a legacy security-scoped bookmark exists, best-effort resolve it
         // once to a path (no security scope — v1 is unsandboxed), then drop the
         // legacy key. If it cannot resolve, leave the output folder unset.
@@ -193,7 +193,7 @@ public final class MenuBarSettings {
         self.systemAudioEnabled = store.object(forKey: Key.systemAudioEnabled)
             as? Bool ?? true
 
-        // Same D30 migration for the previous-folders list.
+        // Same PT-P2-D12 migration for the previous-folders list.
         if let paths = store.array(
             forKey: Key.previousFolderPaths) as? [String] {
             self.previousFolderPaths = paths
@@ -219,7 +219,7 @@ public final class MenuBarSettings {
         self.allowedLanguages = store.array(forKey: Key.allowedLanguages)
             as? [String] ?? []
 
-        // Persist whatever the load resolved to — including the D29/D30
+        // Persist whatever the load resolved to — including the PT-P2-D11/PT-P2-D12
         // migrations above. Pre-2026-05-29 this happened implicitly via an
         // `@Observable` macro quirk that fired `didSet` on the last stored
         // property; adding a new last property silently broke that path.

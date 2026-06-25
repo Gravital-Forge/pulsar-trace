@@ -1,7 +1,7 @@
 import Foundation
 import PulsarTraceEngine
 
-/// A transient undo affordance shown after a destructive speaker edit (R44).
+/// A transient undo affordance shown after a destructive speaker edit (PT-R44).
 public struct UndoToast: Identifiable, Sendable {
     public let id: UUID
     /// User-facing message, e.g. "Deleted Steve".
@@ -20,8 +20,8 @@ public struct UndoToast: Identifiable, Sendable {
     }
 }
 
-/// Drives the menubar speaker editor (R44): rename / merge / split / delete /
-/// undelete, each followed by the retroactive `final.md` rewrite (D16).
+/// Drives the menubar speaker editor (PT-R44): rename / merge / split / delete /
+/// undelete, each followed by the retroactive `final.md` rewrite (PT-P1-D16).
 ///
 /// Every mutating op follows the causal contract:
 /// 1. mutate `SpeakerLibrary` with `suppressEvent: true` (DB write only),
@@ -38,7 +38,7 @@ public final class SpeakerEditorViewModel {
 
     /// Live (non-deleted, non-delisted) speakers, newest-library-order.
     public private(set) var liveSpeakers: [Speaker] = []
-    /// Soft-deleted speakers still inside the 30-day recovery window (R44
+    /// Soft-deleted speakers still inside the 30-day recovery window (PT-R44
     /// "Recently deleted").
     public private(set) var deletedSpeakers: [Speaker] = []
     /// Delisted speakers still inside the 30-day recovery window
@@ -123,8 +123,8 @@ public final class SpeakerEditorViewModel {
 
     // MARK: - Rename
 
-    /// Rename a speaker and retroactively rewrite past `final.md` files (R44,
-    /// D16).
+    /// Rename a speaker and retroactively rewrite past `final.md` files (PT-R44,
+    /// PT-P1-D16).
     public func rename(speakerId: String, to newName: String) async {
         guard validateName(newName) else { return }
         // No-op guard: committing an unchanged name (the rename field's
@@ -154,7 +154,7 @@ public final class SpeakerEditorViewModel {
     // MARK: - Merge
 
     /// Merge `otherId` into `primaryId` and rewrite the merged speaker's past
-    /// `final.md` files (R44, D16).
+    /// `final.md` files (PT-R44, PT-P1-D16).
     public func merge(primaryId: String, otherId: String) async {
         await withRewrite {
             let names = try await self.library.merge(
@@ -182,7 +182,7 @@ public final class SpeakerEditorViewModel {
     // MARK: - Split
 
     /// Split a subset of a speaker's recordings off into a new speaker, then
-    /// rewrite the moved recordings' `final.md` files (R44, D16).
+    /// rewrite the moved recordings' `final.md` files (PT-R44, PT-P1-D16).
     public func split(
         originalId: String,
         movingRecordingIds: [String],
@@ -215,7 +215,7 @@ public final class SpeakerEditorViewModel {
 
     // MARK: - Delete / undelete
 
-    /// Soft-delete a speaker (R44). No `final.md` rewrite — a delete does not
+    /// Soft-delete a speaker (PT-R44). No `final.md` rewrite — a delete does not
     /// change any label. Offers an undo toast.
     public func delete(speakerId: String) async {
         let name = liveSpeakers.first { $0.id == speakerId }?.name ?? "speaker"
@@ -229,7 +229,7 @@ public final class SpeakerEditorViewModel {
         }
     }
 
-    /// Restore a soft-deleted speaker (R44 undo).
+    /// Restore a soft-deleted speaker (PT-R44 undo).
     public func undelete(speakerId: String) async {
         await withRewrite {
             try await self.library.undelete(speakerId: speakerId)
@@ -327,7 +327,7 @@ public final class SpeakerEditorViewModel {
         }
     }
 
-    /// Undo a merge (R44): restore the merged-away speaker in the library AND
+    /// Undo a merge (PT-R44): restore the merged-away speaker in the library AND
     /// rewrite the affected `final.md` files back from the primary's name to
     /// the restored speaker's name — otherwise the transcripts disagree with
     /// the library and no `final_md_rewritten` is paired with the undo (Hard
@@ -348,7 +348,7 @@ public final class SpeakerEditorViewModel {
             // are now restored to `other`; rewrite `primaryName` → `otherName`
             // scoped to exactly those restored appearances. A recording that
             // genuinely contained BOTH speakers is handled best-effort per
-            // D18 — the rare merge-collision case the centroid math also
+            // PT-P1-D18 — the rare merge-collision case the centroid math also
             // documents.
             let appearances = try await self.library.appearances(of: otherId)
             let results = try await self.rewriter.rewrite(
@@ -360,7 +360,7 @@ public final class SpeakerEditorViewModel {
         }
     }
 
-    /// Undo a split (R44): fold the split-off speaker back into the original
+    /// Undo a split (PT-R44): fold the split-off speaker back into the original
     /// in the library AND rewrite the affected `final.md` files back from the
     /// new name to the original's name (Hard Invariant #8). `library.unsplit`
     /// emits `speaker_unsplit` first (the cause); the paired
@@ -376,7 +376,7 @@ public final class SpeakerEditorViewModel {
             // The split-off appearances are about to move back to the
             // original — capture them before the library mutation so the
             // rewrite is scoped to exactly those recordings. A recording that
-            // genuinely contained both speakers is handled best-effort (D18).
+            // genuinely contained both speakers is handled best-effort (PT-P1-D18).
             let appearances = try await self.library.appearances(of: newId)
 
             try await self.library.unsplit(

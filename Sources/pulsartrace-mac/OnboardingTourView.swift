@@ -1,7 +1,7 @@
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// The first-run onboarding tour (R46) — a deferred P2 feature.
+/// The first-run onboarding tour (PT-R114) — a deferred P2 feature.
 ///
 /// `OnboardingTourViewModel.isNeeded` is always `false`, so this view is never
 /// presented. It exists as a stub so the wiring is complete; a later change

@@ -2,7 +2,7 @@ import AppKit
 import PulsarTraceMenuBar
 import SwiftUI
 
-/// The menubar dropdown (R40) — start/stop, a one-line status, and entry
+/// The menubar dropdown (PT-R40) — start/stop, a one-line status, and entry
 /// points into the unified app window and the live-transcript window.
 ///
 /// Rendered with `.menuBarExtraStyle(.window)`: a SwiftUI panel, not a native
@@ -197,7 +197,7 @@ struct MenuBarMenuView: View {
     /// Open an auxiliary window and bring the app forward.
     ///
     /// Activation is required (PulsarTrace is an accessory-policy process,
-    /// D27) and it must land AFTER this dropdown panel closes: dismissing a
+    /// PT-P2-D9) and it must land AFTER this dropdown panel closes: dismissing a
     /// status-item panel hands focus back to the previously active app, and
     /// that hand-back arrives after this button action returns — a
     /// synchronous `NSApp.activate()` here gets undone by it, leaving the
