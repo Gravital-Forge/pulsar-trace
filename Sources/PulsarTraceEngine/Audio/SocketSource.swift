@@ -7,7 +7,7 @@ import Darwin
 #endif
 
 /// An `AudioFrameSource` that reads length-prefixed PCM frames from a Unix
-/// domain socket (R73).
+/// domain socket (PT-R73).
 ///
 /// In production this connects to `capture.sock`, written by
 /// `pulsartrace-capture`. The frame protocol is identical to `PipeSource`'s,

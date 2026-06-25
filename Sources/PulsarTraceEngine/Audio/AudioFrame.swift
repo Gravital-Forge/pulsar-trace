@@ -2,7 +2,7 @@ import Foundation
 
 /// The single canonical audio format used everywhere inside the engine.
 ///
-/// PulsarTrace fixes the audio format at the `AudioFrameSource` boundary (R76):
+/// PulsarTrace fixes the audio format at the `AudioFrameSource` boundary (PT-R76):
 /// 16 kHz, mono, 32-bit float samples, framed at 20 ms. Any conversion or
 /// resampling happens inside a source implementation — engine code only ever
 /// sees frames in this format.

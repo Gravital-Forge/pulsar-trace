@@ -4,7 +4,7 @@ import Foundation
 ///
 /// 128 bits = 48-bit millisecond timestamp + 80 bits of randomness, rendered
 /// as 26 Crockford-base32 characters. Lexicographic string order matches
-/// creation order, which is why event IDs use it (§8.13, R80).
+/// creation order, which is why event IDs use it (§8.13, PT-R80).
 ///
 /// Used for event IDs (`evt_<ulid>`) and speaker IDs (`spk_<ulid>`).
 public struct ULID: Hashable, Sendable, CustomStringConvertible {
@@ -70,7 +70,7 @@ public struct ULID: Hashable, Sendable, CustomStringConvertible {
 
 /// A small, deterministic, seedable PRNG (SplitMix64) for test determinism.
 ///
-/// The PRD's determinism rule requires all RNG to be seeded in tests. This is
+/// The determinism rule requires all RNG to be seeded in tests. This is
 /// the seam: tests pass a `SeededRandomNumberGenerator(seed:)` wherever a
 /// `RandomNumberGenerator` is accepted.
 public struct SeededRandomNumberGenerator: RandomNumberGenerator {

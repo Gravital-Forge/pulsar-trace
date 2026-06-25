@@ -9,7 +9,7 @@ import Logging
 /// 2. `OSLogHandler` — the `os.Logger` bridge for Console.app / `log show`.
 ///
 /// Call `LogSystem.bootstrap` exactly once at process start. The default
-/// visible level is `notice` (R58); `info`/`debug` are off unless explicitly
+/// visible level is `notice` (PT-R58); `info`/`debug` are off unless explicitly
 /// raised.
 public enum LogSystem {
     /// The shared rotator, retained so `flush()` can run on shutdown.
@@ -25,8 +25,8 @@ public enum LogSystem {
     ///
     /// - Parameters:
     ///   - paths: where the log directory lives (injectable for tests).
-    ///   - level: default visible level (R58 default: `.notice`).
-    ///   - retentionDays: file retention window (R57: 7).
+    ///   - level: default visible level (PT-R58 default: `.notice`).
+    ///   - retentionDays: file retention window (PT-R57: 7).
     ///   - clock: injectable wall clock for deterministic rotation tests.
     @discardableResult
     public static func bootstrap(

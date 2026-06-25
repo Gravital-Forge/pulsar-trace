@@ -21,7 +21,7 @@ public struct FileLogHandler: LogHandler {
     /// - Parameters:
     ///   - label: the subsystem name (`swift-log` label).
     ///   - rotator: the shared rotating-file owner.
-    ///   - level: the minimum level this handler emits (default `notice`, R58).
+    ///   - level: the minimum level this handler emits (default `notice`, PT-R58).
     ///   - clock: injectable wall clock for deterministic tests.
     public init(
         label: String,

@@ -6,11 +6,11 @@ import Foundation
 /// Each concrete event type conforms to this. `eventType` and `schemaVersion`
 /// are static so the registry and writer can stamp the envelope without an
 /// instance. `version` starts at 1 per type and bumps only on a breaking
-/// schema change (R80, R85).
+/// schema change (PT-R80, PT-R85).
 public protocol EventPayload: Encodable, Sendable {
     /// The `type` string written into the envelope (e.g. `app_started`).
     static var eventType: String { get }
-    /// The per-type schema `version` (R80). Starts at 1.
+    /// The per-type schema `version` (PT-R80). Starts at 1.
     static var schemaVersion: Int { get }
 }
 
@@ -22,10 +22,10 @@ extension EventPayload {
 
 /// `app_started` — emitted once when the engine/CLI process starts (§8.13).
 ///
-/// The PRD lists this payload as `{version, macos_version}`. The envelope
-/// already owns a `version` field (the per-type schema version, R80), so the
+/// The canonical payload is `{version, macos_version}`. The envelope
+/// already owns a `version` field (the per-type schema version, PT-R80), so the
 /// app-version field is serialized as `app_version` to avoid a key collision
-/// in the merged JSON object. See project-docs/DECISIONS.md (D5).
+/// in the merged JSON object. See PT-P1-D5.
 public struct AppStartedEvent: EventPayload {
     public static let eventType = "app_started"
 
@@ -70,12 +70,12 @@ public struct AppStoppedEvent: EventPayload {
 /// `model_downloaded` — emitted once after a model is downloaded. The `sha256`
 /// field carries one of two identities depending on the download path:
 /// - a single-file model (e.g. a whisper `.bin`) is downloaded *and* its
-///   SHA-256 pin-verified (R54d); the field is that pin hash. A failed/corrupt
+///   SHA-256 pin-verified (PT-R109); the field is that pin hash. A failed/corrupt
 ///   download emits nothing — the file is deleted and the download retried;
 ///   only a verified model is an event.
 /// - an SDK-managed CoreML bundle (Parakeet/WhisperKit) is a directory tree the
 ///   SDK fetches, so there is no single-file pin to verify; the field instead
-///   carries a computed `DirectoryDigest` of the bundle tree (DECISIONS D39).
+///   carries a computed `DirectoryDigest` of the bundle tree (PT-P5-D2).
 ///
 /// `source_host` is the bare hostname (`huggingface.co`), never a full URL with
 /// query params — invariant 7 (no full paths in logs) and the no-telemetry
@@ -89,7 +89,7 @@ public struct ModelDownloadedEvent: EventPayload {
     /// (`DirectoryDigest.totalBytes`) for an SDK-managed CoreML bundle.
     public let sizeBytes: Int
     /// The lowercase-hex SHA-256: a single-file pin hash, or the bundle-tree
-    /// `DirectoryDigest` (D39) for an SDK-managed CoreML bundle.
+    /// `DirectoryDigest` (PT-P5-D2) for an SDK-managed CoreML bundle.
     public let sha256: String
     /// Bare hostname the model came from (e.g. `huggingface.co`).
     public let sourceHost: String
@@ -236,7 +236,7 @@ public struct FinalMDWrittenEvent: EventPayload {
 }
 
 /// `final_md_rewritten` — emitted when an existing `final.md` is replaced
-/// (a re-refine, R27, or a speaker rename/merge).
+/// (a re-refine, PT-R48, or a speaker rename/merge).
 ///
 /// `reason` is a stable code: a re-refine pass emits `re_refine`. Always paired
 /// with the cause that triggered it (Hard Invariant #8) — for a re-refine the
@@ -284,7 +284,7 @@ public struct LiveMDReplacedByFinalEvent: EventPayload {
 // MARK: - Live-pass events
 
 /// `live_md_started` — emitted when a recording's `live.md` is created at
-/// session start (R35a). Per PRD §8.13 the payload is `{recording_id,
+/// session start (PT-R35a). The payload is `{recording_id,
 /// path_basename}`.
 ///
 /// Causal order (Hard Invariant #8): emitted *after* `live.md` exists on disk
@@ -327,7 +327,7 @@ public struct RecordingStartedEvent: EventPayload {
     public let outputDirBasename: String
     /// The microphone device in use (its localized name), or `none`.
     public let micDevice: String
-    /// Whether system-audio capture is enabled for this session (R6).
+    /// Whether system-audio capture is enabled for this session (PT-R6).
     public let systemAudioEnabled: Bool
     /// The live model name used for the live pass.
     public let modelLive: String
@@ -356,8 +356,8 @@ public struct RecordingStartedEvent: EventPayload {
 }
 
 /// `recording_paused` — emitted by `pulsartrace-capture` when capture pauses
-/// mid-session (§8.13): the Mac went to sleep (R7) or the active audio
-/// device changed (R8).
+/// mid-session (§8.13): the Mac went to sleep (PT-R7) or the active audio
+/// device changed (PT-R8).
 public struct RecordingPausedEvent: EventPayload {
     public static let eventType = "recording_paused"
 
@@ -452,12 +452,12 @@ public struct PermissionChangedEvent: EventPayload {
 /// a cluster that matches no existing library entry (`initialName` is an
 /// `Unknown #N` placeholder), or via a `speaker_split`.
 ///
-/// The `speaker_id` (`spk_<ulid>`, R83) is stable forever; a later
+/// The `speaker_id` (`spk_<ulid>`, PT-R83) is stable forever; a later
 /// `speaker_renamed` changes only the `name`.
 public struct SpeakerCreatedEvent: EventPayload {
     public static let eventType = "speaker_created"
 
-    /// Stable speaker id (`spk_<ulid>`, R83).
+    /// Stable speaker id (`spk_<ulid>`, PT-R83).
     public let speakerId: String
     /// The name the speaker was created with — an `Unknown #N` placeholder for
     /// a refinement-discovered speaker. The events log MAY carry user-assigned
@@ -481,9 +481,9 @@ public struct SpeakerCreatedEvent: EventPayload {
 
 /// `speaker_renamed` — emitted when a speaker's display name changes (§8.13).
 ///
-/// R83: `speaker_id` is unchanged across a rename — only `name` moves. The
+/// PT-R83: `speaker_id` is unchanged across a rename — only `name` moves. The
 /// library CLI `rename` does NOT retroactively rewrite past `final.md` files
-/// (project-docs/DECISIONS.md D16), so `appliedToRecordings` is empty for a
+/// (PT-P1-D16), so `appliedToRecordings` is empty for a
 /// CLI-originated rename — no `final_md_rewritten` is paired with it.
 public struct SpeakerRenamedEvent: EventPayload {
     public static let eventType = "speaker_renamed"
@@ -492,7 +492,7 @@ public struct SpeakerRenamedEvent: EventPayload {
     public let oldName: String
     public let newName: String
     /// Recordings whose `final.md` was rewritten as a result. Empty for a
-    /// library CLI rename (D16).
+    /// library CLI rename (PT-P1-D16).
     public let appliedToRecordings: [String]
 
     public init(
@@ -526,7 +526,7 @@ public struct SpeakerMergedEvent: EventPayload {
     /// The speaker folded into `primary` (soft-deleted, recoverable).
     public let mergedSpeakerId: String
     /// Recordings whose `final.md` was rewritten. Empty for a library CLI
-    /// operation (D16).
+    /// operation (PT-P1-D16).
     public let appliedToRecordings: [String]
 
     public init(
@@ -557,7 +557,7 @@ public struct SpeakerSplitEvent: EventPayload {
     /// The new speaker created to hold the peeled-off appearances.
     public let newSpeakerId: String
     /// Recordings whose `final.md` was rewritten. Empty for a library CLI
-    /// operation (D16).
+    /// operation (PT-P1-D16).
     public let appliedToRecordings: [String]
 
     public init(
@@ -577,13 +577,13 @@ public struct SpeakerSplitEvent: EventPayload {
     }
 }
 
-/// `speaker_deleted` — emitted on a soft-delete (§8.13, R32b). The record is
+/// `speaker_deleted` — emitted on a soft-delete (§8.13, PT-R32b). The record is
 /// hidden but recoverable until `recoverableUntil` (30 days).
 public struct SpeakerDeletedEvent: EventPayload {
     public static let eventType = "speaker_deleted"
 
     public let speakerId: String
-    /// Always `true` — speaker deletes are always soft (R32b).
+    /// Always `true` — speaker deletes are always soft (PT-R32b).
     public let softDelete: Bool
     /// ISO-8601 UTC instant after which the record is no longer recoverable.
     public let recoverableUntil: String
@@ -602,7 +602,7 @@ public struct SpeakerDeletedEvent: EventPayload {
 }
 
 /// `speaker_undeleted` — emitted when a soft-deleted speaker is restored
-/// within the 30-day recovery window (§8.13, R32b undo).
+/// within the 30-day recovery window (§8.13, PT-R32b undo).
 public struct SpeakerUndeletedEvent: EventPayload {
     public static let eventType = "speaker_undeleted"
 
@@ -710,7 +710,7 @@ public struct SpeakerUndelistedEvent: EventPayload {
 }
 
 /// `speaker_centroid_updated` — emitted when a returning speaker's centroid is
-/// refined by a new appearance via the running-mean update (§8.13, R30).
+/// refined by a new appearance via the running-mean update (§8.13, PT-R30).
 public struct SpeakerCentroidUpdatedEvent: EventPayload {
     public static let eventType = "speaker_centroid_updated"
 
@@ -734,7 +734,7 @@ public struct SpeakerCentroidUpdatedEvent: EventPayload {
 }
 
 /// `library_backup_created` — emitted after the speaker-library SQLite file is
-/// copied to its last-good `.bak` ahead of a mutating write (§8.13, R32a edge
+/// copied to its last-good `.bak` ahead of a mutating write (§8.13, PT-R32a edge
 /// case "library corrupted").
 public struct LibraryBackupCreatedEvent: EventPayload {
     public static let eventType = "library_backup_created"

@@ -1,7 +1,7 @@
 import Foundation
 
 /// An `AudioFrameSource` that reads length-prefixed PCM frames from a file
-/// descriptor (R72) — typically stdin.
+/// descriptor (PT-R72) — typically stdin.
 ///
 /// This is the source behind `ffmpeg -re ... | pulsartrace-engine --stdin`.
 /// Raw `f32le` PCM piped in is read frame-by-frame using `FrameProtocol`

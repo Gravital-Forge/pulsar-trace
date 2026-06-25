@@ -1,7 +1,7 @@
 import Foundation
 
 /// Scans a log (operational or events) for content that must never appear
-/// (R59, R84, §11 "What is NEVER logged").
+/// (PT-R59, PT-R84, §11 "What is NEVER logged").
 ///
 /// This is the shared scaffolding behind the privacy assertions: a test
 /// produces a real log, then asserts `scan` finds nothing. Forbidden inputs are

@@ -14,7 +14,7 @@ import Darwin
 /// `ffmpeg ... -f f32le -ac 1 -ar 16000 -`. It is the source the engine uses
 /// for `pulsartrace-engine --stdin`. A single dedicated reader thread performs
 /// the blocking reads and feeds an `AsyncThrowingStream`. A clean EOF is
-/// end-of-stream (R75); a trailing partial frame is zero-padded to 20 ms.
+/// end-of-stream (PT-R75); a trailing partial frame is zero-padded to 20 ms.
 public final class RawPCMPipeSource: AudioFrameSource, @unchecked Sendable {
     public typealias Element = AudioStreamEvent
 

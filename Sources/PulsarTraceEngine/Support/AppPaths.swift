@@ -18,7 +18,7 @@ public struct AppPaths: Sendable {
         AppPaths(home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
-    /// Operational log directory: `~/Library/Logs/PulsarTrace/` (R57).
+    /// Operational log directory: `~/Library/Logs/PulsarTrace/` (PT-R57).
     public var logDirectory: URL {
         home.appendingPathComponent("Library/Logs/PulsarTrace", isDirectory: true)
     }
@@ -28,21 +28,21 @@ public struct AppPaths: Sendable {
         home.appendingPathComponent("Library/Application Support/PulsarTrace", isDirectory: true)
     }
 
-    /// Model cache root: `~/Library/Caches/PulsarTrace/models/` (D10). The
+    /// Model cache root: `~/Library/Caches/PulsarTrace/models/` (PT-P1-D10). The
     /// CoreML bundles (Parakeet `parakeet-tdt-0.6b-v3-coreml/`, WhisperKit
-    /// `whisperkit/`) live in SDK-managed subdirectories beneath it (D39).
+    /// `whisperkit/`) live in SDK-managed subdirectories beneath it (PT-P5-D2).
     public var modelsCacheDirectory: URL {
         home.appendingPathComponent(
             "Library/Caches/PulsarTrace/models", isDirectory: true)
     }
 
-    /// Events log directory: `…/PulsarTrace/events/` (R78).
+    /// Events log directory: `…/PulsarTrace/events/` (PT-R78).
     public var eventsDirectory: URL {
         applicationSupport.appendingPathComponent("events", isDirectory: true)
     }
 
     /// Persistent speaker-library SQLite database:
-    /// `…/PulsarTrace/speakers.sqlite` (R28).
+    /// `…/PulsarTrace/speakers.sqlite` (PT-R28).
     public var speakersDatabaseURL: URL {
         applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
     }

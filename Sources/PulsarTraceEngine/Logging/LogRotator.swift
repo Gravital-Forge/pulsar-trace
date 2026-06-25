@@ -30,7 +30,7 @@ public final class LogRotator: @unchecked Sendable {
 
     /// - Parameters:
     ///   - directory: the log directory (`~/Library/Logs/PulsarTrace`).
-    ///   - retentionDays: delete files older than this many days (R57: 7).
+    ///   - retentionDays: delete files older than this many days (PT-R57: 7).
     ///   - clock: injectable wall clock for deterministic rotation tests.
     public init(
         directory: URL,

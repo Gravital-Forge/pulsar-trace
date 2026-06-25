@@ -5,7 +5,7 @@ import Darwin
 import Glibc
 #endif
 
-/// Append-only JSONL writer for the events log (§8.13, R78–R86).
+/// Append-only JSONL writer for the events log (§8.13, PT-R78–PT-R86).
 ///
 /// The events log is a public API surface: a machine-readable stream that LLM
 /// agents and external tools consume. Every line is a self-contained JSON
@@ -46,7 +46,7 @@ public actor EventWriter {
 
     /// - Parameters:
     ///   - directory: events directory (`…/PulsarTrace/events`).
-    ///   - retentionDays: retention window (R79: 30).
+    ///   - retentionDays: retention window (PT-R79: 30).
     ///   - clock: injectable wall clock for deterministic rotation tests.
     ///   - ulidFactory: injectable ULID source so event IDs are deterministic
     ///     in tests (the determinism rule: all RNG seeded).
@@ -127,7 +127,7 @@ public actor EventWriter {
 
     // MARK: - Encoding
 
-    /// The common envelope written on every event (R80).
+    /// The common envelope written on every event (PT-R80).
     struct Envelope: Encodable {
         let ts: String
         let type: String

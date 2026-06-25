@@ -2,10 +2,10 @@ import Foundation
 
 /// Drives one `pulsartrace record` session: spawns `pulsartrace-capture`,
 /// waits for its `ready` handshake, spawns `pulsartrace-engine --live`, and
-/// tears the pair down cleanly (R47).
+/// tears the pair down cleanly (PT-R47).
 ///
 /// The capture daemon must be a separate process — it is the only TCC-gated
-/// PulsarTrace process (R4) — and the engine is spawned separately so the
+/// PulsarTrace process (PT-R4) — and the engine is spawned separately so the
 /// menubar can detect its death. This orchestrator is the reusable code
 /// path: `RecordCommand` (CLI) and the menubar both drive it.
 ///

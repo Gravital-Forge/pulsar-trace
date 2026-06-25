@@ -1,6 +1,6 @@
 import Foundation
 
-/// One environment self-check result for `pulsartrace doctor` (R50).
+/// One environment self-check result for `pulsartrace doctor` (PT-R50).
 public struct DoctorCheck: Sendable, Equatable {
     /// A check's outcome. `warn` is advisory (the CLI still works); `fail`
     /// means something the user must fix.
@@ -66,7 +66,7 @@ public struct DoctorReport: Sendable {
     }
 }
 
-/// Builds the individual `DoctorCheck`s for `pulsartrace doctor` (R50).
+/// Builds the individual `DoctorCheck`s for `pulsartrace doctor` (PT-R50).
 ///
 /// Every function here is **pure** — it maps an already-gathered environment
 /// fact to a check result. The environment *gathering* (filesystem probes, TCC
@@ -75,7 +75,8 @@ public struct DoctorReport: Sendable {
 /// messages and status thresholds unit-testable without a real environment.
 public enum EnvironmentDoctor {
 
-    /// macOS version. PulsarTrace requires macOS 14+ (PRD §8). An older host is
+    /// macOS version. PulsarTrace requires macOS 14+ (the minimum supported
+    /// platform). An older host is
     /// a hard failure — the engine will not run correctly.
     public static func macOSCheck(majorVersion: Int, versionString: String) -> DoctorCheck {
         if majorVersion >= 14 {
@@ -103,7 +104,7 @@ public enum EnvironmentDoctor {
                 + "Apple Silicon is recommended")
     }
 
-    /// The diarization models (FluidAudio CoreML bundles, D40). Absence is not
+    /// The diarization models (FluidAudio CoreML bundles, PT-P5-D3). Absence is not
     /// an error — they download automatically from huggingface.co on the first
     /// recording or refine — but the user should know a download is coming.
     public static func diarizerModelsCheck(cached: Bool) -> DoctorCheck {

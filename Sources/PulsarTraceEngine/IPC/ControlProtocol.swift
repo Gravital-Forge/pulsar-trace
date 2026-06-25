@@ -53,7 +53,7 @@ public enum ControlProtocol {
 
     /// Payload for `start`.
     public struct StartRequest: Codable, Equatable, Sendable {
-        /// Output directory basename (never a full path — privacy, R84).
+        /// Output directory basename (never a full path — privacy, PT-R84).
         public let outputDirBasename: String
         /// Whether to capture system audio.
         public let systemAudioEnabled: Bool

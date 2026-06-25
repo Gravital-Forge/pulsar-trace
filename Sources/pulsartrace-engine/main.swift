@@ -100,7 +100,7 @@ struct EngineMain {
             source = RawPCMPipeSource(fd: FileHandle.standardInput.fileDescriptor)
             stemName = "live-" + Self.timestampStem()
         } else if let path = fixturePath(in: args) {
-            // Realtime mode so the live pass runs at wall-clock pace (R10).
+            // Realtime mode so the live pass runs at wall-clock pace (PT-R10).
             source = FixturePlaybackSource(
                 file: URL(fileURLWithPath: path), realtime: true)
             // `--mic-fixture <path>` pairs a second realtime fixture as the
@@ -152,7 +152,7 @@ struct EngineMain {
             ?? RecordingFolder.recordingId(forName: stemName)
 
         // --- live transcriber (resident, ANE) --------------------------------
-        // Parakeet v3 via FluidAudio (D39): in-process CoreML — no subprocess,
+        // Parakeet v3 via FluidAudio (PT-P5-D1): in-process CoreML — no subprocess,
         // no Metal, no flock, and no live model knob. Both streams share one
         // resident engine; the actor serializes decodes (the in-process
         // analogue of the old SerializingHostProxy). First launch downloads
@@ -169,11 +169,11 @@ struct EngineMain {
             ? ParakeetWindowTranscriber(engine: parakeet)
             : nil
 
-        // --- live diarization in-process (D40 stack) -------------------------
+        // --- live diarization in-process (PT-P5-D3 stack) -------------------------
         // The windowed live pass runs FluidAudio's offline diarizer in-process
         // via `DiarizerEngineRawAdapter` — the same resident `DiarizerEngine`
         // actor the offline refine pass uses, so live and post-pass embeddings
-        // share one vector space (R29). Best-effort: a model-load failure must
+        // share one vector space (PT-R112). Best-effort: a model-load failure must
         // NOT crash the live pass — it degrades to neutral `Speaker?` labels
         // (§2b). `--no-live-diarization` skips it entirely.
         var liveRawDiarizer: (any RawWindowDiarizing)?
@@ -189,7 +189,7 @@ struct EngineMain {
             }
         }
 
-        // --- speaker library, READ-ONLY (R18/R32) ---------------------------
+        // --- speaker library, READ-ONLY (PT-R18/PT-R32) ---------------------------
         // The live pass only ever reads the library; only the post-pass writes.
         let library: SpeakerLibrary?
         do {
