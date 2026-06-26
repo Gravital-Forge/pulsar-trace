@@ -27,9 +27,12 @@ agent's to compose from these primitives.
 
 The server is **opt-in and local**. It is disabled by default and starts only when the user enables
 it in Settings; it binds the loopback interface (`127.0.0.1`) on a configurable port (default
-`8276`); and every request must carry a per-launch bearer token. This preserves the product's
-local-only and owner-only posture (PT-R87, PT-R98, PT-R100): nothing listens unless the user opts
-in, nothing is reachable off the device, and no unauthenticated local process can drive it.
+`8276`); and every request must carry a bearer token. This preserves the product's local-only and
+owner-only posture (PT-R87, PT-R98, PT-R100): nothing listens unless the user opts in, nothing is
+reachable off the device, and no unauthenticated local process can drive it. The token is persistent
+and surfaced in Settings as a paste-ready client-configuration snippet, so the user configures the
+agent's MCP client once and it keeps working across app restarts; Settings also shows the server's
+health and offers a manual restart.
 
 One refactor underpins the management tools. The speaker-edit orchestration — library mutation with
 events suppressed, the `FinalMarkdownRewriter` pass over affected `final.md` files, and the paired
@@ -70,13 +73,16 @@ server stays down until the user picks a free port.
 
 ### PT-P6-R2 · Constraint · Introduce — Loopback-only, token-authenticated access
 
-The server is reachable only on the local loopback interface and requires a per-launch bearer token
-on every request. The token is generated at launch, stored in an owner-only file, and surfaced for
-client configuration. No binding to a non-loopback address exists in this project.
+The server is reachable only on the local loopback interface and requires a bearer token on every
+request. The token is generated when the server is first enabled, stored in an owner-only file, and
+persists across launches so a configured client keeps working; Settings surfaces it as a paste-ready
+client-configuration snippet for the user to copy into the agent's MCP client, and a manual action
+regenerates it. No binding to a non-loopback address exists in this project.
 
 *Introduces:* one new product requirement, minted at close-out. *Acceptance:* a request without the
-valid token is rejected; the token file is owner-only (0600); the listener is bound to `127.0.0.1`
-and refuses non-loopback origins.
+valid token is rejected; the token file is owner-only (0600); the token survives an app restart and
+regenerating it invalidates the previous one; the listener is bound to `127.0.0.1` and refuses
+non-loopback origins.
 
 ### PT-P6-R3 · Functional · Introduce — Recording query tools return metadata and paths, never content
 
@@ -160,3 +166,15 @@ transcript content; content is reached only by the filesystem paths the query to
 *Introduces:* one new product requirement, minted at close-out. *Acceptance:* no tool mutates
 settings or model choice; no tool starts or stops capture; no tool returns transcript or audio
 content.
+
+### PT-P6-R11 · Functional · Introduce — Server health, supervision, and manual restart
+
+While enabled, the in-process server is supervised: a listener that fails is rebuilt automatically
+with bounded backoff, and a bind that keeps failing (for example, the port is taken) stops and
+surfaces the error rather than rotating to another port. The server answers an unauthenticated
+loopback health probe reporting its status, and Settings shows the live server status and offers a
+manual restart.
+
+*Introduces:* one new product requirement, minted at close-out. *Acceptance:* a failed listener is
+rebuilt automatically; the health probe returns the server's status over the loopback; Settings
+reflects running / down / port-in-use and a manual restart stops and restarts the server.

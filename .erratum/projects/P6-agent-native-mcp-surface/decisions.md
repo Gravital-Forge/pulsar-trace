@@ -59,21 +59,28 @@ Auto-rotating to a free port on conflict was rejected because a moving port desy
 endpoint the agent's client config points at; a stable, explicitly-chosen port keeps that
 configuration valid.
 
-### PT-P6-D4 · Access is gated by a per-launch bearer token over loopback only
+### PT-P6-D4 · Access is gated by a persistent bearer token over loopback only
 
 *2026-06-25*
 
-**Decision:** Every request must present a per-launch bearer token in the `Authorization` header.
-The token is generated at launch, persisted to an owner-only (0600) file under the app-support
-directory alongside a paste-ready client configuration snippet, and validated on every request in
-addition to the SDK's localhost origin check. The listener binds loopback only.
+**Decision:** Every request must present a bearer token in the `Authorization` header. The token is
+generated when the server is first enabled, persisted to an owner-only (0600) file under the
+app-support directory, and reused across launches; Settings surfaces it as a paste-ready
+client-configuration snippet (the server URL plus the `Authorization` header), and a manual action
+regenerates it. The token is validated on every request in addition to the SDK's localhost origin
+check, and the listener binds loopback only. The agent never fetches the token at runtime — the user
+copies it into the agent's MCP client once, and the client sends it automatically thereafter.
 
 **Because:** loopback restricts callers to local processes, but any local process is otherwise able
 to connect — and these tools rewrite the user's transcripts and mutate the speaker library, so
-silent access by an arbitrary local process is not acceptable. A static per-launch bearer token is
-the standard, low-friction guard for a local app-hosted MCP server and composes with the SDK's
-validator pipeline. Storing the token owner-only and binding loopback keeps the feature inside the
-product's existing owner-only / local-only posture (PT-R98, PT-R100).
+silent access by an arbitrary local process is not acceptable. A static bearer token is the
+standard, low-friction guard for a local app-hosted MCP server and composes with the SDK's validator
+pipeline. The token is persistent rather than per-launch because an MCP client sends a fixed header
+from its saved configuration — a token that changed on every launch would break that configuration
+at each restart — while an owner-only persisted token already blocks other local processes, and the
+manual regenerate covers the case where the user wants to invalidate it. Storing the token
+owner-only and binding loopback keeps the feature inside the product's existing owner-only /
+local-only posture (PT-R98, PT-R100).
 
 ### PT-P6-D5 · No MCP prompts; discovery is self-documenting tools plus a standalone manual
 
@@ -151,3 +158,25 @@ authentication beyond the loopback bearer token, is built in this project.
 security design (binding policy, stronger auth, abuse limits) that is not worth taking on now.
 Writing the core transport-agnostically costs almost nothing and keeps that option cheap, so the
 project can stay local-only today without foreclosing a future LAN surface.
+
+### PT-P6-D10 · The in-process server is supervised, health-probed, and manually restartable
+
+*2026-06-26*
+
+**Decision:** The server is supervised inside the menubar process. A lightweight watcher observes
+the `NWListener` state and rebuilds a failed listener with bounded backoff, stopping with a surfaced
+error — not rotating ports — when a bind keeps failing. A small unauthenticated `/healthz` GET
+endpoint on the loopback reports status (distinct from the MCP endpoint, which still answers 405 on
+GET), and Settings polls it when opened to show running / down / port-in-use. Settings also offers a
+manual restart. Manual restart is the guaranteed floor; the supervisor and the health surface are
+layered on top of it.
+
+**Because:** the server is a task inside the menubar app, not a separate OS process, so the failure
+to guard against is a listener entering a failed or wedged state, not a process exit — if the app
+process dies there is nothing left in-process to restart it. `Network.framework` surfaces listener
+state, which makes automatic rebuild cheap and precise. An actual loopback `/healthz` probe proves
+the socket is truly accepting and so catches a wedged-but-not-failed listener that introspecting
+internal state would miss, which is why Settings probes rather than reads a flag. A manual restart
+is kept as the guaranteed recovery path even if supervision misses a case, and auto-rotation on
+repeated bind failure is excluded to stay consistent with PT-P6-D3 (a stable, explicitly chosen
+port).
