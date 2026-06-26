@@ -59,7 +59,7 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 [Dispatch the swift-reviewer subagent — the change is mostly Swift]
   Description: Added verifyIndex() and repairIndex() with 4 issue types
-  Requirements: Task 2 from docs/specs/deployment-plan.md
+  Requirements: task PT-P3-E2-T2 (epic PT-P3-E2), satisfying project requirement PT-P3-R4
   BASE_SHA: a7981ec
   HEAD_SHA: 3df7661
 

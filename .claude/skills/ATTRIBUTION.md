@@ -41,17 +41,20 @@ Skill-specific:
 - `pulsartrace-brainstorming` — the browser-based "Visual Companion" removed
   (PulsarTrace is not a web app); the absolute "no code before approved design"
   hard-gate removed (brainstorming is the design step for substantial work, not
-  a universal blocker); design specs written to `docs/specs/` (see
-  `pulsartrace-docs`).
+  a universal blocker); the approved design is captured in the Erratum layer as
+  a Project PRD or epic intent (see `pulsartrace-docs` and the `erratum` skill).
 - `pulsartrace-writing-plans` / `-executing-plans` / `-subagent-driven-development`
-  — plans written to `docs/specs/`; reviewer dispatch points at the project's
-  existing `.claude/agents/` (`code-reviewer`, `swift-reviewer`, `python-reviewer`)
+  — plans are authored as Erratum epics and tasks (epic `spec.md` plus
+  `tasks/T*.md`) under the open project, with code links carrying Project
+  Requirement IDs; reviewer dispatch points at the project's existing
+  `.claude/agents/` (`code-reviewer`, `swift-reviewer`, `python-reviewer`)
   instead of generic prompt-template files.
 - `pulsartrace-receiving-code-review` — the "Strange things are afoot at the
   Circle K" safe-phrase removed.
-- `pulsartrace-finishing-a-development-branch` — adds a mandatory documentation
-  sync (`pulsartrace-doc-sync`) before integration; makes "never remove the
-  worktree when a PR is opened" an explicit red flag.
+- `pulsartrace-finishing-a-development-branch` — adds a mandatory Erratum epic
+  close (and project close-out when the project's last epic closes) plus a
+  documentation sync (`pulsartrace-doc-sync`) before integration; makes "never
+  remove the worktree when a PR is opened" an explicit red flag.
 
 ## Superpowers MIT License
 
