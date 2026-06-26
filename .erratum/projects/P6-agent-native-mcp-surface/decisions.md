@@ -180,3 +180,28 @@ internal state would miss, which is why Settings probes rather than reads a flag
 is kept as the guaranteed recovery path even if supervision misses a case, and auto-rotation on
 repeated bind failure is excluded to stay consistent with PT-P6-D3 (a stable, explicitly chosen
 port).
+
+### PT-P6-D11 · The surface targets local-process MCP clients; VM-sandboxed and cloud agents are out of scope
+
+*2026-06-26*
+
+**Decision:** The loopback-plus-static-bearer surface targets MCP clients that run as a local
+process on the same machine and send a configured `Authorization` header. This was verified against
+Claude Code
+(`claude mcp add --transport http <name> http://127.0.0.1:<port>/mcp --header "Authorization: Bearer <token>"`)
+and the Codex CLI (`[mcp_servers.<name>]` with `url` plus
+`http_headers = { Authorization = "Bearer <token>" }` or `bearer_token_env_var`), both of which
+reach the loopback endpoint directly over plain HTTP. Agents that run in a sandboxed VM or in the
+cloud — Claude Cowork, Claude Code on the web, and claude.ai connectors — are out of scope for this
+project.
+
+**Because:** the design rests on two properties of the client: it originates the HTTP request from
+the user's own machine, so the host's `127.0.0.1` is reachable, and it can carry a static bearer
+token in a custom header. Local CLI and IDE agents have both, and verification confirmed Claude Code
+and Codex do exactly this — so the two agents the surface is built for work as specified. A
+VM-sandboxed agent fails the first property, because the VM's loopback is not the host's; Cowork
+additionally fails the second, because its connector-registry MCP model brokers authentication
+through OAuth and exposes no field for a static header; a fully cloud-hosted agent fails the first
+property structurally. Reaching any of these would take more than the deferred LAN transport — a
+host-reachable address and a different authentication model — so they are left out of scope rather
+than allowed to shape this project's loopback design.
