@@ -9,9 +9,11 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 Guide completion of development work by presenting clear options and handling chosen workflow.
 
-**Core principle:** Verify tests → Sync documentation → Detect environment → Present options → Execute choice → Clean up.
+**Core principle:** Verify tests → Close the epic in Erratum → Sync documentation → Detect environment → Present options → Execute choice → Clean up.
 
 **Announce at start:** "I'm using the pulsartrace-finishing-a-development-branch skill to complete this work."
+
+**Load the `erratum` skill.** Completing development closes the epic — and, when it was the project's last open epic, runs project close-out. The `erratum` skill is the operating manual for both. You are the doc-owner.
 
 ## The Process
 
@@ -20,8 +22,9 @@ Guide completion of development work by presenting clear options and handling ch
 **Before presenting options, verify tests pass:**
 
 ```bash
-# Run project's test suite
-npm test / cargo test / pytest / go test ./...
+# Run the project's test suite — bare, with dangerouslyDisableSandbox (see CLAUDE.md).
+# Use the narrow filters; never `swift test --filter PipelineTests` (known cross-suite flaky).
+swift test --filter UnitTests
 ```
 
 **If tests fail:**
@@ -37,17 +40,19 @@ Stop. Don't proceed to Step 2.
 
 **If tests pass:** Continue to Step 2.
 
-### Step 2: Sync Documentation
+### Step 2: Close the Epic in Erratum, then Sync Documentation
 
-**Before any integration decision, bring documentation in step with the code changes.**
+**Before any integration decision, bring the record in step with the code.** Tests passing is not enough to proceed.
 
-Tests passing is not enough to proceed — documentation must be synced first. Invoke the `pulsartrace-doc-sync` skill, which reviews the branch diff and updates the `docs/` tree, README, and CHANGELOG to match what the code changes actually did.
+**2a — Close the epic.** Using the `erratum` skill, write the Epic Completion Record (`completion.md`): what was actually built, how and why it differs from the spec, the Project Requirements satisfied and where (recoverable by grepping the code link), and what must flow into the product layer. Freeze the epic. If this was the **last open epic in the project**, run **project close-out** per the `erratum` skill — execute each change-type, update the product docs, write the matrix rows, re-point every code link from project to product requirement IDs, run the reference sweep, and verify the invariants (at minimum I6). If other epics remain open, the project stays open.
+
+**2b — Sync end-user documentation.** Invoke the `pulsartrace-doc-sync` skill, which reviews the branch diff and brings the README, CHANGELOG, and operational `docs/` in step with what the code changed.
 
 This step is mandatory and runs before the merge/PR/keep/discard menu is presented.
 
-**If doc-sync surfaces judgment calls** (ambiguous placement, facts that need a decision, missing context), resolve them before continuing. Do not present the options menu with documentation still out of step.
+**If either part surfaces judgment calls** (a close-out conflict, ambiguous doc placement, a fact that needs a decision), resolve them before continuing. Do not present the options menu with the record still out of step.
 
-**Once documentation is synced:** Continue to Step 3.
+**Once the epic is closed and documentation is synced:** Continue to Step 3.
 
 ### Step 3: Detect Environment
 
@@ -218,9 +223,9 @@ git worktree prune  # Self-healing: clean up any stale registrations
 - **Problem:** Merge broken code, create failing PR
 - **Fix:** Always verify tests before offering options
 
-**Skipping documentation sync**
-- **Problem:** Merge or PR ships with docs/README/CHANGELOG out of step with the code
-- **Fix:** Always run Step 2 (`pulsartrace-doc-sync`) before presenting options
+**Skipping the Erratum close or documentation sync**
+- **Problem:** Merge or PR ships with the epic still open, the product layer un-reconciled, or docs/README/CHANGELOG out of step with the code
+- **Fix:** Always run Step 2 — close the epic (and close out the project if it was the last epic), then `pulsartrace-doc-sync` — before presenting options
 
 **Open-ended questions**
 - **Problem:** "What should I do next?" is ambiguous
@@ -250,7 +255,7 @@ git worktree prune  # Self-healing: clean up any stale registrations
 
 **Never:**
 - Proceed with failing tests
-- Present the options menu before documentation is synced (Step 2)
+- Present the options menu before the epic is closed and documentation is synced (Step 2)
 - Merge without verifying tests on result
 - Delete work without confirmation
 - Force-push without explicit request
@@ -261,7 +266,7 @@ git worktree prune  # Self-healing: clean up any stale registrations
 
 **Always:**
 - Verify tests before offering options
-- Sync documentation (Step 2) before presenting the menu
+- Close the epic and sync documentation (Step 2) before presenting the menu
 - Detect environment before presenting menu
 - Present exactly 4 options (or 3 for detached HEAD)
 - Get typed confirmation for Option 4

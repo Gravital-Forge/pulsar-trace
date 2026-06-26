@@ -1,19 +1,37 @@
 ---
 name: pulsartrace-doc-sync
-description: End-of-development documentation sync for PulsarTrace. Use when wrapping up a development task — before closing or merging a branch, or finalizing a set of changes — to review what the code changes did and bring the docs/ tree, README, and CHANGELOG back in step. Applies the standards defined by the pulsartrace-docs skill. Invoked by pulsartrace-finishing-a-development-branch before integration.
+description: End-of-development documentation sync for PulsarTrace. Use when wrapping up a development task — before closing or merging a branch, or finalizing a set of changes — to bring the end-user docs/ tree, README, and CHANGELOG back in step with what the code changes did. Applies the standards defined by the pulsartrace-docs skill. Invoked by pulsartrace-finishing-a-development-branch before integration.
 ---
 
 # PulsarTrace Doc Sync
 
 Run at the end of a development task — before closing a branch or finalizing a
-change — to bring documentation back in step with the code that changed. This is
-how the docs stay current: every change ends with a doc-sync pass.
+change — to bring the **end-user and operational documentation** back in step
+with the code that changed. This is how those docs stay current: every change
+ends with a doc-sync pass.
 
-This skill is the **procedure**. The **standard** it applies — the `docs/` tree,
-page structure, where each fact lives, when an Evolution note is warranted — is
+This skill is the **procedure**. The **standard** it applies — the two
+documentation homes, the one-home-per-fact rule, where each fact lives — is
 defined by the **`pulsartrace-docs`** skill. Load that skill alongside this one;
-this skill defers to it for every "how" and "where" question and never restates
-its rules.
+defer to it for every "how" and "where" question, and never restate its rules.
+
+**Also load the `erratum` skill.** Internal facts — requirements, architecture,
+decisions, the public-contract specifications — live in `.erratum/` and move
+through the project layer and project close-out, never through this pass. When
+this pass surfaces an internal fact, route it there.
+
+## Scope of this pass
+
+This pass touches only the documentation that lives **outside** `.erratum/`:
+
+- `README.md` — how a user runs it; the capability table
+- `CHANGELOG.md` — what changed, user-facing
+- `docs/development.md` — dev host and build/test setup (with `CLAUDE.md`)
+- `docs/release-smoke-test.md`, `docs/qa/` — operational runbooks and QA logs
+
+Requirements, architecture, decisions, and the normative public-output contracts
+belong to the Erratum project layer. This pass does not edit them — it hands any
+such fact to the Erratum flow (see step 4).
 
 ## When to run
 
@@ -38,65 +56,62 @@ git status --short
 ```
 
 Summarise what actually changed, in plain terms — not file-by-file, but by
-effect: new capabilities, changed behaviour, **an approach that was replaced**,
-public-contract changes (`live.md` / `final.md` / `events/*.jsonl`), new or
-removed dependencies, build/setup changes.
+effect: new capabilities, changed behaviour, public-contract changes
+(`live.md` / `final.md` / `events/*.jsonl`), new or removed dependencies,
+build/setup changes.
 
-### 2. Map changed code to doc pages
+### 2. Map changed code to doc surfaces
 
-| Changed area | Doc page to check |
+| Changed area | Doc surface to check |
 |---|---|
-| `Sources/PulsarTraceCapture/`, `Audio/`, `IPC/` | `docs/capture.md` |
-| `Transcription/` | `docs/transcription.md` |
-| `Diarization/`, `python/pulsartrace-ai/` | `docs/diarization.md` |
-| `SpeakerLibrary/` | `docs/speaker-library.md` |
-| `Streaming/` | `docs/streaming.md` |
-| Targets, invariants, system shape | `docs/overview.md` |
-| `live.md` / `final.md` / events format | `docs/reference/*` |
-| User-facing CLI / install / behaviour | `README.md`, `CHANGELOG.md` |
+| User-facing CLI, install, or behaviour | `README.md` capability table, `CHANGELOG.md` |
+| Build, test, host, or dependency setup | `docs/development.md`, `CLAUDE.md` |
+| Release or QA procedures | `docs/release-smoke-test.md`, `docs/qa/` |
+| Public output contracts (`live.md` / `final.md` / events) | the normative specs in `.erratum/product/architecture/` (`transcript-format.md` = PT-C11, `events-log.md` = PT-C6) — confirm README and code link to them; the spec text itself reconciles through the Erratum project, not here |
+| Requirements, architecture, design rationale | the Erratum project layer (PRD, epic spec, decision log) — route via step 4 |
 
-If a relevant page does not exist yet (the `docs/` tree is mid-migration), do
-not skip silently — record it as a gap in the report.
+### 3. Apply the user-facing and operational updates
 
-### 3. Classify each needed update
+For each affected surface in scope, update it in present tense, describing what
+is true now:
 
-For every affected page, decide which layer changed (`pulsartrace-docs` defines
-the What / Why / Evolution structure):
-
-- **New capability** → update **What it is**, present tense.
-- **Changed rationale** → update **Why it's this way**.
-- **An approach was replaced** → run the Evolution test from `pulsartrace-docs`:
-  did the repo actually contain a simpler/different prior version, and would a
-  competent contributor try to revert to it? Closing a branch is the moment the
-  before/after is in hand and has not yet evaporated — if the test passes, write
-  the **Evolution** note now. If it fails, it is just a What/Why update.
-- **Public contract changed** → update `docs/reference/*`, and confirm the
-  SemVer / per-event `version` rules in the contract were honoured.
-- **User-visible behaviour changed** → update the README capability table and
-  add a `CHANGELOG.md` entry.
-
-### 4. Apply updates
+- **New capability** → update the README capability table and add a
+  `CHANGELOG.md` entry.
+- **Changed user-visible behaviour** → update the affected README or operational
+  page.
+- **Build / setup / dependency change** → update `docs/development.md`.
+- **Public contract changed** → confirm README and code link to the `.erratum/`
+  contract spec, and that the SemVer / per-event `version` rules were honoured.
 
 Make the clear-cut updates directly, following `pulsartrace-docs`. For genuine
-judgment calls — an ambiguous Evolution note, a fact with two plausible homes, a
-missing page that needs creating — describe the call and ask rather than guess.
+judgment calls — a fact with two plausible homes, a page that needs creating —
+describe the call and ask rather than guess.
+
+### 4. Route internal facts to Erratum
+
+If the change carries an internal fact — the reasoning behind a design choice, a
+new or changed requirement, an as-built architecture change, a contract spec
+change — it does not belong in an end-user doc. Record it where the `erratum`
+skill places it: the project **Decision Log** for rationale, the **PRD** /
+**epic spec** for requirements and intent, and the product layer at close-out
+for architecture and contracts. Note it in the report as routed there.
 
 ### 5. Report
 
 Close with three lists:
 
-- **Updated** — pages changed, one line each on what and why.
-- **Checked, no change needed** — pages reviewed and confirmed still accurate.
-- **Deferred** — anything that belongs in the forward zone, not a settled page
-  (future intent, follow-up work → `docs/specs/`), and any doc-tree gaps found
-  in step 2.
+- **Updated** — surfaces changed, one line each on what and why.
+- **Checked, no change needed** — surfaces reviewed and confirmed still accurate.
+- **Routed to Erratum** — internal facts handed to the project layer, and any
+  gaps found in step 2.
 
 ## Don't
 
 - Don't restate the `pulsartrace-docs` rules here — defer to that skill.
-- Don't write an Evolution note for a net-new feature: nothing was replaced.
 - Don't touch a doc the change did not affect just to leave a mark.
-- Don't document future intent in a settled page — that goes to `docs/specs/`.
-- Don't link a settled page into `docs/specs/` — one-way isolation.
+- Don't put design rationale, requirements, or decisions in an end-user doc —
+  those go to the Erratum project layer (step 4).
+- Don't copy a public-contract spec into `docs/` — link to the `.erratum/`
+  contract instead.
 - Don't paraphrase a function into a doc — docs describe what is true across
   files.

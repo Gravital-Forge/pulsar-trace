@@ -1,26 +1,36 @@
 ---
 name: pulsartrace-writing-plans
-description: Use when you have a spec or requirements for a multi-step task, before touching code
+description: Use when you have an approved Erratum design (a Project PRD or epic intent) to decompose into epics and fully detailed tasks, before touching code
 ---
 
 # Writing Plans
 
 ## Overview
 
-Write comprehensive implementation plans assuming the engineer has zero context for our codebase and questionable taste. Document everything they need to know: which files to touch for each task, code, testing, docs they might need to check, how to test it. Give them the whole plan as bite-sized tasks. DRY. YAGNI. TDD. Frequent commits.
+Decompose an approved design into Erratum epics and tasks with enough detail that an engineer who has zero context for the codebase and questionable taste can execute each task correctly. Document everything they need: which files to touch, the code, how to test it, which docs to check. Give them the whole plan as bite-sized tasks. DRY. YAGNI. TDD. Frequent commits.
 
-Assume they are a skilled developer, but know almost nothing about our toolset or problem domain. Assume they don't know good test design very well.
+Assume they are a skilled developer who knows almost nothing about this toolset or problem domain, and doesn't know good test design very well.
 
-**Announce at start:** "I'm using the pulsartrace-writing-plans skill to create the implementation plan."
+**Announce at start:** "I'm using the pulsartrace-writing-plans skill to plan the implementation."
+
+**Load the `erratum` skill.** It is the operating manual for the epic and task artifacts you write under `.erratum/`. Derive every ID by its rules, write each epic spec against Project Requirement IDs, and follow its templates so structure stays consistent. You are the doc-owner.
 
 **Context:** If working in an isolated worktree, it should have been created via the `pulsartrace-using-git-worktrees` skill at execution time.
 
-**Save plans to:** `docs/specs/YYYY-MM-DD-<feature-name>-plan.md`
-- (User preferences for plan location override this default)
+## Where the plan lives
+
+The plan *is* the Erratum epic structure under the open project. Nothing lives outside `.erratum/`.
+
+For each epic, under `.erratum/projects/P<n>-<slug>/epics/E<e>-<slug>/`:
+
+- **`spec.md`** — the epic Specification: an **Intent** written against the Project Requirement IDs and Component IDs it implements, the epic's **Acceptance criteria**, and a **Tasks** list naming each task ID with a one-line description.
+- **`tasks/T<t>.md`** — one file per task, carrying the full implementation detail: the files it touches and the bite-sized TDD steps with real code and exact commands. This is where planning depth lives.
+
+A single project may need several epics; each epic produces working, testable software on its own. The product layer is untouched until project close-out.
 
 ## Scope Check
 
-If the spec covers multiple independent subsystems, it should have been broken into sub-project specs during brainstorming. If it wasn't, suggest breaking this into separate plans — one per subsystem. Each plan should produce working, testable software on its own.
+If the design covers multiple independent subsystems, split it into multiple epics — one per subsystem — each producing working, testable software on its own. If it is large enough to be several independent initiatives, that is a decomposition into separate projects and belongs back in pulsartrace-brainstorming.
 
 ## File Structure
 
@@ -29,79 +39,99 @@ Before defining tasks, map out which files will be created or modified and what 
 - Design units with clear boundaries and well-defined interfaces. Each file should have one clear responsibility.
 - You reason best about code you can hold in context at once, and your edits are more reliable when files are focused. Prefer smaller, focused files over large ones that do too much.
 - Files that change together should live together. Split by responsibility, not by technical layer.
-- In existing codebases, follow established patterns. If the codebase uses large files, don't unilaterally restructure - but if a file you're modifying has grown unwieldy, including a split in the plan is reasonable.
+- In existing code, follow established patterns. If the codebase uses large files, don't unilaterally restructure — but if a file you're modifying has grown unwieldy, including a split in the plan is reasonable.
 
 This structure informs the task decomposition. Each task should produce self-contained changes that make sense independently.
 
 ## Bite-Sized Task Granularity
 
 **Each step is one action (2-5 minutes):**
-- "Write the failing test" - step
-- "Run it to make sure it fails" - step
-- "Implement the minimal code to make the test pass" - step
-- "Run the tests and make sure they pass" - step
-- "Commit" - step
+- "Write the failing test" — step
+- "Run it to make sure it fails" — step
+- "Implement the minimal code to make the test pass" — step
+- "Run the tests and make sure they pass" — step
+- "Commit" — step
 
-## Plan Document Header
+## Epic Specification
 
-**Every plan MUST start with this header:**
+**Every epic `spec.md` starts with this structure:**
 
 ```markdown
-# [Feature Name] Implementation Plan
+# PT-P<n>-E<e> · [Epic name] — Specification
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use pulsartrace-subagent-driven-development (recommended) or pulsartrace-executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Status:** Open · **Opened:** YYYY-MM-DD
 
-**Goal:** [One sentence describing what this builds]
+## Intent
 
-**Architecture:** [2-3 sentences about approach]
+Implements PT-P<n>-R3 and PT-P<n>-R4; touches component PT-C2. [2-3 sentences on the approach.]
 
-**Tech Stack:** [Key technologies/libraries]
+## Acceptance criteria
 
----
+- [Concrete, checkable outcomes for the whole epic.]
+
+## Tasks
+
+- PT-P<n>-E<e>-T1 — [short description]
+- PT-P<n>-E<e>-T2 — [short description]
 ```
 
-## Task Structure
+For a revision of a closed epic, add a `**revises:** PT-P<n>-E<e>-rev<k-1>` line under the status and follow the `erratum` skill's revision rules.
+
+## Task File Structure
+
+**Every `tasks/T<t>.md` carries the depth:**
 
 ````markdown
-### Task N: [Component Name]
+# PT-P<n>-E<e>-T<t> · [Task name]
 
-**Files:**
-- Create: `exact/path/to/file.py`
-- Modify: `exact/path/to/existing.py:123-145`
-- Test: `tests/exact/path/to/test.py`
+**Epic:** PT-P<n>-E<e>
+
+## Acceptance criteria
+
+- [What must be true for this task to be done.]
+
+## Files
+- Create: `Sources/Exact/Path/File.swift`
+- Modify: `Sources/Exact/Path/Existing.swift:123-145`
+- Test: `Tests/Exact/Path/FileTests.swift`
 
 - [ ] **Step 1: Write the failing test**
 
-```python
-def test_specific_behavior():
-    result = function(input)
-    assert result == expected
+```swift
+@Test func specificBehavior() {
+    let result = subject.compute(input)
+    #expect(result == expected)
+}
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/path/test.py::test_name -v`
-Expected: FAIL with "function not defined"
+Run: `swift test --filter FileTests` (bare, with dangerouslyDisableSandbox — see CLAUDE.md)
+Expected: FAIL — `compute` not defined
 
 - [ ] **Step 3: Write minimal implementation**
 
-```python
-def function(input):
-    return expected
+```swift
+// PT-P<n>-R<m>
+func compute(_ input: Input) -> Output {
+    expected
+}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pytest tests/path/test.py::test_name -v`
+Run: `swift test --filter FileTests`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/path/test.py src/path/file.py
-git commit -m "feat: add specific feature"
+git add Sources/Exact/Path/File.swift Tests/Exact/Path/FileTests.swift
+git commit -m "feat: add specific behavior (PT-P<n>-R<m>)"
 ```
 ````
+
+Code that implements a task carries the satisfying Project Requirement ID in a comment (`// PT-P<n>-R<m>`), so the binding is recoverable by grep. Close-out re-points these to the product requirement ID.
 
 ## No Placeholders
 
@@ -117,29 +147,30 @@ Every step must contain the actual content an engineer needs. These are **plan f
 - Exact file paths always
 - Complete code in every step — if a step changes code, show the code
 - Exact commands with expected output
+- Code links carry the Project Requirement ID (`// PT-P<n>-R<m>`)
 - DRY, YAGNI, TDD, frequent commits
 
 ## Self-Review
 
-After writing the complete plan, look at the spec with fresh eyes and check the plan against it. This is a checklist you run yourself — not a subagent dispatch.
+After writing the complete epic spec and its task files, look at the design with fresh eyes and check the plan against it. This is a checklist you run yourself — not a subagent dispatch.
 
-**1. Spec coverage:** Skim each section/requirement in the spec. Can you point to a task that implements it? List any gaps.
+**1. Requirement coverage:** For each Project Requirement the epic claims to implement, can you point to a task that delivers it? List any gaps.
 
-**2. Placeholder scan:** Search your plan for red flags — any of the patterns from the "No Placeholders" section above. Fix them.
+**2. Placeholder scan:** Search your task files for red flags — any of the patterns from the "No Placeholders" section above. Fix them.
 
-**3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
+**3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in T3 but `clearFullLayers()` in T7 is a bug.
 
-If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
+If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a Project Requirement with no task, add the task.
 
 ## Execution Handoff
 
-After saving the plan, offer execution choice:
+After writing the epic spec and task files, offer execution choice:
 
-**"Plan complete and saved to `docs/specs/<filename>.md`. Two execution options:**
+**"Epic PT-P<n>-E<e> planned: spec and tasks written under `.erratum/projects/P<n>-<slug>/epics/E<e>-<slug>/`. Two execution options:**
 
-**1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
+**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration
 
-**2. Inline Execution** - Execute tasks in this session using pulsartrace-executing-plans, batch execution with checkpoints
+**2. Inline Execution** — Execute tasks in this session using pulsartrace-executing-plans, batch execution with checkpoints
 
 **Which approach?"**
 
