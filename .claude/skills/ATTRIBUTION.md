@@ -36,8 +36,7 @@ Common to all adapted skills:
 Skill-specific:
 
 - `pulsartrace-tdd` — merges the Superpowers `test-driven-development` discipline
-  with PulsarTrace's own test-layer / determinism / snapshot rules. Replaces the
-  generic `tdd-workflow` skill.
+  with PulsarTrace's own test-layer / determinism / snapshot rules.
 - `pulsartrace-brainstorming` — the browser-based "Visual Companion" removed
   (PulsarTrace is not a web app); the absolute "no code before approved design"
   hard-gate removed (brainstorming is the design step for substantial work, not

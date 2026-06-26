@@ -30,28 +30,30 @@ Thinking "skip TDD just this once"? Stop. That's rationalization.
 
 ## PulsarTrace test discipline
 
-PulsarTrace's real test commands are `swift test --filter <Layer>` and `pytest` —
-not the npm/TypeScript examples used elsewhere in this skill as generic
-illustrations. Per the project's CLAUDE.md, `swift build` / `swift test` in this
-repo must be run **bare** — no shell pipes, redirects, or other operators — or
-they fall out of the don't-ask allowlist and get denied.
+PulsarTrace's real test command is `swift test --filter <Layer>` — not the
+npm/TypeScript examples used elsewhere in this skill as generic illustrations.
+Per the project's CLAUDE.md, `swift build` / `swift test` in this repo must be
+run **bare** — no shell pipes, redirects, or other operators — or they fall out
+of the don't-ask allowlist and get denied.
 
 ### Test layers
 
+Use the **narrow** filters; never `swift test --filter PipelineTests`, which is
+known cross-suite flaky (CLAUDE.md lists the full set of green narrow filters).
+
 Layer | Speed | When | Devices
 ---|---|---|---
-`swift test --filter Unit` | <5s | Every non-trivial change | None
-`swift test --filter Pipeline` | ~30s | Every change to engine logic | None
-`swift test --filter Pipeline.IPC` | ~30s | Every change to capture↔engine protocol | None
-`swift test --filter Capture` | ~60s | Every change to capture daemon | BlackHole
-`pytest python/pulsartrace-ai/` | ~20s | Every change to Python wrapper | None
+`swift test --filter UnitTests` | fast | Every non-trivial change | None
+`swift test --filter Refinement` / `Streaming` / `Speaker` / `RecordOrchestrator` / `LiveRunner` / `IPC` | seconds–minutes | Every change to the matching area | None
+`swift test --filter Parakeet` / `WhisperKitRefine` / `FluidVAD` / `DiarizationE2E` | one-time model download, then seconds | ANE backend changes | None
+`PULSARTRACE_DEVICE_TESTS=1 swift test --filter Capture` | ~60s | Capture-daemon changes | BlackHole
 Manual smoke (`docs/release-smoke-test.md`) | ~5min by human | Before each release tag | Real Mac
 
 ### Determinism is mandatory
 
-Seeded RNG, whisper temperature 0, pinned model hashes, and fixture audio
-committed to the repo. Without these, snapshot tests flake and you'll be tempted
-to "fix" the test instead of the code.
+Seeded RNG, zero-temperature decoding, content-digest-pinned model bundles, and
+fixture audio committed to the repo. Without these, snapshot tests flake and
+you'll be tempted to "fix" the test instead of the code.
 
 ### Snapshot tests
 
