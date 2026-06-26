@@ -5,7 +5,11 @@ description: Use when executing implementation plans with independent tasks in t
 
 # Subagent-Driven Development
 
-Execute plan by dispatching fresh subagent per task, with two-stage review after each: spec compliance review first, then code quality review.
+Execute a planned Erratum epic by dispatching a fresh subagent per task, with two-stage review after each: spec compliance review first, then code quality review.
+
+**Announce at start:** "I'm using the pulsartrace-subagent-driven-development skill to implement this epic."
+
+**Load the `erratum` skill.** You are the doc-owner and the only writer of `.erratum/`: you read the epic spec and task files, dispatch implementers, and fold their reports into the Epic Completion Record at the end. Subagents implement code; they never write to `.erratum/`.
 
 **Why subagents:** You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
 
@@ -60,12 +64,12 @@ digraph process {
         "Mark task complete in TodoWrite" [shape=box];
     }
 
-    "Read plan, extract all tasks with full text, note context, create TodoWrite" [shape=box];
+    "Read epic spec + task files, extract all tasks with full text, note context, create TodoWrite" [shape=box];
     "More tasks remain?" [shape=diamond];
     "Dispatch code-reviewer subagent for entire implementation" [shape=box];
     "Use pulsartrace-finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Read plan, extract all tasks with full text, note context, create TodoWrite" -> "Dispatch fresh general-purpose implementer subagent";
+    "Read epic spec + task files, extract all tasks with full text, note context, create TodoWrite" -> "Dispatch fresh general-purpose implementer subagent";
     "Dispatch fresh general-purpose implementer subagent" -> "Implementer subagent asks questions?";
     "Implementer subagent asks questions?" -> "Answer questions, provide context" [label="yes"];
     "Answer questions, provide context" -> "Dispatch fresh general-purpose implementer subagent";
@@ -90,8 +94,10 @@ digraph process {
 
 The implementer is a freshly dispatched `general-purpose` subagent (Agent/Task tool, `subagent_type: general-purpose`). It must never inherit your session — construct its dispatch prompt to contain everything it needs:
 
-- The task's **full text**, verbatim from the plan (do not make it read the plan file)
-- **Scene-setting context** — where this task fits in the larger plan and codebase, so the subagent understands the bigger picture
+- The task's **full text**, verbatim from its task file (do not make it read the file)
+- The **Project Requirement IDs and their bodies** that the task satisfies
+- **Scene-setting context** — where this task fits in the epic and codebase, so the subagent understands the bigger picture
+- The **code-link convention** — drop the satisfying Project Requirement ID in a comment at the code (`// PT-P<n>-R<m>`), recoverable by grep
 - An instruction to follow **pulsartrace-tdd**
 - An instruction to **implement the task, write/run its tests, commit the work, and self-review** the result
 - An instruction to **report exactly one of these statuses**: `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`
@@ -149,7 +155,7 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 ```
 You: I'm using Subagent-Driven Development to execute this plan.
 
-[Read plan file once: docs/specs/feature-plan.md]
+[Read epic spec + task files once: .erratum/projects/P4-agent-hooks/epics/E1-hook-install/]
 [Extract all 5 tasks with full text and context]
 [Create TodoWrite with all tasks]
 
@@ -261,7 +267,7 @@ Done!
 - Skip reviews (spec compliance OR code quality)
 - Proceed with unfixed issues
 - Dispatch multiple implementation subagents in parallel (conflicts)
-- Make subagent read plan file (provide full text instead)
+- Make subagent read the epic or task files (provide full text instead)
 - Skip scene-setting context (subagent needs to understand where task fits)
 - Ignore subagent questions (answer before letting them proceed)
 - Accept "close enough" on spec compliance (spec reviewer found issues = not done)
@@ -289,7 +295,7 @@ Done!
 
 **Required workflow skills:**
 - **pulsartrace-using-git-worktrees** - Ensures isolated workspace (creates one or verifies existing)
-- **pulsartrace-writing-plans** - Creates the plan this skill executes
+- **pulsartrace-writing-plans** - Plans the epic this skill executes
 - **pulsartrace-requesting-code-review** - Code review approach for reviewer subagents
 - **pulsartrace-finishing-a-development-branch** - Complete development after all tasks
 
