@@ -16,6 +16,20 @@ public enum WriteTools {
         ReadTools.jsonResult(["rewritten_recording_ids": result.rewrittenRecordingIds])
     }
 
+    /// Either a validated `speaker_id` (`.success`) or an `isError` result to return
+    /// directly (`.failure`). Not `Swift.Result` — `CallTool.Result` isn't an `Error`.
+    enum IdArg {
+        case success(String)
+        case failure(CallTool.Result)
+    }
+
+    static func idArg(_ args: [String: Value]?, _ tool: String) -> IdArg {
+        guard let id = args?["speaker_id"]?.stringValue else {
+            return .failure(ReadTools.errorResult("\(tool) requires `speaker_id`."))
+        }
+        return .success(id)
+    }
+
     // PT-P6-R5
     public static func renameSpeaker(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
@@ -133,6 +147,95 @@ public enum WriteTools {
             }
             do { return ids(try await service.unsplit(originalId: original, newId: new, outputFolderRoots: await outputRoots())) }
             catch { return ReadTools.errorResult("\(error)") }
+        }
+    }
+
+    // PT-P6-R5
+    public static func deleteSpeaker(service: SpeakerEditService, gate: RecordingGate) -> MCPTool {
+        MCPTool(
+            name: "delete_speaker",
+            description: "Soft-delete a speaker (recoverable for 30 days). No transcript rewrite.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object(["speaker_id": stringSchema("the speaker id")]),
+                "required": .array([.string("speaker_id")]),
+            ])
+        ) { args in
+            if let blocked = await gate.blockIfRecording() { return blocked }
+            switch idArg(args, "delete_speaker") {
+            case .failure(let err): return err
+            case .success(let id):
+                do { return ids(try await service.delete(speakerId: id)) }
+                catch { return ReadTools.errorResult("\(error)") }
+            }
+        }
+    }
+
+    // PT-P6-R5
+    public static func undeleteSpeaker(service: SpeakerEditService, gate: RecordingGate) -> MCPTool {
+        MCPTool(
+            name: "undelete_speaker",
+            description: "Restore a soft-deleted speaker. No transcript rewrite.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object(["speaker_id": stringSchema("the speaker id")]),
+                "required": .array([.string("speaker_id")]),
+            ])
+        ) { args in
+            if let blocked = await gate.blockIfRecording() { return blocked }
+            switch idArg(args, "undelete_speaker") {
+            case .failure(let err): return err
+            case .success(let id):
+                do { return ids(try await service.undelete(speakerId: id)) }
+                catch { return ReadTools.errorResult("\(error)") }
+            }
+        }
+    }
+
+    // PT-P6-R5
+    public static func delistSpeaker(
+        service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
+    ) -> MCPTool {
+        MCPTool(
+            name: "delist_speaker",
+            description: "Stop recognizing a speaker; drops its label from past final.md (solo lines "
+                + "become Unrecognized). The microphone speaker cannot be delisted.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object(["speaker_id": stringSchema("the speaker id")]),
+                "required": .array([.string("speaker_id")]),
+            ])
+        ) { args in
+            if let blocked = await gate.blockIfRecording() { return blocked }
+            switch idArg(args, "delist_speaker") {
+            case .failure(let err): return err
+            case .success(let id):
+                do { return ids(try await service.delist(speakerId: id, outputFolderRoots: await outputRoots())) }
+                catch { return ReadTools.errorResult("\(error)") }
+            }
+        }
+    }
+
+    // PT-P6-R5
+    public static func undelistSpeaker(
+        service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
+    ) -> MCPTool {
+        MCPTool(
+            name: "undelist_speaker",
+            description: "Resume recognizing a previously delisted speaker; restores its label.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object(["speaker_id": stringSchema("the speaker id")]),
+                "required": .array([.string("speaker_id")]),
+            ])
+        ) { args in
+            if let blocked = await gate.blockIfRecording() { return blocked }
+            switch idArg(args, "undelist_speaker") {
+            case .failure(let err): return err
+            case .success(let id):
+                do { return ids(try await service.undelist(speakerId: id, outputFolderRoots: await outputRoots())) }
+                catch { return ReadTools.errorResult("\(error)") }
+            }
         }
     }
 }
