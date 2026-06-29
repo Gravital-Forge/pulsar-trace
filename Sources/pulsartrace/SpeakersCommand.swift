@@ -7,12 +7,11 @@ import PulsarTraceEngine
 /// Operates directly on `~/Library/Application Support/PulsarTrace/speakers.sqlite`
 /// and emits the corresponding `speaker_*` events.
 ///
-/// Scope note (PT-P1-D16): `rename`/`merge` here update the library and
-/// emit the speaker event, but do NOT retroactively rewrite past `final.md`
-/// files — that retroactive rewrite (and the paired `final_md_rewritten`
-/// event) is the menubar speaker editor's job. From the CLI, the
-/// new name takes effect on the next `pulsartrace refine` of a recording,
-/// when reconciliation applies it.
+/// Scope note (PT-P6-R9, PT-P6-D7): `rename` routes through the shared
+/// `SpeakerEditService`, so it now retroactively rewrites past `final.md`
+/// files (and emits the paired `final_md_rewritten` events) — closing the
+/// PT-R90 gap the CLI previously skipped. `merge`/`delete` still operate on
+/// the library only; their service routing lands in a later epic task.
 enum SpeakersCommand {
 
     /// Run `pulsartrace speakers …`. Returns the process exit code.
@@ -27,12 +26,16 @@ enum SpeakersCommand {
         events: EventWriter,
         databaseURL: URL = AppPaths.standard.speakersDatabaseURL
     ) async -> Int32 {
-        guard let sub = args.first else {
+        // PT-P6-R9: pull the repeated `--output-folder <path>` flags out of the
+        // raw args before dispatching, and resolve the roots the rewrite scans.
+        let parsed = OutputFolderArgs.parse(args)
+        let roots = OutputFolderRoots.resolved(explicit: parsed.roots)
+        guard let sub = parsed.positional.first else {
             err("speakers: missing subcommand")
             printUsage()
             return 2
         }
-        let rest = Array(args.dropFirst())
+        let rest = Array(parsed.positional.dropFirst())
 
         let library: SpeakerLibrary
         do {
@@ -42,13 +45,14 @@ enum SpeakersCommand {
             err("speakers: could not open the speaker library — \(error)")
             return 1
         }
+        let service = SpeakerEditService(library: library, events: events)
 
         do {
             switch sub {
             case "list":
                 return try await list(library)
             case "rename":
-                return try await rename(rest, library: library)
+                return try await rename(rest, service: service, roots: roots)
             case "merge":
                 return try await merge(rest, library: library)
             case "delete":
@@ -87,19 +91,19 @@ enum SpeakersCommand {
 
     // MARK: - rename
 
+    // PT-P6-R9
     private static func rename(
-        _ args: [String], library: SpeakerLibrary
+        _ args: [String], service: SpeakerEditService, roots: [URL]
     ) async throws -> Int32 {
         guard args.count == 2 else {
-            err("usage: pulsartrace speakers rename <speaker-id> <new-name>")
+            err("usage: pulsartrace speakers rename <speaker-id> <new-name> "
+                + "[--output-folder <path>]…")
             return 2
         }
-        let id = args[0]
-        let newName = args[1]
-        try await library.rename(speakerId: id, to: newName)
-        out("renamed \(id) → \"\(newName)\"")
-        out("note: past final.md files are not rewritten; the new name applies "
-            + "on the next `pulsartrace refine`.")
+        let result = try await service.rename(
+            speakerId: args[0], to: args[1], outputFolderRoots: roots)
+        out("renamed \(args[0]) → \"\(args[1])\" "
+            + "(rewrote \(result.rewrittenRecordingIds.count) past transcript(s))")
         return 0
     }
 
@@ -143,6 +147,10 @@ enum SpeakersCommand {
               rename <speaker-id> <name>    Rename a speaker (id stays stable)
               merge  <primary-id> <other-id>  Merge two speakers (soft, undoable)
               delete <speaker-id>           Soft-delete a speaker (undoable 30d)
+
+            rename rewrites the new name across past final.md files. Pass
+            --output-folder <path> (repeatable) to scan non-default output
+            folders; it defaults to ~/Documents/PulsarTrace.
 
             Speaker split is available in the menubar speaker editor.
             """)
