@@ -1,0 +1,109 @@
+import Foundation
+import MCP
+import PulsarTraceEngine
+
+/// The in-process MCP server (PT-P6-D1): the SDK `Server` + a stateless HTTP
+/// transport behind a loopback listener, every `POST /mcp` bearer-gated.
+// PT-P6-R1
+public actor MCPServer {
+
+    private let port: UInt16
+    private let auth: MCPAuth
+    private let server: Server
+    private let transport: StatelessHTTPServerTransport
+    private var listener: LoopbackHTTPListener?
+    private var token: String?
+
+    public init(port: UInt16, auth: MCPAuth) {
+        self.port = port
+        self.auth = auth
+        self.server = Server(
+            name: MCPServerInfo.serverName,
+            version: MCPServerInfo.serverVersion,
+            capabilities: .init(tools: .init(listChanged: false)))
+        self.transport = StatelessHTTPServerTransport()
+    }
+
+    /// The token, generating + persisting one on first use.
+    public func currentToken() throws -> String {
+        if let token { return token }
+        let fresh = try auth.loadOrCreateToken()
+        token = fresh
+        return fresh
+    }
+
+    /// The bound ephemeral port, or `nil` until the listener is `.ready` — the
+    /// underlying `NWListener` reports port `0` while it is still binding.
+    public func boundPort() -> UInt16? {
+        guard let listener, case .ready = listener.state,
+              let port = listener.boundPort, port != 0 else { return nil }
+        return port
+    }
+
+    public func start() async throws {
+        let token = try currentToken()
+        // The SDK auto-registers only `initialize` + `ping`; declare an empty
+        // `tools/list` so the handshake round-trips. Real tools land in a later
+        // epic (PT-P6-D1).
+        await server.withMethodHandler(ListTools.self) { _ in
+            ListTools.Result(tools: [])
+        }
+        try await server.start(transport: transport)
+        let transport = self.transport
+        let listener = LoopbackHTTPListener(port: port) { req in
+            await MCPServer.route(req, transport: transport, token: token)
+        }
+        try listener.start()
+        self.listener = listener
+    }
+
+    public func stop() async {
+        listener?.stop()
+        listener = nil
+        await server.stop()
+    }
+
+    /// Route one request. `GET /healthz` is unauthenticated; `POST /mcp` is
+    /// bearer-gated and forwarded to the SDK transport (PT-P6-R2, PT-P6-D4).
+    static func route(
+        _ req: LoopbackHTTPRequest,
+        transport: StatelessHTTPServerTransport,
+        token: String
+    ) async -> LoopbackHTTPResponse {
+        switch (req.method, req.path) {
+        case ("GET", "/healthz"):
+            return .json(200, ["status": "ok"])
+
+        case ("GET", "/mcp"):
+            return LoopbackHTTPResponse(
+                status: 405, headers: ["Allow": "POST"],
+                body: Data("Method Not Allowed".utf8))
+
+        case ("POST", "/mcp"):
+            guard let presented = MCPAuth.bearerToken(from: req.headers["authorization"]),
+                  MCPAuth.constantTimeEquals(presented, token) else {
+                return LoopbackHTTPResponse(
+                    status: 401, headers: ["WWW-Authenticate": "Bearer"],
+                    body: Data("Unauthorized".utf8))
+            }
+            // The stateless transport's default pipeline requires a JSON `Accept`
+            // and `Content-Type` on every POST — force them so a non-conforming
+            // client still reaches the SDK. The SDK's `OriginValidator.localhost`
+            // only rejects a *present, non-localhost* `Host`, and the
+            // `127.0.0.1:<port>` Host any HTTP/1.1 client sends already matches,
+            // so the Host header is forwarded untouched.
+            var headers = req.headers
+            headers["accept"] = "application/json"
+            headers["content-type"] = "application/json"
+            let mcpReq = MCP.HTTPRequest(
+                method: "POST", headers: headers, body: req.body, path: "/mcp")
+            let mcpResp = await transport.handleRequest(mcpReq)
+            return LoopbackHTTPResponse(
+                status: mcpResp.statusCode, headers: mcpResp.headers,
+                body: mcpResp.bodyData ?? Data())
+
+        default:
+            return LoopbackHTTPResponse(status: 404, body: Data("Not Found".utf8))
+        }
+    }
+}
