@@ -212,4 +212,66 @@ struct SpeakerEditServiceTests {
                 newName: "  ", outputFolderRoots: [root])
         }
     }
+
+    // MARK: - T4: delist + undelist
+
+    @Test("delist drops the label and emits speaker_delisted before final_md_rewritten")
+    func delistDropsLabel() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.2), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        let service = SpeakerEditService(library: library, events: events)
+
+        let result = try await service.delist(speakerId: steve.id, outputFolderRoots: [root])
+
+        #expect(result.rewrittenRecordingIds == ["rec_standup"])
+        #expect(try await library.liveSpeakers().contains { $0.id == steve.id } == false)
+        await events.flush()
+        let log = try String(contentsOf: await events.currentFileURL(), encoding: .utf8)
+        #expect(log.range(of: "speaker_delisted")!.lowerBound < log.range(of: "final_md_rewritten")!.lowerBound)
+    }
+
+    @Test("delist refuses the microphone speaker and leaves the library unchanged")
+    func delistRejectsMicrophone() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let you = try await library.createSpeaker(
+            name: "You", centroid: centroid(0.5), modelRevision: "rev1",
+            recordingId: "rec_x", recordingFolderName: "x")
+        let service = SpeakerEditService(library: library, events: nil)
+
+        await #expect(throws: SpeakerEditService.EditError.cannotDelistMicrophone) {
+            _ = try await service.delist(speakerId: you.id, outputFolderRoots: [root])
+        }
+        #expect(try await library.liveSpeakers().first { $0.id == you.id }?.isDelisted == false)
+    }
+
+    @Test("undelist restores the label, emitting speaker_undelisted first")
+    func undelistRestoresLabel() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.2), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        let service = SpeakerEditService(library: library, events: events)
+        _ = try await service.delist(speakerId: steve.id, outputFolderRoots: [root])
+
+        let result = try await service.undelist(speakerId: steve.id, outputFolderRoots: [root])
+
+        let finalText = try String(contentsOf: folder.appendingPathComponent("final.md"), encoding: .utf8)
+        #expect(finalText.contains("] Steve:**"))
+        #expect(result.rewrittenRecordingIds == ["rec_standup"])
+        #expect(try await library.liveSpeakers().contains { $0.id == steve.id })
+    }
 }

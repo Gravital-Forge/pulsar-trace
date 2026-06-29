@@ -135,6 +135,50 @@ public actor SpeakerEditService {
         return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
     }
 
+    /// Drop a speaker's label from past `final.md` (solo → `Unrecognized`,
+    /// co-attributed → lose the token). The microphone speaker can never be
+    /// delisted — that is enforced here for every caller.
+    // PT-P6-R9
+    public func delist(
+        speakerId: String, outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        guard let speaker = try await library.speaker(id: speakerId) else {
+            throw EditError.speakerNotFound
+        }
+        guard speaker.name != Self.microphoneSpeakerName else {
+            throw EditError.cannotDelistMicrophone
+        }
+        let name = speaker.name
+        _ = try await library.delist(speakerId: speakerId, suppressEvent: true)
+        let appearances = try await library.appearances(of: speakerId)
+        let results = try await rewriter.rewriteDropping(
+            name: name, speakerId: speakerId, appearances: appearances,
+            outputFolderRoots: outputFolderRoots, reason: .speakerDelisted)
+        let recoverableUntil = Timestamps.event(
+            Date().addingTimeInterval(SpeakerLibrary.recoveryWindow))
+        _ = try? await events?.append(SpeakerDelistedEvent(
+            speakerId: speakerId, recoverableUntil: recoverableUntil,
+            appliedToRecordings: results.map(\.recordingId)))
+        await emitRewriteEvents(results, reason: .speakerDelisted)
+        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+    }
+
+    /// Restore a delisted speaker's label (rewrite `Unrecognized` → name).
+    // PT-P6-R9
+    public func undelist(
+        speakerId: String, outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        let name = try await library.undelist(speakerId: speakerId, suppressEvent: true)
+        let appearances = try await library.appearances(of: speakerId)
+        let results = try await rewriter.rewrite(
+            oldName: "Unrecognized", newName: name, appearances: appearances,
+            outputFolderRoots: outputFolderRoots, reason: .speakerUndelisted)
+        _ = try? await events?.append(SpeakerUndelistedEvent(
+            speakerId: speakerId, appliedToRecordings: results.map(\.recordingId)))
+        await emitRewriteEvents(results, reason: .speakerUndelisted)
+        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+    }
+
     /// Emit one `final_md_rewritten` event per rewritten recording, after the
     /// cause event, preserving causal order (Hard Invariant #8).
     func emitRewriteEvents(
