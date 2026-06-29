@@ -325,4 +325,37 @@ struct SpeakerEditServiceTests {
         #expect(undeleted.rewrittenRecordingIds.isEmpty)
         #expect(try await library.liveSpeakers().contains { $0.id == steve.id })
     }
+
+    // MARK: - T6: concurrency (PT-P6-D1 single-writer)
+
+    @Test("concurrent edits to the same recording both land (no lost final.md update)")
+    func concurrentEditsSerialize() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        // Two speakers BOTH appearing in rec_standup (the fixture final.md labels
+        // "Unknown #1" and "Steve"); rename both concurrently via two DIFFERENT services.
+        let a = try await library.createSpeaker(
+            name: "Unknown #1", centroid: centroid(0.1), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let b = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.2), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        let svc1 = SpeakerEditService(library: library, events: events)
+        let svc2 = SpeakerEditService(library: library, events: events)
+
+        async let r1 = svc1.rename(speakerId: a.id, to: "Alice", outputFolderRoots: [root])
+        async let r2 = svc2.rename(speakerId: b.id, to: "Bob", outputFolderRoots: [root])
+        _ = try await (r1, r2)
+
+        // Both relabels must survive — neither edit lost the other's write.
+        let finalText = try String(contentsOf: folder.appendingPathComponent("final.md"), encoding: .utf8)
+        #expect(finalText.contains("] Alice:**"))
+        #expect(finalText.contains("] Bob:**"))
+        #expect(!finalText.contains("] Unknown #1:**"))
+        #expect(!finalText.contains("] Steve:**"))
+    }
 }

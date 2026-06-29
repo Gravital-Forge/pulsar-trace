@@ -35,6 +35,13 @@ public actor SpeakerEditService {
     /// The display name of the microphone speaker, which can never be delisted.
     public static let microphoneSpeakerName = "You"
 
+    /// Serializes the whole mutate→rewrite→emit sequence across ALL service
+    /// instances so concurrent edits (menubar + MCP, or two MCP tools) cannot
+    /// interleave the on-disk `final.md` rewrite (PT-P6-D1). Static so it is one
+    /// lock process-wide regardless of how many `SpeakerEditService` instances
+    /// exist over the shared `SpeakerLibrary`.
+    static let editLock = AsyncSerialLock()
+
     let library: SpeakerLibrary
     let events: EventWriter?
     let rewriter: FinalMarkdownRewriter
@@ -69,24 +76,26 @@ public actor SpeakerEditService {
     public func rename(
         speakerId: String, to newName: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
-        try Self.validateName(newName)
-        guard let current = try await library.speaker(id: speakerId) else {
-            throw EditError.speakerNotFound
+        try await Self.editLock.run {
+            try Self.validateName(newName)
+            guard let current = try await library.speaker(id: speakerId) else {
+                throw EditError.speakerNotFound
+            }
+            guard current.name != newName else {
+                return EditResult(rewrittenRecordingIds: [])
+            }
+            let oldName = try await library.rename(
+                speakerId: speakerId, to: newName, suppressEvent: true)
+            let appearances = try await library.appearances(of: speakerId)
+            let results = try await rewriter.rewrite(
+                oldName: oldName, newName: newName, appearances: appearances,
+                outputFolderRoots: outputFolderRoots, reason: .speakerRenamed)
+            _ = try? await events?.append(SpeakerRenamedEvent(
+                speakerId: speakerId, oldName: oldName, newName: newName,
+                appliedToRecordings: results.map(\.recordingId)))
+            await emitRewriteEvents(results, reason: .speakerRenamed)
+            return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
         }
-        guard current.name != newName else {
-            return EditResult(rewrittenRecordingIds: [])
-        }
-        let oldName = try await library.rename(
-            speakerId: speakerId, to: newName, suppressEvent: true)
-        let appearances = try await library.appearances(of: speakerId)
-        let results = try await rewriter.rewrite(
-            oldName: oldName, newName: newName, appearances: appearances,
-            outputFolderRoots: outputFolderRoots, reason: .speakerRenamed)
-        _ = try? await events?.append(SpeakerRenamedEvent(
-            speakerId: speakerId, oldName: oldName, newName: newName,
-            appliedToRecordings: results.map(\.recordingId)))
-        await emitRewriteEvents(results, reason: .speakerRenamed)
-        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
     }
 
     /// Merge `otherId` into `primaryId`; rewrite the other's label to the
@@ -95,18 +104,20 @@ public actor SpeakerEditService {
     public func merge(
         primaryId: String, otherId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
-        let names = try await library.merge(
-            primaryId: primaryId, otherId: otherId, suppressEvent: true)
-        let appearances = try await library.appearances(of: primaryId)
-        let results = try await rewriter.rewrite(
-            oldName: names.otherName, newName: names.primaryName,
-            appearances: appearances, outputFolderRoots: outputFolderRoots,
-            reason: .speakerMerged, removedSpeakerId: otherId)
-        _ = try? await events?.append(SpeakerMergedEvent(
-            primarySpeakerId: primaryId, mergedSpeakerId: otherId,
-            appliedToRecordings: results.map(\.recordingId)))
-        await emitRewriteEvents(results, reason: .speakerMerged)
-        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+        try await Self.editLock.run {
+            let names = try await library.merge(
+                primaryId: primaryId, otherId: otherId, suppressEvent: true)
+            let appearances = try await library.appearances(of: primaryId)
+            let results = try await rewriter.rewrite(
+                oldName: names.otherName, newName: names.primaryName,
+                appearances: appearances, outputFolderRoots: outputFolderRoots,
+                reason: .speakerMerged, removedSpeakerId: otherId)
+            _ = try? await events?.append(SpeakerMergedEvent(
+                primarySpeakerId: primaryId, mergedSpeakerId: otherId,
+                appliedToRecordings: results.map(\.recordingId)))
+            await emitRewriteEvents(results, reason: .speakerMerged)
+            return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+        }
     }
 
     /// Split `movingRecordingIds` off `originalId` into a new speaker `newName`,
@@ -117,22 +128,24 @@ public actor SpeakerEditService {
         originalId: String, movingRecordingIds: [String], newName: String,
         outputFolderRoots: [URL]
     ) async throws -> EditResult {
-        try Self.validateName(newName)
-        guard let originalName = try await library.speaker(id: originalId)?.name else {
-            throw EditError.speakerNotFound
+        try await Self.editLock.run {
+            try Self.validateName(newName)
+            guard let originalName = try await library.speaker(id: originalId)?.name else {
+                throw EditError.speakerNotFound
+            }
+            let newSpeaker = try await library.split(
+                originalId: originalId, movingRecordingIds: movingRecordingIds,
+                newName: newName, suppressEvent: true)
+            let appearances = try await library.appearances(of: newSpeaker.id)
+            let results = try await rewriter.rewrite(
+                oldName: originalName, newName: newName, appearances: appearances,
+                outputFolderRoots: outputFolderRoots, reason: .speakerSplit)
+            _ = try? await events?.append(SpeakerSplitEvent(
+                originalSpeakerId: originalId, newSpeakerId: newSpeaker.id,
+                appliedToRecordings: results.map(\.recordingId)))
+            await emitRewriteEvents(results, reason: .speakerSplit)
+            return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
         }
-        let newSpeaker = try await library.split(
-            originalId: originalId, movingRecordingIds: movingRecordingIds,
-            newName: newName, suppressEvent: true)
-        let appearances = try await library.appearances(of: newSpeaker.id)
-        let results = try await rewriter.rewrite(
-            oldName: originalName, newName: newName, appearances: appearances,
-            outputFolderRoots: outputFolderRoots, reason: .speakerSplit)
-        _ = try? await events?.append(SpeakerSplitEvent(
-            originalSpeakerId: originalId, newSpeakerId: newSpeaker.id,
-            appliedToRecordings: results.map(\.recordingId)))
-        await emitRewriteEvents(results, reason: .speakerSplit)
-        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
     }
 
     /// Drop a speaker's label from past `final.md` (solo → `Unrecognized`,
@@ -142,25 +155,27 @@ public actor SpeakerEditService {
     public func delist(
         speakerId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
-        guard let speaker = try await library.speaker(id: speakerId) else {
-            throw EditError.speakerNotFound
+        try await Self.editLock.run {
+            guard let speaker = try await library.speaker(id: speakerId) else {
+                throw EditError.speakerNotFound
+            }
+            guard speaker.name != Self.microphoneSpeakerName else {
+                throw EditError.cannotDelistMicrophone
+            }
+            let name = speaker.name
+            _ = try await library.delist(speakerId: speakerId, suppressEvent: true)
+            let appearances = try await library.appearances(of: speakerId)
+            let results = try await rewriter.rewriteDropping(
+                name: name, speakerId: speakerId, appearances: appearances,
+                outputFolderRoots: outputFolderRoots, reason: .speakerDelisted)
+            let recoverableUntil = Timestamps.event(
+                Date().addingTimeInterval(SpeakerLibrary.recoveryWindow))
+            _ = try? await events?.append(SpeakerDelistedEvent(
+                speakerId: speakerId, recoverableUntil: recoverableUntil,
+                appliedToRecordings: results.map(\.recordingId)))
+            await emitRewriteEvents(results, reason: .speakerDelisted)
+            return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
         }
-        guard speaker.name != Self.microphoneSpeakerName else {
-            throw EditError.cannotDelistMicrophone
-        }
-        let name = speaker.name
-        _ = try await library.delist(speakerId: speakerId, suppressEvent: true)
-        let appearances = try await library.appearances(of: speakerId)
-        let results = try await rewriter.rewriteDropping(
-            name: name, speakerId: speakerId, appearances: appearances,
-            outputFolderRoots: outputFolderRoots, reason: .speakerDelisted)
-        let recoverableUntil = Timestamps.event(
-            Date().addingTimeInterval(SpeakerLibrary.recoveryWindow))
-        _ = try? await events?.append(SpeakerDelistedEvent(
-            speakerId: speakerId, recoverableUntil: recoverableUntil,
-            appliedToRecordings: results.map(\.recordingId)))
-        await emitRewriteEvents(results, reason: .speakerDelisted)
-        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
     }
 
     /// Restore a delisted speaker's label (rewrite `Unrecognized` → name).
@@ -168,15 +183,17 @@ public actor SpeakerEditService {
     public func undelist(
         speakerId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
-        let name = try await library.undelist(speakerId: speakerId, suppressEvent: true)
-        let appearances = try await library.appearances(of: speakerId)
-        let results = try await rewriter.rewrite(
-            oldName: "Unrecognized", newName: name, appearances: appearances,
-            outputFolderRoots: outputFolderRoots, reason: .speakerUndelisted)
-        _ = try? await events?.append(SpeakerUndelistedEvent(
-            speakerId: speakerId, appliedToRecordings: results.map(\.recordingId)))
-        await emitRewriteEvents(results, reason: .speakerUndelisted)
-        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+        try await Self.editLock.run {
+            let name = try await library.undelist(speakerId: speakerId, suppressEvent: true)
+            let appearances = try await library.appearances(of: speakerId)
+            let results = try await rewriter.rewrite(
+                oldName: "Unrecognized", newName: name, appearances: appearances,
+                outputFolderRoots: outputFolderRoots, reason: .speakerUndelisted)
+            _ = try? await events?.append(SpeakerUndelistedEvent(
+                speakerId: speakerId, appliedToRecordings: results.map(\.recordingId)))
+            await emitRewriteEvents(results, reason: .speakerUndelisted)
+            return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+        }
     }
 
     /// Reverse a merge. The library emits `speaker_unmerged` itself, so the
@@ -185,17 +202,19 @@ public actor SpeakerEditService {
     public func unmerge(
         primaryId: String, otherId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
-        guard let primaryName = try await library.speaker(id: primaryId)?.name,
-              let otherName = try await library.speaker(id: otherId)?.name else {
-            throw EditError.speakerNotFound
+        try await Self.editLock.run {
+            guard let primaryName = try await library.speaker(id: primaryId)?.name,
+                  let otherName = try await library.speaker(id: otherId)?.name else {
+                throw EditError.speakerNotFound
+            }
+            try await library.unmerge(primaryId: primaryId, otherId: otherId)
+            let appearances = try await library.appearances(of: otherId)
+            let results = try await rewriter.rewrite(
+                oldName: primaryName, newName: otherName, appearances: appearances,
+                outputFolderRoots: outputFolderRoots, reason: .speakerUnmerged)
+            await emitRewriteEvents(results, reason: .speakerUnmerged)
+            return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
         }
-        try await library.unmerge(primaryId: primaryId, otherId: otherId)
-        let appearances = try await library.appearances(of: otherId)
-        let results = try await rewriter.rewrite(
-            oldName: primaryName, newName: otherName, appearances: appearances,
-            outputFolderRoots: outputFolderRoots, reason: .speakerUnmerged)
-        await emitRewriteEvents(results, reason: .speakerUnmerged)
-        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
     }
 
     /// Reverse a split. The library emits `speaker_unsplit` itself. Appearances
@@ -204,33 +223,39 @@ public actor SpeakerEditService {
     public func unsplit(
         originalId: String, newId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
-        guard let originalName = try await library.speaker(id: originalId)?.name,
-              let newName = try await library.speaker(id: newId)?.name else {
-            throw EditError.speakerNotFound
+        try await Self.editLock.run {
+            guard let originalName = try await library.speaker(id: originalId)?.name,
+                  let newName = try await library.speaker(id: newId)?.name else {
+                throw EditError.speakerNotFound
+            }
+            let appearances = try await library.appearances(of: newId)
+            try await library.unsplit(originalId: originalId, newId: newId)
+            let results = try await rewriter.rewrite(
+                oldName: newName, newName: originalName, appearances: appearances,
+                outputFolderRoots: outputFolderRoots, reason: .speakerUnsplit)
+            await emitRewriteEvents(results, reason: .speakerUnsplit)
+            return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
         }
-        let appearances = try await library.appearances(of: newId)
-        try await library.unsplit(originalId: originalId, newId: newId)
-        let results = try await rewriter.rewrite(
-            oldName: newName, newName: originalName, appearances: appearances,
-            outputFolderRoots: outputFolderRoots, reason: .speakerUnsplit)
-        await emitRewriteEvents(results, reason: .speakerUnsplit)
-        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
     }
 
     /// Soft-delete a speaker. No transcript rewrite (deletion does not change
     /// any label); the library emits `speaker_deleted` itself.
     // PT-P6-R9
     public func delete(speakerId: String) async throws -> EditResult {
-        try await library.delete(speakerId: speakerId)
-        return EditResult(rewrittenRecordingIds: [])
+        try await Self.editLock.run {
+            try await library.delete(speakerId: speakerId)
+            return EditResult(rewrittenRecordingIds: [])
+        }
     }
 
     /// Restore a soft-deleted speaker. No rewrite; the library emits
     /// `speaker_undeleted` itself.
     // PT-P6-R9
     public func undelete(speakerId: String) async throws -> EditResult {
-        try await library.undelete(speakerId: speakerId)
-        return EditResult(rewrittenRecordingIds: [])
+        try await Self.editLock.run {
+            try await library.undelete(speakerId: speakerId)
+            return EditResult(rewrittenRecordingIds: [])
+        }
     }
 
     /// Emit one `final_md_rewritten` event per rewritten recording, after the
