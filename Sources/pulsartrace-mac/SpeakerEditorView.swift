@@ -35,6 +35,10 @@ struct SpeakerEditorView: View {
 
     @Environment(MenuBarSettings.self) private var settings
 
+    /// The app environment — read for the single shared `SpeakerLibrary` writer
+    /// (PT-P6-D1), so the editor and the MCP server never open two libraries.
+    @Environment(AppEnvironment.self) private var environment
+
     @State private var viewModel: SpeakerEditorViewModel?
     /// Set when opening the speaker library fails — shows an error state
     /// instead of an indefinite "Loading…".
@@ -560,12 +564,16 @@ struct SpeakerEditorView: View {
     /// cannot leak `/Users/<name>/...` into the UI.
     private func loadLibrary() async {
         guard viewModel == nil else { return }
-        do {
-            viewModel = try await SpeakerEditorViewModel.load(
-                events: events, settings: settings)
-        } catch {
-            loadError = PathRedactor.redactHome("\(error)")
+        // PT-P6-D1: use the single shared library `AppEnvironment` opened in
+        // bootstrap (the same writer the MCP server uses) rather than opening a
+        // second one. `nil` means the bootstrap open failed — surface the error
+        // state, the same outcome `load` produced on a failed open.
+        guard let library = await environment.sharedSpeakerLibrary() else {
+            loadError = "The speaker library could not be opened."
+            return
         }
+        viewModel = await SpeakerEditorViewModel.using(
+            library: library, events: events, settings: settings)
     }
 }
 

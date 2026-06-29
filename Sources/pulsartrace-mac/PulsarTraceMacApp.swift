@@ -44,8 +44,10 @@ struct PulsarTraceMacApp: App {
         _environment = State(initialValue: environment)
         _hotkey = State(initialValue: hotkey)
         // PT-P6-R1: the controller reads the (default-off) toggle and only
-        // starts the server when the user enables it in Settings.
-        _mcpController = State(initialValue: MCPController(settings: environment.settings))
+        // starts the server when the user enables it in Settings. It takes the
+        // whole environment so it can host the toolset over the single shared
+        // SpeakerLibrary (PT-P6-D1).
+        _mcpController = State(initialValue: MCPController(environment: environment))
     }
 
     var body: some Scene {
@@ -108,6 +110,9 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.scanner)
                 .environment(environment.navigation)
                 .environment(environment.queueVM)
+                // The speaker editor reads the shared SpeakerLibrary off the
+                // environment (PT-P6-D1) — the single writer the MCP server uses.
+                .environment(environment)
                 // Recordings master-detail split (§4): the pane list model,
                 // the transcript detail model, and the live watcher the
                 // detail binds to for the in-progress recording.

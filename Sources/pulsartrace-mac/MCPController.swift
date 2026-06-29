@@ -1,7 +1,36 @@
 import Foundation
 import Observation
+import PulsarTraceEngine
 import PulsarTraceMCP
 import PulsarTraceMenuBar
+
+/// Live recordings / `is_live` over the menubar scanner + recording view model
+/// (PT-P6-R3). Both held types are `@MainActor`-isolated (hence `Sendable`); the
+/// `RecordingsProviding` methods hop onto the main actor to read them.
+private struct LiveRecordings: RecordingsProviding {
+    let scanner: RecordingsScanner
+    let recording: RecordingViewModel
+    func snapshot() async -> [RecordingEntry] {
+        await scanner.refresh()
+        return await scanner.recordings
+    }
+    func liveRecordingID() async -> String? {
+        if case .recording(let id, _) = await recording.status { return id }
+        return nil
+    }
+}
+
+/// Enqueue a refine through the menubar queue façade (PT-P6-R6). The queue
+/// dedups, so a repeat enqueue for the same recording is a no-op.
+private struct LiveRefine: RefineRequesting {
+    let queueVM: RefinementJobQueueViewModel
+    let settings: MenuBarSettings
+    func requestRefine(folderURL: URL, recordingId: String) async throws {
+        let model = await MainActor.run { settings.refineModelName }
+        await queueVM.enqueueManual(
+            folderURL: folderURL, recordingId: recordingId, refineModelName: model)
+    }
+}
 
 /// Owns the MCP server lifecycle for the app (PT-P6-R1). Lives in the executable
 /// composition root because it bridges menubar state into the MCP module — the
@@ -11,12 +40,14 @@ import PulsarTraceMenuBar
 @MainActor
 @Observable
 final class MCPController {
+    private let environment: AppEnvironment
     private let settings: MenuBarSettings
     private(set) var server: MCPServer?
     private var wiring: Task<Void, Never>?
 
-    init(settings: MenuBarSettings) {
-        self.settings = settings
+    init(environment: AppEnvironment) {
+        self.environment = environment
+        self.settings = environment.settings
         startWiring()
     }
 
@@ -43,8 +74,28 @@ final class MCPController {
         await server?.stop()
         server = nil
         guard enabled else { return }
-        // E5-T4 replaces this with `MCPServer(port:auth:tools:)` carrying the full toolset.
-        let server = MCPServer(port: port, auth: MCPAuth())
+        // PT-P6-D1: the agent surface writes through the ONE shared library
+        // `AppEnvironment` owns (also used by the menubar editor). Awaiting it
+        // lets the server start even if the user enabled it before bootstrap
+        // finished opening the library; a failed open declines to start.
+        guard let library = await environment.sharedSpeakerLibrary() else { return }
+
+        let recordings = LiveRecordings(
+            scanner: environment.scanner, recording: environment.recording)
+        let refine = LiveRefine(
+            queueVM: environment.queueVM, settings: environment.settings)
+        let edits = SpeakerEditService(library: library, events: environment.events)
+        let settings = environment.settings
+        let roots: @Sendable () async -> [URL] = {
+            await MainActor.run {
+                [settings.outputFolderURL].compactMap { $0 } + settings.previousFolderURLs
+            }
+        }
+        let tools = MCPToolset.all(
+            recordings: recordings, speakerLibrary: library, events: EventLogReader(),
+            speakerEdits: edits, outputRoots: roots, refine: refine)
+
+        let server = MCPServer(port: port, auth: MCPAuth(), tools: tools)
         do { try await server.start(); self.server = server }
         catch { self.server = nil }
     }

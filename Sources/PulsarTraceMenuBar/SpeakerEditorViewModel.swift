@@ -88,11 +88,28 @@ public final class SpeakerEditorViewModel {
     /// VM — the one place the editor flow touches `AppPaths`/`SpeakerLibrary`,
     /// so the view layer never constructs engine objects. A failure to open
     /// the library throws; the view surfaces it as its error state (I6).
+    ///
+    /// In the shipped app the editor uses `using(library:…)` over the single
+    /// shared library `AppEnvironment` owns (PT-P6-D1); this `load` remains for
+    /// callers that legitimately open a standalone library.
     public static func load(
         events: EventWriter?, settings: MenuBarSettings
     ) async throws -> SpeakerEditorViewModel {
         let library = try await SpeakerLibrary(
             databaseURL: AppPaths.standard.speakersDatabaseURL, events: events)
+        let vm = SpeakerEditorViewModel(
+            library: library, events: events, settings: settings)
+        await vm.reload()
+        return vm
+    }
+
+    /// Build a ready VM over an already-opened library — the single shared
+    /// writer `AppEnvironment` owns (PT-P6-D1), the same instance the MCP server
+    /// uses. Unlike `load`, this does NOT open a second `SpeakerLibrary`, so the
+    /// editor and the agent surface never drift across two caches.
+    public static func using(
+        library: SpeakerLibrary, events: EventWriter?, settings: MenuBarSettings
+    ) async -> SpeakerEditorViewModel {
         let vm = SpeakerEditorViewModel(
             library: library, events: events, settings: settings)
         await vm.reload()
