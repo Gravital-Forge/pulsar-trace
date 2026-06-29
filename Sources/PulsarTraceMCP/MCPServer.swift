@@ -11,6 +11,8 @@ public actor MCPServer {
     private let auth: MCPAuth
     private let server: Server
     private let transport: StatelessHTTPServerTransport
+    private let registry: ToolRegistry
+    private let initialTools: [MCPTool]
     private var listener: LoopbackHTTPListener?
     private var token: String?
     private let statusBox = MCPStatusBox()
@@ -20,7 +22,7 @@ public actor MCPServer {
     /// (PT-P6-R11). Read off a lock-guarded cell, no actor hop required.
     public var status: MCPServerStatus { statusBox.status }
 
-    public init(port: UInt16, auth: MCPAuth) {
+    public init(port: UInt16, auth: MCPAuth, tools: [MCPTool] = []) {
         self.port = port
         self.auth = auth
         self.server = Server(
@@ -28,6 +30,8 @@ public actor MCPServer {
             version: MCPServerInfo.serverVersion,
             capabilities: .init(tools: .init(listChanged: false)))
         self.transport = StatelessHTTPServerTransport()
+        self.registry = ToolRegistry()
+        self.initialTools = tools
     }
 
     /// The token, generating + persisting one on first use.
@@ -48,12 +52,11 @@ public actor MCPServer {
 
     public func start() async throws {
         let token = try currentToken()
-        // The SDK auto-registers only `initialize` + `ping`; declare an empty
-        // `tools/list` so the handshake round-trips. Real tools land in a later
-        // epic (PT-P6-D1).
-        await server.withMethodHandler(ListTools.self) { _ in
-            ListTools.Result(tools: [])
-        }
+        // Install the tool surface: the registry registers the SDK
+        // `tools/list` + `tools/call` handlers off the live tool set, so the
+        // handshake round-trips even with no tools (PT-P6-R3, PT-P6-D1).
+        await registry.register(initialTools)
+        await registry.install(on: server)
         try await server.start(transport: transport)
         let transport = self.transport
         let box = self.statusBox
