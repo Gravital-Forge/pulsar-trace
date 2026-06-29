@@ -88,7 +88,10 @@ let package = Package(
                 // The read surface (PT-P6-R3) projects `RecordingEntry` DTOs;
                 // the live adapter (E5) reads the menubar's scanner + view model.
                 "PulsarTraceMenuBar",
-            ]
+            ],
+            // The self-describing operations manual (PT-P6-R8, PT-P6-D5),
+            // bundled as a versioned resource the `manual` tool returns.
+            resources: [.copy("Resources/manual.md")]
         ),
         // The thin SwiftUI executable — `MenuBarExtra` + `Settings`
         // scenes bound to `PulsarTraceMenuBar`'s ViewModels. No logic, no
