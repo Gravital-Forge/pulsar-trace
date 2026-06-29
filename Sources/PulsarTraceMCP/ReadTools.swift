@@ -94,6 +94,60 @@ public enum ReadTools {
         ]
     }
 
+    // PT-P6-R4
+    public static func listSpeakers(library: SpeakerLibrary) -> MCPTool {
+        MCPTool(
+            name: "list_speakers",
+            description: "List the live speakers in the library (id, name, appearance count, last seen). "
+                + "Excludes deleted and delisted speakers.",
+            inputSchema: .object(["type": .string("object"), "properties": .object([:])])
+        ) { _ in
+            do {
+                let speakers = try await library.liveSpeakers().map { speakerSummary($0) }
+                return jsonResult(["speakers": speakers])
+            } catch {
+                return errorResult("Could not read the speaker library: \(error)")
+            }
+        }
+    }
+
+    // PT-P6-R4
+    public static func getSpeaker(library: SpeakerLibrary) -> MCPTool {
+        MCPTool(
+            name: "get_speaker",
+            description: "Fetch one speaker by id with the recordings it appears in.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object(["id": .object(["type": .string("string")])]),
+                "required": .array([.string("id")]),
+            ])
+        ) { args in
+            guard let id = args?["id"]?.stringValue else {
+                return errorResult("get_speaker requires an `id` argument.")
+            }
+            do {
+                guard let speaker = try await library.speaker(id: id) else {
+                    return errorResult("No speaker with id \(id).")
+                }
+                let appearances = try await library.appearances(of: id).map {
+                    ["recording_id": $0.recordingId, "recording_folder": $0.recordingFolderName,
+                     "observed_at": $0.observedAt]
+                }
+                var dto = speakerSummary(speaker)
+                dto["appearances"] = appearances
+                return jsonResult(["speaker": dto])
+            } catch {
+                return errorResult("Could not read speaker \(id): \(error)")
+            }
+        }
+    }
+
+    /// Summary DTO for a speaker. `lastSeen` is already an ISO-8601 UTC string on
+    /// the engine `Speaker`, so it is surfaced verbatim (no Date conversion).
+    static func speakerSummary(_ s: Speaker) -> [String: Any] {
+        ["id": s.id, "name": s.name, "appearance_count": s.appearanceCount, "last_seen": s.lastSeen]
+    }
+
     static func jsonResult(_ object: [String: Any]) -> CallTool.Result {
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
         return CallTool.Result(content: [.text(text: String(decoding: data, as: UTF8.self), annotations: nil, _meta: nil)], isError: false)
