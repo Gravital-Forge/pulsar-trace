@@ -23,13 +23,14 @@ public struct UndoToast: Identifiable, Sendable {
 /// Drives the menubar speaker editor (PT-R44): rename / merge / split / delete /
 /// undelete, each followed by the retroactive `final.md` rewrite (PT-P1-D16).
 ///
-/// Every mutating op follows the causal contract:
-/// 1. mutate `SpeakerLibrary` with `suppressEvent: true` (DB write only),
-/// 2. run `FinalMarkdownRewriter` over the affected appearances,
-/// 3. emit the single `speaker_*` event with a populated
-///    `applied_to_recordings` — so the cause (`speaker_*`) is logged before
-///    its effects (`final_md_rewritten`), and `applied_to_recordings` lists
-///    exactly the recordings whose `final.md` was rewritten.
+/// The edit orchestration — mutate `SpeakerLibrary` with its event suppressed,
+/// run `FinalMarkdownRewriter` over the affected appearances, then emit the
+/// `speaker_*` cause before its `final_md_rewritten` effects (so the cause is
+/// logged first and `applied_to_recordings` lists exactly the rewritten
+/// recordings) — lives in the shared `SpeakerEditService` (PT-P6-R9), which the
+/// MCP server and CLI also call. This view model delegates each mutating op to
+/// the service inside `withRewrite { }` and owns only the UI concerns: the cheap
+/// pre-checks, `lastError`, `isRewriting`, the undo toasts, and `reload`.
 ///
 /// `@MainActor @Observable` for direct SwiftUI binding.
 @MainActor
