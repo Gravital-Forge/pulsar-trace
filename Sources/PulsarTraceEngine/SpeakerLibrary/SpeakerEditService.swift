@@ -109,6 +109,32 @@ public actor SpeakerEditService {
         return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
     }
 
+    /// Split `movingRecordingIds` off `originalId` into a new speaker `newName`,
+    /// and rewrite the moved recordings' `final.md` to the new name. Appearances
+    /// are read from the **new** speaker after the mint.
+    // PT-P6-R9
+    public func split(
+        originalId: String, movingRecordingIds: [String], newName: String,
+        outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        try Self.validateName(newName)
+        guard let originalName = try await library.speaker(id: originalId)?.name else {
+            throw EditError.speakerNotFound
+        }
+        let newSpeaker = try await library.split(
+            originalId: originalId, movingRecordingIds: movingRecordingIds,
+            newName: newName, suppressEvent: true)
+        let appearances = try await library.appearances(of: newSpeaker.id)
+        let results = try await rewriter.rewrite(
+            oldName: originalName, newName: newName, appearances: appearances,
+            outputFolderRoots: outputFolderRoots, reason: .speakerSplit)
+        _ = try? await events?.append(SpeakerSplitEvent(
+            originalSpeakerId: originalId, newSpeakerId: newSpeaker.id,
+            appliedToRecordings: results.map(\.recordingId)))
+        await emitRewriteEvents(results, reason: .speakerSplit)
+        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+    }
+
     /// Emit one `final_md_rewritten` event per rewritten recording, after the
     /// cause event, preserving causal order (Hard Invariant #8).
     func emitRewriteEvents(

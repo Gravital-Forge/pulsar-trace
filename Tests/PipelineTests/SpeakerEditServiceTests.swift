@@ -165,4 +165,51 @@ struct SpeakerEditServiceTests {
         let log = try String(contentsOf: await events.currentFileURL(), encoding: .utf8)
         #expect(log.range(of: "speaker_merged")!.lowerBound < log.range(of: "final_md_rewritten")!.lowerBound)
     }
+
+    // MARK: - T3: split
+
+    @Test("split mints a new speaker and rewrites the moved recording to the new name")
+    func splitRewritesMovedRecording() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        // One speaker "Unknown #1" appearing in rec_standup; split it out under a new name.
+        let original = try await library.createSpeaker(
+            name: "Unknown #1", centroid: centroid(0.1), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        let service = SpeakerEditService(library: library, events: events)
+
+        let result = try await service.split(
+            originalId: original.id, movingRecordingIds: ["rec_standup"],
+            newName: "Alice", outputFolderRoots: [root])
+
+        #expect(result.rewrittenRecordingIds == ["rec_standup"])
+        let finalText = try String(contentsOf: folder.appendingPathComponent("final.md"), encoding: .utf8)
+        #expect(finalText.contains("] Alice:**"))
+        #expect(!finalText.contains("] Unknown #1:**"))
+        await events.flush()
+        let log = try String(contentsOf: await events.currentFileURL(), encoding: .utf8)
+        #expect(log.range(of: "speaker_split")!.lowerBound < log.range(of: "final_md_rewritten")!.lowerBound)
+    }
+
+    @Test("split with an invalid new name throws before mutating")
+    func splitRejectsInvalidName() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let original = try await library.createSpeaker(
+            name: "Unknown #1", centroid: centroid(0.1), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: "standup")
+        let service = SpeakerEditService(library: library, events: nil)
+
+        await #expect(throws: SpeakerEditService.EditError.self) {
+            _ = try await service.split(
+                originalId: original.id, movingRecordingIds: ["rec_standup"],
+                newName: "  ", outputFolderRoots: [root])
+        }
+    }
 }
