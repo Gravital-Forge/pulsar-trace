@@ -13,6 +13,12 @@ public actor MCPServer {
     private let transport: StatelessHTTPServerTransport
     private var listener: LoopbackHTTPListener?
     private var token: String?
+    private let statusBox = MCPStatusBox()
+    private var rebuildAttempts = 0
+
+    /// The server's live status — `running` / `portInUse` / `failed` / `stopped`
+    /// (PT-P6-R11). Read off a lock-guarded cell, no actor hop required.
+    public var status: MCPServerStatus { statusBox.status }
 
     public init(port: UInt16, auth: MCPAuth) {
         self.port = port
@@ -50,8 +56,14 @@ public actor MCPServer {
         }
         try await server.start(transport: transport)
         let transport = self.transport
+        let box = self.statusBox
         let listener = LoopbackHTTPListener(port: port) { req in
-            await MCPServer.route(req, transport: transport, token: token)
+            await MCPServer.route(req, transport: transport, token: token, status: box.status)
+        }
+        // Observe state *before* starting so the first `.ready` or bind failure
+        // updates the status box and drives supervision (PT-P6-R11, PT-P6-D10).
+        listener.onStateChange { [weak self] state in
+            Task { await self?.handleListenerState(state) }
         }
         try listener.start()
         self.listener = listener
@@ -61,6 +73,49 @@ public actor MCPServer {
         listener?.stop()
         listener = nil
         await server.stop()
+        statusBox.set(.stopped)
+    }
+
+    /// React to a listener state change (PT-P6-R11, PT-P6-D10): record `running`
+    /// on `.ready`, surface `portInUse` on a bind clash without rotating
+    /// (PT-P6-D3), and rebuild a genuinely failed listener with bounded backoff.
+    private func handleListenerState(_ state: LoopbackHTTPListener.ListenerState) async {
+        switch state {
+        case .ready:
+            rebuildAttempts = 0
+            if let port = listener?.boundPort, port != 0 {
+                statusBox.set(.running(port: port))
+            }
+        case .waiting(_, let addressInUse) where addressInUse,
+             .failed(_, let addressInUse) where addressInUse:
+            statusBox.set(.portInUse(port))     // explicit port; never rotate (PT-P6-D3)
+            listener?.stop()
+            listener = nil
+        case .failed(let reason, _):
+            await rebuildAfterFailure(reason: reason)
+        default:
+            break
+        }
+    }
+
+    private func rebuildAfterFailure(reason: String) async {
+        guard rebuildAttempts < MCPSupervisor.maxAttempts else {
+            statusBox.set(.failed(reason)); listener?.stop(); listener = nil; return
+        }
+        rebuildAttempts += 1
+        try? await Task.sleep(for: MCPSupervisor.backoffDelay(attempt: rebuildAttempts))
+        listener?.stop()
+        let token = (try? currentToken()) ?? ""
+        let transport = self.transport
+        let box = self.statusBox
+        let fresh = LoopbackHTTPListener(port: port) { req in
+            await MCPServer.route(req, transport: transport, token: token, status: box.status)
+        }
+        fresh.onStateChange { [weak self] state in
+            Task { await self?.handleListenerState(state) }
+        }
+        try? fresh.start()
+        listener = fresh
     }
 
     /// Route one request. `GET /healthz` is unauthenticated; `POST /mcp` is
@@ -68,11 +123,15 @@ public actor MCPServer {
     static func route(
         _ req: LoopbackHTTPRequest,
         transport: StatelessHTTPServerTransport,
-        token: String
+        token: String,
+        status: MCPServerStatus
     ) async -> LoopbackHTTPResponse {
         switch (req.method, req.path) {
         case ("GET", "/healthz"):
-            return .json(200, ["status": "ok"])
+            let body = (try? JSONSerialization.data(
+                withJSONObject: status.healthzJSON(), options: [.sortedKeys])) ?? Data()
+            return LoopbackHTTPResponse(
+                status: 200, headers: ["Content-Type": "application/json"], body: body)
 
         case ("GET", "/mcp"):
             return LoopbackHTTPResponse(
