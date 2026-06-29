@@ -49,6 +49,13 @@ edits are refused while a recording is in progress — the library is read-only 
 - `request_refine` — enqueue a (re-)refinement; it runs in the background and returns immediately.
   Watch `recent_events` for `refinement_started` / `final_md_rewritten` / `refinement_completed`.
 
+## Discovery
+
+- Every tool is self-describing: the tool list carries each tool's name, description, and input
+  schema, so you can enumerate the whole surface directly before calling anything.
+- `manual` — return this operations manual (the data model and the semantics and reversibility of
+  every operation).
+
 ## What this surface does not do
 
 It does not change settings or model selection, does not start or stop capture, and does not transit
