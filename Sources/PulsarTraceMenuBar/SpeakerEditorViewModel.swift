@@ -55,7 +55,7 @@ public final class SpeakerEditorViewModel {
     private let library: SpeakerLibrary
     private let events: EventWriter?
     private let settings: MenuBarSettings
-    private let rewriter: FinalMarkdownRewriter
+    private let service: SpeakerEditService
     /// How long an undo toast stays up before auto-dismissing.
     private let toastLifetime: Duration
     /// The pending auto-dismiss for the current toast — cancelled when the
@@ -79,7 +79,7 @@ public final class SpeakerEditorViewModel {
         self.library = library
         self.events = events
         self.settings = settings
-        self.rewriter = FinalMarkdownRewriter()
+        self.service = SpeakerEditService(library: library, events: events)   // PT-P6-R9
         self.toastLifetime = toastLifetime
     }
 
@@ -134,20 +134,9 @@ public final class SpeakerEditorViewModel {
         guard liveSpeakers.first(where: { $0.id == speakerId })?.name != newName
         else { return }
         await withRewrite {
-            let oldName = try await self.library.rename(
-                speakerId: speakerId, to: newName, suppressEvent: true)
-            let appearances = try await self.library.appearances(of: speakerId)
-            let results = try await self.rewriter.rewrite(
-                oldName: oldName, newName: newName,
-                appearances: appearances,
-                outputFolderRoots: self.outputRoots(),
-                reason: .speakerRenamed)
-            // Causal order: emit `speaker_renamed` (the cause) FIRST, then the
-            // rewriter's `final_md_rewritten` events.
-            _ = try? await self.events?.append(SpeakerRenamedEvent(
-                speakerId: speakerId, oldName: oldName, newName: newName,
-                appliedToRecordings: results.map(\.recordingId)))
-            await self.emitRewriteEvents(results, reason: .speakerRenamed)
+            _ = try await self.service.rename(
+                speakerId: speakerId, to: newName,
+                outputFolderRoots: self.outputRoots())
         }
     }
 
@@ -157,25 +146,9 @@ public final class SpeakerEditorViewModel {
     /// `final.md` files (PT-R44, PT-P1-D16).
     public func merge(primaryId: String, otherId: String) async {
         await withRewrite {
-            let names = try await self.library.merge(
-                primaryId: primaryId, otherId: otherId, suppressEvent: true)
-            // The merged-away speaker's appearances are now owned by `primary`;
-            // rewrite `otherName` → `primaryName` across them.
-            let appearances = try await self.library.appearances(of: primaryId)
-            let results = try await self.rewriter.rewrite(
-                oldName: names.otherName, newName: names.primaryName,
-                appearances: appearances,
-                outputFolderRoots: self.outputRoots(),
-                reason: .speakerMerged,
-                // Drop the merged-away row from `metadata.json` so a
-                // recording that had BOTH speakers doesn't end up with two
-                // rows under the primary's name (which surfaces in the
-                // recordings-list pills as a duplicate chip).
-                removedSpeakerId: otherId)
-            _ = try? await self.events?.append(SpeakerMergedEvent(
-                primarySpeakerId: primaryId, mergedSpeakerId: otherId,
-                appliedToRecordings: results.map(\.recordingId)))
-            await self.emitRewriteEvents(results, reason: .speakerMerged)
+            _ = try await self.service.merge(
+                primaryId: primaryId, otherId: otherId,
+                outputFolderRoots: self.outputRoots())
         }
     }
 
@@ -190,26 +163,9 @@ public final class SpeakerEditorViewModel {
     ) async {
         guard validateName(newName) else { return }
         await withRewrite {
-            guard let originalName =
-                try await self.library.speaker(id: originalId)?.name else {
-                throw EditorError.speakerNotFound
-            }
-            let newSpeaker = try await self.library.split(
-                originalId: originalId,
-                movingRecordingIds: movingRecordingIds,
-                newName: newName, suppressEvent: true)
-            // The moved appearances now belong to the new speaker; rewrite
-            // `originalName` → `newName` across them.
-            let appearances = try await self.library.appearances(of: newSpeaker.id)
-            let results = try await self.rewriter.rewrite(
-                oldName: originalName, newName: newName,
-                appearances: appearances,
-                outputFolderRoots: self.outputRoots(),
-                reason: .speakerSplit)
-            _ = try? await self.events?.append(SpeakerSplitEvent(
-                originalSpeakerId: originalId, newSpeakerId: newSpeaker.id,
-                appliedToRecordings: results.map(\.recordingId)))
-            await self.emitRewriteEvents(results, reason: .speakerSplit)
+            _ = try await self.service.split(
+                originalId: originalId, movingRecordingIds: movingRecordingIds,
+                newName: newName, outputFolderRoots: self.outputRoots())
         }
     }
 
@@ -220,7 +176,7 @@ public final class SpeakerEditorViewModel {
     public func delete(speakerId: String) async {
         let name = liveSpeakers.first { $0.id == speakerId }?.name ?? "speaker"
         await withRewrite {
-            try await self.library.delete(speakerId: speakerId)
+            _ = try await self.service.delete(speakerId: speakerId)
         }
         if lastError == nil {
             showToast(UndoToast(message: "Deleted \(name)") { [weak self] in
@@ -232,7 +188,7 @@ public final class SpeakerEditorViewModel {
     /// Restore a soft-deleted speaker (PT-R44 undo).
     public func undelete(speakerId: String) async {
         await withRewrite {
-            try await self.library.undelete(speakerId: speakerId)
+            _ = try await self.service.undelete(speakerId: speakerId)
         }
     }
 
@@ -262,23 +218,8 @@ public final class SpeakerEditorViewModel {
         }
         let name = target.name
         await withRewrite {
-            _ = try await self.library.delist(
-                speakerId: speakerId, suppressEvent: true)
-            let appearances = try await self.library.appearances(of: speakerId)
-            let results = try await self.rewriter.rewriteDropping(
-                name: name, speakerId: speakerId,
-                appearances: appearances,
-                outputFolderRoots: self.outputRoots(),
-                reason: .speakerDelisted)
-            // Causal order: emit `speaker_delisted` (the cause) BEFORE the
-            // rewriter's `final_md_rewritten` events.
-            let recoverableUntil = Timestamps.event(
-                Date().addingTimeInterval(SpeakerLibrary.recoveryWindow))
-            _ = try? await self.events?.append(SpeakerDelistedEvent(
-                speakerId: speakerId,
-                recoverableUntil: recoverableUntil,
-                appliedToRecordings: results.map(\.recordingId)))
-            await self.emitRewriteEvents(results, reason: .speakerDelisted)
+            _ = try await self.service.delist(
+                speakerId: speakerId, outputFolderRoots: self.outputRoots())
         }
         if lastError == nil {
             showToast(UndoToast(message: "Stopped recognizing \(name)") {
@@ -312,18 +253,8 @@ public final class SpeakerEditorViewModel {
     /// `metadata.json` is not restored (it was dropped on delist).
     public func undelist(speakerId: String) async {
         await withRewrite {
-            let name = try await self.library.undelist(
-                speakerId: speakerId, suppressEvent: true)
-            let appearances = try await self.library.appearances(of: speakerId)
-            let results = try await self.rewriter.rewrite(
-                oldName: "Unrecognized", newName: name,
-                appearances: appearances,
-                outputFolderRoots: self.outputRoots(),
-                reason: .speakerUndelisted)
-            _ = try? await self.events?.append(SpeakerUndelistedEvent(
-                speakerId: speakerId,
-                appliedToRecordings: results.map(\.recordingId)))
-            await self.emitRewriteEvents(results, reason: .speakerUndelisted)
+            _ = try await self.service.undelist(
+                speakerId: speakerId, outputFolderRoots: self.outputRoots())
         }
     }
 
@@ -335,28 +266,9 @@ public final class SpeakerEditorViewModel {
     /// cause); the paired `final_md_rewritten` events follow in causal order.
     public func unmerge(primaryId: String, otherId: String) async {
         await withRewrite {
-            guard let primaryName =
-                try await self.library.speaker(id: primaryId)?.name,
-                let otherName =
-                    try await self.library.speaker(id: otherId)?.name
-            else { throw EditorError.speakerNotFound }
-
-            try await self.library.unmerge(
-                primaryId: primaryId, otherId: otherId)
-
-            // The merge moved `other`'s appearances onto `primary` and they
-            // are now restored to `other`; rewrite `primaryName` → `otherName`
-            // scoped to exactly those restored appearances. A recording that
-            // genuinely contained BOTH speakers is handled best-effort per
-            // PT-P1-D18 — the rare merge-collision case the centroid math also
-            // documents.
-            let appearances = try await self.library.appearances(of: otherId)
-            let results = try await self.rewriter.rewrite(
-                oldName: primaryName, newName: otherName,
-                appearances: appearances,
-                outputFolderRoots: self.outputRoots(),
-                reason: .speakerUnmerged)
-            await self.emitRewriteEvents(results, reason: .speakerUnmerged)
+            _ = try await self.service.unmerge(
+                primaryId: primaryId, otherId: otherId,
+                outputFolderRoots: self.outputRoots())
         }
     }
 
@@ -367,27 +279,9 @@ public final class SpeakerEditorViewModel {
     /// `final_md_rewritten` events follow in causal order.
     public func unsplit(originalId: String, newId: String) async {
         await withRewrite {
-            guard let originalName =
-                try await self.library.speaker(id: originalId)?.name,
-                let newName =
-                    try await self.library.speaker(id: newId)?.name
-            else { throw EditorError.speakerNotFound }
-
-            // The split-off appearances are about to move back to the
-            // original — capture them before the library mutation so the
-            // rewrite is scoped to exactly those recordings. A recording that
-            // genuinely contained both speakers is handled best-effort (PT-P1-D18).
-            let appearances = try await self.library.appearances(of: newId)
-
-            try await self.library.unsplit(
-                originalId: originalId, newId: newId)
-
-            let results = try await self.rewriter.rewrite(
-                oldName: newName, newName: originalName,
-                appearances: appearances,
-                outputFolderRoots: self.outputRoots(),
-                reason: .speakerUnsplit)
-            await self.emitRewriteEvents(results, reason: .speakerUnsplit)
+            _ = try await self.service.unsplit(
+                originalId: originalId, newId: newId,
+                outputFolderRoots: self.outputRoots())
         }
     }
 
@@ -429,17 +323,13 @@ public final class SpeakerEditorViewModel {
     /// `**[HH:MM:SS] <label>:**` label parsing (`+` is the co-attribution
     /// separator). On failure `lastError` is set and `false` returned.
     func validateName(_ name: String) -> Bool {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            lastError = "A speaker name cannot be empty."
+        do {
+            try SpeakerEditService.validateName(name)
+            return true
+        } catch {
+            lastError = "\(error)"   // EditError.invalidName carries the same messages as before
             return false
         }
-        let forbidden: Set<Character> = ["+", "*", "`"]
-        guard !trimmed.contains(where: { forbidden.contains($0) }) else {
-            lastError = "A speaker name cannot contain + * or `."
-            return false
-        }
-        return true
     }
 
     // MARK: - Helpers
@@ -449,21 +339,6 @@ public final class SpeakerEditorViewModel {
         var roots = [settings.outputFolderURL].compactMap { $0 }
         roots += settings.previousFolderURLs
         return roots
-    }
-
-    /// Emit one `final_md_rewritten` per rewritten recording, in processing
-    /// order — after the `speaker_*` cause (causal order).
-    private func emitRewriteEvents(
-        _ results: [FinalMarkdownRewriter.RecordingResult],
-        reason: FinalMarkdownRewriter.RewriteReason
-    ) async {
-        for result in results {
-            _ = try? await events?.append(FinalMDRewrittenEvent(
-                recordingId: result.recordingId,
-                pathBasename: RecordingFolder.FileName.final,
-                sha256: result.newSHA256,
-                reason: reason.rawValue))
-        }
     }
 
     /// Run a mutating op with the `isRewriting` flag, error capture, and a
@@ -487,15 +362,5 @@ public final class SpeakerEditorViewModel {
         }
         isRewriting = false
         await reload()
-    }
-
-    /// Editor-level errors.
-    enum EditorError: Error, CustomStringConvertible {
-        case speakerNotFound
-        var description: String {
-            switch self {
-            case .speakerNotFound: return "speaker not found"
-            }
-        }
     }
 }
