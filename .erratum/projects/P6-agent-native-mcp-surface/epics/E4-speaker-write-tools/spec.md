@@ -1,6 +1,6 @@
 # PT-P6-E4 · Speaker Write Tools — Specification
 
-**Status:** Open · **Opened:** 2026-06-26
+**Status:** Frozen · **Opened:** 2026-06-26 · **Closed:** 2026-06-29
 
 ## Intent
 
