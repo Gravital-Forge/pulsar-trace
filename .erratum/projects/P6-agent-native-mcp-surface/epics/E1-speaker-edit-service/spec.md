@@ -1,6 +1,6 @@
 # PT-P6-E1 · Speaker Edit Service — Specification
 
-**Status:** Open · **Opened:** 2026-06-26
+**Status:** Frozen · **Opened:** 2026-06-26 · **Closed:** 2026-06-29
 
 ## Intent
 
