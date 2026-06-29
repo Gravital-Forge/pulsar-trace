@@ -179,6 +179,60 @@ public actor SpeakerEditService {
         return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
     }
 
+    /// Reverse a merge. The library emits `speaker_unmerged` itself, so the
+    /// service emits only the rewrite effects.
+    // PT-P6-R9
+    public func unmerge(
+        primaryId: String, otherId: String, outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        guard let primaryName = try await library.speaker(id: primaryId)?.name,
+              let otherName = try await library.speaker(id: otherId)?.name else {
+            throw EditError.speakerNotFound
+        }
+        try await library.unmerge(primaryId: primaryId, otherId: otherId)
+        let appearances = try await library.appearances(of: otherId)
+        let results = try await rewriter.rewrite(
+            oldName: primaryName, newName: otherName, appearances: appearances,
+            outputFolderRoots: outputFolderRoots, reason: .speakerUnmerged)
+        await emitRewriteEvents(results, reason: .speakerUnmerged)
+        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+    }
+
+    /// Reverse a split. The library emits `speaker_unsplit` itself. Appearances
+    /// must be read BEFORE the library call (rows still resolve under `newId`).
+    // PT-P6-R9
+    public func unsplit(
+        originalId: String, newId: String, outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        guard let originalName = try await library.speaker(id: originalId)?.name,
+              let newName = try await library.speaker(id: newId)?.name else {
+            throw EditError.speakerNotFound
+        }
+        let appearances = try await library.appearances(of: newId)
+        try await library.unsplit(originalId: originalId, newId: newId)
+        let results = try await rewriter.rewrite(
+            oldName: newName, newName: originalName, appearances: appearances,
+            outputFolderRoots: outputFolderRoots, reason: .speakerUnsplit)
+        await emitRewriteEvents(results, reason: .speakerUnsplit)
+        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+    }
+
+    /// Soft-delete a speaker. No transcript rewrite (deletion does not change
+    /// any label); the library emits `speaker_deleted` itself.
+    // PT-P6-R9
+    public func delete(speakerId: String) async throws -> EditResult {
+        try await library.delete(speakerId: speakerId)
+        return EditResult(rewrittenRecordingIds: [])
+    }
+
+    /// Restore a soft-deleted speaker. No rewrite; the library emits
+    /// `speaker_undeleted` itself.
+    // PT-P6-R9
+    public func undelete(speakerId: String) async throws -> EditResult {
+        try await library.undelete(speakerId: speakerId)
+        return EditResult(rewrittenRecordingIds: [])
+    }
+
     /// Emit one `final_md_rewritten` event per rewritten recording, after the
     /// cause event, preserving causal order (Hard Invariant #8).
     func emitRewriteEvents(

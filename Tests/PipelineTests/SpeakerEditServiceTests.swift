@@ -274,4 +274,55 @@ struct SpeakerEditServiceTests {
         #expect(result.rewrittenRecordingIds == ["rec_standup"])
         #expect(try await library.liveSpeakers().contains { $0.id == steve.id })
     }
+
+    // MARK: - T5: unmerge / unsplit / delete / undelete
+
+    @Test("unmerge emits exactly one speaker_unmerged (from the library), then the effects")
+    func unmergeEmitsSingleCause() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        // The library emits `speaker_unmerged` itself, so it must share the
+        // service's events writer (production wiring — see SpeakerEditorViewModel).
+        let library = try await SpeakerLibrary(
+            databaseURL: root.appendingPathComponent("speakers.sqlite"), events: events)
+        let primary = try await library.createSpeaker(
+            name: "Unknown #1", centroid: centroid(0.1), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let other = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.2), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let service = SpeakerEditService(library: library, events: events)
+        _ = try await service.merge(primaryId: primary.id, otherId: other.id, outputFolderRoots: [root])
+        await events.flush()
+
+        _ = try await service.unmerge(primaryId: primary.id, otherId: other.id, outputFolderRoots: [root])
+
+        await events.flush()
+        let types = try eventTypes(in: await events.currentFileURL())
+        #expect(types.filter { $0 == "speaker_unmerged" }.count == 1)
+        let unmergedIdx = types.firstIndex(of: "speaker_unmerged")!
+        #expect(types[(unmergedIdx + 1)...].contains("final_md_rewritten"))
+    }
+
+    @Test("delete and undelete perform no rewrite and return empty results")
+    func deleteUndeleteNoRewrite() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.2), modelRevision: "rev1",
+            recordingId: "rec_x", recordingFolderName: "x")
+        let service = SpeakerEditService(library: library, events: nil)
+
+        let deleted = try await service.delete(speakerId: steve.id)
+        #expect(deleted.rewrittenRecordingIds.isEmpty)
+        #expect(try await library.liveSpeakers().contains { $0.id == steve.id } == false)
+
+        let undeleted = try await service.undelete(speakerId: steve.id)
+        #expect(undeleted.rewrittenRecordingIds.isEmpty)
+        #expect(try await library.liveSpeakers().contains { $0.id == steve.id })
+    }
 }
