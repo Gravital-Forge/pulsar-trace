@@ -52,6 +52,29 @@ public enum ReadTools {
         }
     }
 
+    // PT-P6-R3
+    public static func getRecordingMeta(recordings: any RecordingsProviding) -> MCPTool {
+        MCPTool(
+            name: "get_recording_meta",
+            description: "Fetch one recording's metadata and filesystem paths by id. "
+                + "Never returns transcript or audio content — read those from the returned paths.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object(["id": .object(["type": .string("string")])]),
+                "required": .array([.string("id")]),
+            ])
+        ) { args in
+            guard let id = args?["id"]?.stringValue else {
+                return errorResult("get_recording_meta requires an `id` argument.")
+            }
+            let liveID = await recordings.liveRecordingID()
+            guard let entry = await recordings.snapshot().first(where: { $0.id == id }) else {
+                return errorResult("No recording with id \(id).")
+            }
+            return jsonResult(["recording": recordingDTO(entry, liveID: liveID)])
+        }
+    }
+
     static func recordingDTO(_ e: RecordingEntry, liveID: String?) -> [String: Any] {
         [
             "id": e.id,
