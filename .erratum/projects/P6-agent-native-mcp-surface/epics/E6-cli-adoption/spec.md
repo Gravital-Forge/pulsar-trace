@@ -10,6 +10,14 @@ PT-P6-R9 (PT-P6-D7), and resolve the output-folder roots a non-menubar caller ne
 Command-Line Interface (PT-C9); uses the Speaker Edit Service (PT-P6-E1). Depends on PT-P6-E1. With
 this epic closed, project P6 is ready for Erratum close-out.
 
+Scope: the CLI today exposes `speakers list / rename / merge / delete` (a hand-rolled dispatcher, not
+`ArgumentParser`); this epic routes the three mutating ones through the shared service and adds a
+repeatable `--output-folder` flag. It does **not** add new CLI subcommands for the full MCP op set —
+PT-P6-R9's intent is that the CLI gains the rewrite, not new surface. The `pulsartrace` executable is
+not unit-tested (like `pulsartrace-mac`), so the testable units are the engine-side
+`OutputFolderRoots` / `OutputFolderArgs`; the rewrite correctness rides on the PT-P6-E1 service suite,
+and the CLI wiring is verified by build + smoke.
+
 ## Acceptance criteria
 
 - `pulsartrace speakers` rename / merge / delete (and the rest) call the Speaker Edit Service and
@@ -24,7 +32,7 @@ this epic closed, project P6 is ready for Erratum close-out.
 
 - PT-P6-E6-T1 — `OutputFolderRoots.resolved(explicit:)` in the engine (explicit roots versus the
   default).
-- PT-P6-E6-T2 — `speakers rename` routes through the service, with the `--output-folder` flag; the
-  rewrite is asserted over a temp recording folder.
+- PT-P6-E6-T2 — `OutputFolderArgs.parse` (the `--output-folder` flag) and `speakers rename` routed
+  through the service; the rewrite verified by build + smoke over a temp recording folder.
 - PT-P6-E6-T3 — `speakers merge` / `delete` likewise route through the service.
-- PT-P6-E6-T4 — finalize the `manual.md` wording.
+- PT-P6-E6-T4 — finalize the `manual.md` wording (the gate that no external system is named).

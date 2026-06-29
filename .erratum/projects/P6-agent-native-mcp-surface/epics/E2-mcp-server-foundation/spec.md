@@ -14,6 +14,13 @@ Server component (PT-C22, provisional) and reshapes the Menubar Application (PT-
 and lifecycle; preserves the local-only and owner-only posture (PT-R87, PT-R98, PT-R100). The server
 hosts no tools yet — they arrive in PT-P6-E3 / E4 / E5.
 
+Two notes from second-round planning. The `NWListener` is the project's **first** `Network.framework`
+use — the existing capture sockets are raw POSIX Unix-domain IPC and do not transfer (PT-P6-D2's
+rationale was corrected accordingly). And there is no SwiftUI `Settings` scene in this app: settings
+live in `SettingsView` (a `Form` pane). The server lifecycle is owned by an `MCPController` in the
+composition root `pulsartrace-mac`, **not** `AppEnvironment` — `PulsarTraceMCP` depends on
+`PulsarTraceMenuBar`, so the menubar target cannot import the MCP module (that would be circular).
+
 ## Acceptance criteria
 
 - The server is disabled by default; enabling it in Settings binds `127.0.0.1` on the configured
@@ -42,5 +49,5 @@ hosts no tools yet — they arrive in PT-P6-E3 / E4 / E5.
 - PT-P6-E2-T5 — `/healthz` + `MCPServerStatus` + supervision: rebuild a failed listener with bounded
   backoff; stop-with-error on a repeated bind failure.
 - PT-P6-E2-T6 — `MenuBarSettings` (`mcpServerEnabled` default `false`, `mcpServerPort` default
-  `8276`), the app start/stop lifecycle, and the Settings UI (toggle, port + live status, copyable
-  connection snippet, manual restart).
+  `8276`), the `MCPController` start/stop lifecycle in `pulsartrace-mac`, and the `SettingsView`
+  section (toggle, port + live `/healthz` status, copyable connection snippet, manual restart).

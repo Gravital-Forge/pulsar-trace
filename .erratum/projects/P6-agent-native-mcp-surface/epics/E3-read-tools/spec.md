@@ -8,8 +8,16 @@ Add the read surface to the MCP server: tools that list recordings and the speak
 single recording's metadata or a single speaker with its appearances, and return recent events —
 each returning identity, state, and filesystem paths, and never transcript or audio bytes.
 Implements PT-P6-R3, PT-P6-R4, PT-P6-R7. Extends the MCP Server (PT-C22) with the tool registry;
-reads the Speaker Library (PT-C5), the recordings scan and live-recording status through the Menubar
-(PT-C16), and the Events Log (PT-C6). Depends on PT-P6-E2.
+reads the Speaker Library (PT-C5) directly, the recordings scan and live-recording status through a
+`RecordingsProviding` seam (the live adapter over `RecordingsScanner` + `RecordingViewModel.status`
+is wired in the app composition root), and the Events Log (PT-C6). Depends on PT-P6-E2.
+
+Two pieces are net-new engine/menubar work this epic surfaces, not just wiring: `list_recordings`
+needs a `language` field that `RecordingEntry` does not carry today (added, decoded from
+`metadata.json`), and `recent_events` needs a new `EventLogReader` because the existing
+`EventLogTail` reads only the current day and has no `since`/timestamp filter. `PulsarTraceMCP` gains
+a dependency on `PulsarTraceMenuBar` (for `RecordingEntry`); that target has no SwiftUI, so the MCP
+core stays non-SwiftUI.
 
 ## Acceptance criteria
 
@@ -25,10 +33,10 @@ reads the Speaker Library (PT-C5), the recordings scan and live-recording status
 
 ## Tasks
 
-- PT-P6-E3-T1 — `ToolRegistry` plus the SDK `ListTools` / `CallTool` wiring (a registered tool
-  round-trips through `CallTool`).
-- PT-P6-E3-T2 — `list_recordings`: DTOs, the filters, the `is_live` flag, and the paths, over
-  `RecordingsScanner` and `RecordingViewModel.status`.
+- PT-P6-E3-T1 — `ToolRegistry` + `MCPTool` plus the SDK `ListTools` / `CallTool` wiring and the
+  `tools:` injection point on `MCPServer` (a registered tool round-trips through `CallTool`).
+- PT-P6-E3-T2 — `list_recordings`: the `RecordingsProviding` seam, the `RecordingEntry.language`
+  addition, the DTO, the `since`/`until`/`status`/`limit` filters, the `is_live` flag, and the paths.
 - PT-P6-E3-T3 — `get_recording_meta`: by id, with the not-found error shape.
-- PT-P6-E3-T4 — `list_speakers` / `get_speaker` (with appearances).
-- PT-P6-E3-T5 — `recent_events`: the `since` / type filters over the event log.
+- PT-P6-E3-T4 — `list_speakers` / `get_speaker` (with appearances) over the `SpeakerLibrary`.
+- PT-P6-E3-T5 — `recent_events`: a new `EventLogReader` (since/type filters, multi-day) plus the tool.

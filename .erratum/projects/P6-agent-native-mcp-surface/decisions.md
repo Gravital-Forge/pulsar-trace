@@ -35,12 +35,22 @@ parses HTTP/1.1 and feeds request bodies into the transport. No general HTTP-ser
 **Because:** the SDK gives spec-correct JSON-RPC framing, capability negotiation, and the localhost
 origin / bearer-token validators for free, and tracks the current MCP spec — but it is a
 request/response adapter, not a socket. A tool-only server has no server-initiated messages, so the
-stateless, no-SSE transport is sufficient and the simplest correct choice. For the listener, the
-project already owns `Network.framework` socket code (the capture sockets, the socket source, peer
-authentication), so a single loopback POST endpoint with a 405 on GET is a contained, testable
-amount of framing to own — and it avoids stacking a second pre-1.0 dependency on top of the SDK. The
-SDK is dual Apache-2.0 / MIT, satisfying PT-R88 (open-source dependencies only). FlyingFox remains a
-drop-in swap if owning the HTTP framing proves not worth it.
+stateless, no-SSE transport is sufficient and the simplest correct choice. For the listener, the SDK
+ships none, so the loopback front end is owned directly. `Network.framework`'s `NWListener` is the
+right tool for a single loopback TCP/HTTP endpoint: it yields connection objects and receive
+handlers (no hand-rolled `accept` thread), surfaces bound-state transitions the supervisor reads
+(PT-P6-D10), and stays TLS-ready for the deferred LAN move (PT-P6-D9). This is the project's *first*
+`Network.framework` use — the existing socket code (the capture sockets, the socket source, peer
+authentication) is raw POSIX Unix-domain IPC that does not transfer to a TCP HTTP listener, so it
+informs idiom (owner-only checks, teardown discipline) rather than being reused. Owning one loopback
+POST endpoint plus a `GET /healthz` and a 405 on `GET /mcp` is a contained, testable amount of
+HTTP/1.1 framing, and it avoids stacking a second pre-1.0 dependency on top of the SDK. The SDK is
+dual Apache-2.0 / MIT, satisfying PT-R88 (open-source dependencies only). FlyingFox remains a drop-in
+swap if owning the HTTP framing proves not worth it.
+
+*(Rationale corrected 2026-06-26 during second-round planning: the original text claimed the project
+already owned `Network.framework` code; it does not — the in-repo socket idiom is POSIX. The
+`NWListener` decision stands on its own merits as stated above.)*
 
 ### PT-P6-D3 · The server is disabled by default, on a configurable fixed port with no auto-rotation
 
