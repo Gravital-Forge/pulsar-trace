@@ -84,6 +84,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
     /// User-assigned title from the `title.txt` sidecar (spec §4.1), `nil`
     /// when none is set. UI-owned; decoded at scan time like everything else.
     public let customTitle: String?
+    /// The transcript language (`metadata.language`), `nil` when unrefined.
+    public let language: String?
 
     public init(
         id: String,
@@ -92,7 +94,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
         durationSeconds: Double,
         speakers: [RecordingSpeaker],
         isRefined: Bool,
-        customTitle: String? = nil
+        customTitle: String? = nil,
+        language: String? = nil
     ) {
         self.id = id
         self.recordingStart = recordingStart
@@ -101,6 +104,7 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
         self.speakers = speakers
         self.isRefined = isRefined
         self.customTitle = customTitle
+        self.language = language
     }
 
     /// The display name shown in the list — the recording folder's basename.
@@ -199,7 +203,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
                     isMicrophone: $0.isMicrophone)
             },
             isRefined: isRefined,
-            customTitle: RecordingTitleStore.read(folderURL: folderURL))
+            customTitle: RecordingTitleStore.read(folderURL: folderURL),
+            language: metadata.language)
     }
 
     /// Surface a recording folder that has **no** `metadata.json` — a

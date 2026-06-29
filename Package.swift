@@ -85,6 +85,9 @@ let package = Package(
             dependencies: [
                 .product(name: "MCP", package: "swift-sdk"),
                 "PulsarTraceEngine",
+                // The read surface (PT-P6-R3) projects `RecordingEntry` DTOs;
+                // the live adapter (E5) reads the menubar's scanner + view model.
+                "PulsarTraceMenuBar",
             ]
         ),
         // The thin SwiftUI executable — `MenuBarExtra` + `Settings`
