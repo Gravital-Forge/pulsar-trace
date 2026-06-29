@@ -44,6 +44,23 @@ struct MenuBarSettingsTests {
         #expect(reloaded.previousFolderURLs.map(\.path) == previous)
     }
 
+    @Test("MCP server toggle and port default off / 8276 and round-trip (PT-P6-R1)")
+    func mcpSettingsRoundTrip() {
+        let (defaults, suiteName) = tempSuite()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fresh = MenuBarSettings(defaults: defaults)
+        #expect(fresh.mcpServerEnabled == false)
+        #expect(fresh.mcpServerPort == 8276)
+
+        fresh.mcpServerEnabled = true
+        fresh.mcpServerPort = 9001
+
+        let reloaded = MenuBarSettings(defaults: defaults)
+        #expect(reloaded.mcpServerEnabled == true)
+        #expect(reloaded.mcpServerPort == 9001)
+    }
+
     @Test("a fresh suite yields the documented defaults")
     func defaults() {
         let (defaults, suiteName) = tempSuite()

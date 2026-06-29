@@ -1,6 +1,7 @@
 import AppKit
 import PulsarTraceCapture
 import PulsarTraceEngine
+import PulsarTraceMCP
 import PulsarTraceMenuBar
 import SwiftUI
 
@@ -12,12 +13,19 @@ import SwiftUI
 /// and fills the detail column.
 struct SettingsView: View {
     @Environment(MenuBarSettings.self) private var settings
+    /// The opt-in MCP server lifecycle owner (PT-P6-R1), injected by the app.
+    @Environment(MCPController.self) private var mcp
     /// Whether the languages popover is currently shown — the popup-button
     /// click toggles this; clicking outside dismisses.
     @State private var languagePopoverOpen = false
     /// Live filter inside the popover. Reset to empty when the popover
     /// reopens so the user starts fresh each time.
     @State private var languageFilter = ""
+    /// Last `/healthz` probe result (PT-P6-R11) — the live status, not an
+    /// in-memory flag.
+    @State private var mcpStatus: MCPServerStatus = .stopped
+    /// The server's bearer token, surfaced so the setup snippet is paste-ready.
+    @State private var mcpToken: String = ""
 
     var body: some View {
         @Bindable var settings = settings
@@ -107,8 +115,49 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            // PT-P6-R1 / PT-P6-R11: the opt-in agent control surface. Disabled
+            // by default; shows the live `/healthz` status, the paste-ready
+            // setup command, and a manual restart.
+            Section("MCP Server (agent control surface)") {
+                Toggle("Enable MCP server", isOn: $settings.mcpServerEnabled)
+                LabeledContent("Port") {
+                    TextField("8276", value: $settings.mcpServerPort,
+                              format: .number.grouping(.never))
+                        .frame(width: 80)
+                }
+                LabeledContent("Status") {
+                    Text(statusText(mcpStatus)).foregroundStyle(.secondary)
+                }
+                if settings.mcpServerEnabled, !mcpToken.isEmpty {
+                    LabeledContent("Connect") {
+                        HStack {
+                            Text(MCPConnectionSnippet.endpoint(
+                                port: UInt16(settings.mcpServerPort)))
+                                .textSelection(.enabled)
+                                .foregroundStyle(.secondary)
+                            Button("Copy setup command") {
+                                let snippet = MCPConnectionSnippet.claudeCode(
+                                    port: UInt16(settings.mcpServerPort), token: mcpToken)
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(snippet, forType: .string)
+                            }
+                        }
+                    }
+                    Button("Restart server") {
+                        Task { await mcp.restart(); await refreshMCP() }
+                    }
+                }
+                Text("A local-only control surface an agent can drive over "
+                    + "loopback (127.0.0.1). Off by default; every request is "
+                    + "bearer-authenticated. Copy the setup command into your "
+                    + "agent to connect.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+        .task(id: settings.mcpServerEnabled) { await refreshMCP() }
         // A window toolbar so this pane's split-view chrome (corner rounding,
         // sidebar extent) matches the Recordings and Speakers panes — those
         // carry a toolbar; a pane without one renders different chrome.
@@ -125,6 +174,23 @@ struct SettingsView: View {
                 .disabled(settings.outputFolderURL == nil)
                 .help("Reveal the output folder in Finder")
             }
+        }
+    }
+
+    /// Refresh the MCP token + live `/healthz` status (PT-P6-R11). Probes the
+    /// real socket so Settings reflects whether it is actually accepting.
+    private func refreshMCP() async {
+        mcpToken = await mcp.token()
+        mcpStatus = await MCPHealthProbe.probe(port: UInt16(settings.mcpServerPort))
+    }
+
+    /// Human-readable form of the probed server status (PT-P6-R11).
+    private func statusText(_ s: MCPServerStatus) -> String {
+        switch s {
+        case .stopped: return "Stopped"
+        case .running(let p): return "Running on 127.0.0.1:\(p)"
+        case .portInUse(let p): return "Port \(p) is in use — pick another port"
+        case .failed(let r): return "Stopped — \(r)"
         }
     }
 

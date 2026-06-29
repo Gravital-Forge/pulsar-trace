@@ -108,6 +108,19 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
+    /// Whether the opt-in loopback MCP control surface is enabled (PT-P6-R1).
+    /// Default `false` — the server never starts unless the user turns it on.
+    public var mcpServerEnabled: Bool {
+        didSet { save() }
+    }
+
+    /// The loopback port the MCP server binds (PT-P6-R1). Default `8276`. A
+    /// plain `Int` so this type stays MCP-module-free; `MCPController` narrows
+    /// it to `UInt16` when it owns the server lifecycle.
+    public var mcpServerPort: Int {
+        didSet { save() }
+    }
+
     // MARK: - Derived
 
     /// `outputFolderPath` as a file URL; falls back to
@@ -150,6 +163,8 @@ public final class MenuBarSettings {
         /// Legacy bookmark-array key (pre-D30) — read once to migrate.
         static let legacyPreviousFolderBookmarks = "previousFolderBookmarks"
         static let allowedLanguages = "allowedLanguages"
+        static let mcpServerEnabled = "mcpServerEnabled"
+        static let mcpServerPort = "mcpServerPort"
     }
 
     /// Load settings from `defaults` (default: the production suite).
@@ -219,6 +234,13 @@ public final class MenuBarSettings {
         self.allowedLanguages = store.array(forKey: Key.allowedLanguages)
             as? [String] ?? []
 
+        // PT-P6-R1: the MCP control surface is opt-in and disabled by default;
+        // the default port is 8276.
+        self.mcpServerEnabled = store.object(forKey: Key.mcpServerEnabled)
+            as? Bool ?? false
+        self.mcpServerPort = store.object(forKey: Key.mcpServerPort)
+            as? Int ?? 8276
+
         // Persist whatever the load resolved to — including the PT-P2-D11/PT-P2-D12
         // migrations above. Pre-2026-05-29 this happened implicitly via an
         // `@Observable` macro quirk that fired `didSet` on the last stored
@@ -237,6 +259,8 @@ public final class MenuBarSettings {
         defaults.set(systemAudioEnabled, forKey: Key.systemAudioEnabled)
         defaults.set(previousFolderPaths, forKey: Key.previousFolderPaths)
         defaults.set(allowedLanguages, forKey: Key.allowedLanguages)
+        defaults.set(mcpServerEnabled, forKey: Key.mcpServerEnabled)
+        defaults.set(mcpServerPort, forKey: Key.mcpServerPort)
         if let hotkey = globalHotkey,
            let data = try? JSONEncoder().encode(hotkey) {
             defaults.set(data, forKey: Key.globalHotkey)

@@ -19,6 +19,12 @@ struct PulsarTraceMacApp: App {
     /// this target (PT-P2-D9); `AppEnvironment` itself is AppKit-free.
     @State private var hotkey: HotkeyController
 
+    /// Owns the opt-in MCP server lifecycle (PT-P6-R1). Lives here in the
+    /// composition root — the only target allowed to import both
+    /// `PulsarTraceMenuBar` and `PulsarTraceMCP` — and reconciles the server
+    /// against `settings.mcpServerEnabled` / `mcpServerPort`.
+    @State private var mcpController: MCPController
+
     init() {
         // No Dock icon, no app-switcher entry — PulsarTrace lives in the
         // menubar (PT-P2-D9). Set in code; there is no `.app` bundle yet.
@@ -37,6 +43,9 @@ struct PulsarTraceMacApp: App {
             settings: environment.settings, recording: environment.recording)
         _environment = State(initialValue: environment)
         _hotkey = State(initialValue: hotkey)
+        // PT-P6-R1: the controller reads the (default-off) toggle and only
+        // starts the server when the user enables it in Settings.
+        _mcpController = State(initialValue: MCPController(settings: environment.settings))
     }
 
     var body: some Scene {
@@ -105,6 +114,10 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.paneModel)
                 .environment(environment.detailModel)
                 .environment(environment.liveWatcher)
+                // The MCP Settings section (PT-P6-R1, PT-P6-R11) reads the
+                // controller from the environment; the Settings pane lives in
+                // this window.
+                .environment(mcpController)
                 // Parallel to the MenuBarExtra onChange: the recorder lives
                 // in this window's Settings pane, and the popover content
                 // may never have been mounted when the combo changes here.
