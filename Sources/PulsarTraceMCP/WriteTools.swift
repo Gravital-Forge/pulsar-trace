@@ -30,6 +30,23 @@ public enum WriteTools {
         return .success(id)
     }
 
+    /// All nine speaker-management tools (PT-P6-R5, PT-P6-D6).
+    public static func all(
+        service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
+    ) -> [MCPTool] {
+        [
+            renameSpeaker(service: service, gate: gate, outputRoots: outputRoots),
+            mergeSpeakers(service: service, gate: gate, outputRoots: outputRoots),
+            splitSpeaker(service: service, gate: gate, outputRoots: outputRoots),
+            unmergeSpeakers(service: service, gate: gate, outputRoots: outputRoots),
+            unsplitSpeaker(service: service, gate: gate, outputRoots: outputRoots),
+            deleteSpeaker(service: service, gate: gate),
+            undeleteSpeaker(service: service, gate: gate),
+            delistSpeaker(service: service, gate: gate, outputRoots: outputRoots),
+            undelistSpeaker(service: service, gate: gate, outputRoots: outputRoots),
+        ]
+    }
+
     // PT-P6-R5
     public static func renameSpeaker(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
