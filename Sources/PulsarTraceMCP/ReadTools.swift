@@ -148,6 +148,41 @@ public enum ReadTools {
         ["id": s.id, "name": s.name, "appearance_count": s.appearanceCount, "last_seen": s.lastSeen]
     }
 
+    // PT-P6-R7
+    public static func recentEvents(events: EventLogReader) -> MCPTool {
+        MCPTool(
+            name: "recent_events",
+            description: "Return recent events (newest first) so an agent can confirm the effect of an "
+                + "operation and observe recording lifecycle. Optional `since` (ISO-8601), `type` "
+                + "(string or array of event types), and `limit`.",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "since": .object(["type": .string("string")]),
+                    "type": .object(["description": .string("an event type or array of types")]),
+                    "limit": .object(["type": .string("integer")]),
+                ]),
+            ])
+        ) { args in
+            let since = args?["since"]?.stringValue
+            let types: Set<String> = {
+                if case let .array(arr)? = args?["type"] { return Set(arr.compactMap { $0.stringValue }) }
+                if let one = args?["type"]?.stringValue { return [one] }
+                return []
+            }()
+            let limit = args?["limit"]?.intValue ?? 100
+            do {
+                let items = try events.recent(since: since, types: types, limit: limit).map { entry -> Any in
+                    (try? JSONSerialization.jsonObject(with: Data(entry.line.utf8)))
+                        ?? ["ts": entry.ts, "type": entry.type]
+                }
+                return jsonResult(["events": items])
+            } catch {
+                return errorResult("Could not read events: \(error)")
+            }
+        }
+    }
+
     static func jsonResult(_ object: [String: Any]) -> CallTool.Result {
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
         return CallTool.Result(content: [.text(text: String(decoding: data, as: UTF8.self), annotations: nil, _meta: nil)], isError: false)
