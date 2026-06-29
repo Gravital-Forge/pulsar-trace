@@ -84,4 +84,85 @@ struct SpeakerEditServiceTests {
         #expect(throws: SpeakerEditService.EditError.self) { try SpeakerEditService.validateName("a`b") }
         try SpeakerEditService.validateName("Alice")  // does not throw
     }
+
+    // MARK: - T2: rename + merge
+
+    @Test("rename rewrites past final.md and emits speaker_renamed before final_md_rewritten")
+    func renameRewritesAndOrdersEvents() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.1), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        let service = SpeakerEditService(library: library, events: events)
+
+        let result = try await service.rename(
+            speakerId: steve.id, to: "Steven", outputFolderRoots: [root])
+
+        #expect(result.rewrittenRecordingIds == ["rec_standup"])
+        let finalText = try String(contentsOf: folder.appendingPathComponent("final.md"), encoding: .utf8)
+        #expect(finalText.contains("] Steven:**"))
+        #expect(!finalText.contains("] Steve:**"))
+        #expect(try await library.liveSpeakers().first { $0.id == steve.id }?.name == "Steven")
+
+        await events.flush()
+        let log = try String(contentsOf: await events.currentFileURL(), encoding: .utf8)
+        let renamedIdx = log.range(of: "speaker_renamed")
+        let rewrittenIdx = log.range(of: "final_md_rewritten")
+        #expect(renamedIdx != nil && rewrittenIdx != nil)
+        #expect(renamedIdx!.lowerBound < rewrittenIdx!.lowerBound)
+    }
+
+    @Test("rename to the same name is a no-op — no rewrite, no event")
+    func renameUnchangedIsNoOp() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.1), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: "standup")
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        let service = SpeakerEditService(library: library, events: events)
+
+        let result = try await service.rename(speakerId: steve.id, to: "Steve", outputFolderRoots: [root])
+
+        #expect(result.rewrittenRecordingIds.isEmpty)
+        await events.flush()
+        #expect(try eventTypes(in: await events.currentFileURL()).isEmpty)
+    }
+
+    @Test("merge rewrites the merged-away label to the primary and emits speaker_merged first")
+    func mergeRewritesAndOrders() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(root: root, name: "standup", recordingId: "rec_standup")
+        let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let primary = try await library.createSpeaker(
+            name: "Unknown #1", centroid: centroid(0.1), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let other = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.2), modelRevision: "rev1",
+            recordingId: "rec_standup", recordingFolderName: folder.lastPathComponent)
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        let service = SpeakerEditService(library: library, events: events)
+
+        let result = try await service.merge(
+            primaryId: primary.id, otherId: other.id, outputFolderRoots: [root])
+
+        #expect(result.rewrittenRecordingIds == ["rec_standup"])
+        let finalText = try String(contentsOf: folder.appendingPathComponent("final.md"), encoding: .utf8)
+        #expect(!finalText.contains("] Steve:**"))
+        await events.flush()
+        let log = try String(contentsOf: await events.currentFileURL(), encoding: .utf8)
+        #expect(log.range(of: "speaker_merged")!.lowerBound < log.range(of: "final_md_rewritten")!.lowerBound)
+    }
 }

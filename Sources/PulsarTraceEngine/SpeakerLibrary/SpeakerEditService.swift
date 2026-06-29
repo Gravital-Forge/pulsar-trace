@@ -63,6 +63,52 @@ public actor SpeakerEditService {
         }
     }
 
+    /// Rename a speaker and rewrite its label across every past `final.md`.
+    /// A no-op (no rewrite, no event) when the name is unchanged.
+    // PT-P6-R9
+    public func rename(
+        speakerId: String, to newName: String, outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        try Self.validateName(newName)
+        guard let current = try await library.speaker(id: speakerId) else {
+            throw EditError.speakerNotFound
+        }
+        guard current.name != newName else {
+            return EditResult(rewrittenRecordingIds: [])
+        }
+        let oldName = try await library.rename(
+            speakerId: speakerId, to: newName, suppressEvent: true)
+        let appearances = try await library.appearances(of: speakerId)
+        let results = try await rewriter.rewrite(
+            oldName: oldName, newName: newName, appearances: appearances,
+            outputFolderRoots: outputFolderRoots, reason: .speakerRenamed)
+        _ = try? await events?.append(SpeakerRenamedEvent(
+            speakerId: speakerId, oldName: oldName, newName: newName,
+            appliedToRecordings: results.map(\.recordingId)))
+        await emitRewriteEvents(results, reason: .speakerRenamed)
+        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+    }
+
+    /// Merge `otherId` into `primaryId`; rewrite the other's label to the
+    /// primary's across past `final.md`, dropping the merged-away metadata row.
+    // PT-P6-R9
+    public func merge(
+        primaryId: String, otherId: String, outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        let names = try await library.merge(
+            primaryId: primaryId, otherId: otherId, suppressEvent: true)
+        let appearances = try await library.appearances(of: primaryId)
+        let results = try await rewriter.rewrite(
+            oldName: names.otherName, newName: names.primaryName,
+            appearances: appearances, outputFolderRoots: outputFolderRoots,
+            reason: .speakerMerged, removedSpeakerId: otherId)
+        _ = try? await events?.append(SpeakerMergedEvent(
+            primarySpeakerId: primaryId, mergedSpeakerId: otherId,
+            appliedToRecordings: results.map(\.recordingId)))
+        await emitRewriteEvents(results, reason: .speakerMerged)
+        return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+    }
+
     /// Emit one `final_md_rewritten` event per rewritten recording, after the
     /// cause event, preserving causal order (Hard Invariant #8).
     func emitRewriteEvents(
