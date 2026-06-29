@@ -17,6 +17,7 @@ public actor MCPServer {
     private var token: String?
     private let statusBox = MCPStatusBox()
     private var rebuildAttempts = 0
+    private var isRebuilding = false
 
     /// The server's live status — `running` / `portInUse` / `failed` / `stopped`
     /// (PT-P6-R11). Read off a lock-guarded cell, no actor hop required.
@@ -102,6 +103,13 @@ public actor MCPServer {
     }
 
     private func rebuildAfterFailure(reason: String) async {
+        // The actor is reentrant across the backoff `Task.sleep` below, so a
+        // second `.failed` callback could otherwise start a parallel rebuild
+        // and overwrite (leaking) the fresh listener. Allow only one in flight
+        // (PT-P6-M6).
+        guard !isRebuilding else { return }
+        isRebuilding = true
+        defer { isRebuilding = false }
         guard rebuildAttempts < MCPSupervisor.maxAttempts else {
             statusBox.set(.failed(reason)); listener?.stop(); listener = nil; return
         }
@@ -142,6 +150,14 @@ public actor MCPServer {
                 body: Data("Method Not Allowed".utf8))
 
         case ("POST", "/mcp"):
+            // Fail closed even if the server token is somehow empty (e.g. a
+            // failed `currentToken()` in the rebuild path): never let
+            // `constantTimeEquals("", "")` authorize a request (PT-P6-M7).
+            guard !token.isEmpty else {
+                return LoopbackHTTPResponse(
+                    status: 401, headers: ["WWW-Authenticate": "Bearer"],
+                    body: Data("Unauthorized".utf8))
+            }
             guard let presented = MCPAuth.bearerToken(from: req.headers["authorization"]),
                   MCPAuth.constantTimeEquals(presented, token) else {
                 return LoopbackHTTPResponse(

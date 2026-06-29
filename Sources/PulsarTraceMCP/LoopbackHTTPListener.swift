@@ -40,6 +40,23 @@ public struct LoopbackHTTPRequest: Sendable {
         let body = Data(available.prefix(expected))
         return LoopbackHTTPRequest(method: method, path: path, headers: headers, body: body)
     }
+
+    /// The declared `Content-Length` once the header block is fully buffered, or
+    /// `nil` if the headers are not yet terminated (or no length is present).
+    /// Lets the listener reject an oversized body *before* buffering it
+    /// (PT-P6-I1).
+    static func declaredContentLength(_ buffer: Data) -> Int? {
+        let separator = Data("\r\n\r\n".utf8)
+        guard let headEnd = buffer.range(of: separator) else { return nil }
+        let head = String(decoding: buffer[..<headEnd.lowerBound], as: UTF8.self)
+        for line in head.components(separatedBy: "\r\n") {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+            guard name == "content-length" else { continue }
+            return Int(line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces))
+        }
+        return nil
+    }
 }
 
 /// A response to serialize back to the socket. Always closes the connection.
@@ -77,7 +94,8 @@ public struct LoopbackHTTPResponse: Sendable {
     private static let reasons: [Int: String] = [
         200: "OK", 202: "Accepted", 400: "Bad Request", 401: "Unauthorized",
         404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable",
-        415: "Unsupported Media Type", 500: "Internal Server Error",
+        413: "Request Entity Too Large", 415: "Unsupported Media Type",
+        500: "Internal Server Error",
     ]
 }
 
@@ -88,6 +106,15 @@ public struct LoopbackHTTPResponse: Sendable {
 public final class LoopbackHTTPListener: @unchecked Sendable {
 
     public typealias Handler = @Sendable (LoopbackHTTPRequest) async -> LoopbackHTTPResponse
+
+    /// Hard cap on a single request (headers + body). Anything larger is
+    /// refused with 413 *before* auth runs, so no local process can OOM the
+    /// app with one giant `Content-Length` (PT-P6-I1).
+    public static let maxRequestBytes = 4 * 1024 * 1024     // 4 MB
+
+    /// Tear down a connection that has not produced a complete request within
+    /// this window — a slowloris / half-open guard (PT-P6-I1).
+    static let idleTimeout: TimeInterval = 15
 
     public enum ListenerState: Sendable, Equatable {
         case setup, ready, cancelled
@@ -100,15 +127,35 @@ public final class LoopbackHTTPListener: @unchecked Sendable {
 
     private let requestedPort: NWEndpoint.Port
     private let handler: Handler
+    private let maxRequestBytes: Int
     private let queue = DispatchQueue(label: "com.gravitalforge.PulsarTrace.mcp.listener")
     private let lock = NSLock()
     private var listener: NWListener?
     private var _state: ListenerState = .setup
     private var stateObserver: (@Sendable (ListenerState) -> Void)?
 
-    public init(port: UInt16, handler: @escaping Handler) {
+    public init(
+        port: UInt16,
+        maxRequestBytes: Int = LoopbackHTTPListener.maxRequestBytes,
+        handler: @escaping Handler
+    ) {
         self.requestedPort = NWEndpoint.Port(rawValue: port) ?? .any
+        self.maxRequestBytes = maxRequestBytes
         self.handler = handler
+    }
+
+    /// Per-connection mutable state. `@unchecked Sendable` is sound for the same
+    /// reason the listener is: `nw` is an immutable `Sendable` handle; `buffer`
+    /// is touched only inside the receive callback chain, which `Network`
+    /// delivers serially on `queue` (the next `receive` is issued only after the
+    /// previous completion returns); and `finished` — which arbitrates the race
+    /// between the in-flight response and the idle timer so a completed
+    /// connection is never cancelled twice — is guarded by `lock`.
+    private final class ConnectionContext: @unchecked Sendable {
+        let nw: NWConnection
+        var buffer = Data()
+        var finished = false
+        init(_ nw: NWConnection) { self.nw = nw }
     }
 
     public var state: ListenerState { lock.withLock { _state } }
@@ -162,25 +209,65 @@ public final class LoopbackHTTPListener: @unchecked Sendable {
     }
 
     private func accept(_ conn: NWConnection) {
+        let ctx = ConnectionContext(conn)
         conn.start(queue: queue)
-        receive(conn, buffer: Data())
+        // Arm the idle timeout: if no complete request is handled within the
+        // window, tear the connection down (PT-P6-I1). Captures `ctx` strongly
+        // and `self` weakly; a no-op once the connection has finished.
+        queue.asyncAfter(deadline: .now() + Self.idleTimeout) { [weak self] in
+            guard let self, self.finish(ctx) else { return }
+            ctx.nw.cancel()
+        }
+        receive(ctx)
     }
 
-    private func receive(_ conn: NWConnection, buffer: Data) {
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { [weak self] data, _, isComplete, error in
-            guard let self else { conn.cancel(); return }
-            var buffer = buffer
-            if let data { buffer.append(data) }
-            if let request = LoopbackHTTPRequest.parse(buffer) {
+    /// Claim the connection's terminal transition. Returns `true` to the first
+    /// caller (timer or response path); every later caller gets `false` and
+    /// must not touch the connection again.
+    private func finish(_ ctx: ConnectionContext) -> Bool {
+        lock.withLock {
+            if ctx.finished { return false }
+            ctx.finished = true
+            return true
+        }
+    }
+
+    private func receive(_ ctx: ConnectionContext) {
+        ctx.nw.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { [weak self] data, _, isComplete, error in
+            guard let self else { ctx.nw.cancel(); return }
+            if let data { ctx.buffer.append(data) }
+
+            // Refuse an oversized request *before* it is fully buffered or auth
+            // runs — a declared `Content-Length` over the cap, or raw bytes
+            // already over the cap, both yield a 413 (PT-P6-I1).
+            if self.exceedsCap(ctx.buffer) {
+                guard self.finish(ctx) else { return }
+                ctx.nw.send(
+                    content: LoopbackHTTPResponse(
+                        status: 413, body: Data("Request Entity Too Large".utf8)).serialized(),
+                    completion: .contentProcessed { _ in ctx.nw.cancel() })
+                return
+            }
+
+            if let request = LoopbackHTTPRequest.parse(ctx.buffer) {
+                guard self.finish(ctx) else { return }
                 Task {
                     let response = await self.handler(request)
-                    conn.send(content: response.serialized(),
-                              completion: .contentProcessed { _ in conn.cancel() })
+                    ctx.nw.send(content: response.serialized(),
+                                completion: .contentProcessed { _ in ctx.nw.cancel() })
                 }
                 return
             }
-            if isComplete || error != nil { conn.cancel(); return }
-            self.receive(conn, buffer: buffer)
+            if isComplete || error != nil { ctx.nw.cancel(); return }
+            self.receive(ctx)
         }
+    }
+
+    /// `true` when the buffer (or its declared body) exceeds `maxRequestBytes`.
+    private func exceedsCap(_ buffer: Data) -> Bool {
+        if buffer.count > maxRequestBytes { return true }
+        if let declared = LoopbackHTTPRequest.declaredContentLength(buffer),
+           declared > maxRequestBytes { return true }
+        return false
     }
 }

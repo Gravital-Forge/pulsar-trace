@@ -35,4 +35,13 @@ struct EventLogReaderTests {
         let capped = try reader.recent(limit: 1)
         #expect(capped.count == 1)
     }
+
+    @Test("limit of 0 returns no events")
+    func zeroLimitReturnsEmpty() throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"{"ts":"2026-06-20T08:00:00Z","type":"x","id":"e1"}"#
+            .write(to: dir.appendingPathComponent("2026-06-20.jsonl"), atomically: true, encoding: .utf8)
+        #expect(try EventLogReader(directory: dir).recent(limit: 0).isEmpty)
+    }
 }

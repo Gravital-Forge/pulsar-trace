@@ -35,12 +35,12 @@ public struct MCPAuth: Sendable {
     }
 
     private func persist(_ token: String) throws {
-        try FileManager.default.createDirectory(
-            at: tokenURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true)
-        try Data(token.utf8).write(to: tokenURL, options: .atomic)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: tokenURL.path)
+        // `AtomicFile.write` (the same engine helper the final.md rewriter uses)
+        // creates its temp file 0600 *from the first byte* and renames it into
+        // place — no world-readable window. The previous
+        // `Data.write(options: .atomic)` created its temp 0644 and only chmod'd
+        // it afterwards (PT-P6-M1).
+        try AtomicFile.write(Data(token.utf8), to: tokenURL)
     }
 
     /// 32 bytes of cryptographically-secure randomness, hex-encoded.

@@ -19,6 +19,9 @@ public struct EventLogReader: Sendable {
     }
 
     public func recent(since: String? = nil, types: Set<String> = [], limit: Int = 100) throws -> [Entry] {
+        // A non-positive limit means "no events" — the append-and-then-check
+        // loop below would otherwise return one event for `limit == 0` (PT-P6-M2).
+        guard limit > 0 else { return [] }
         let fm = FileManager.default
         let files = ((try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "jsonl" }

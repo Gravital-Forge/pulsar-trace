@@ -170,7 +170,7 @@ public enum ReadTools {
                 if let one = args?["type"]?.stringValue { return [one] }
                 return []
             }()
-            let limit = args?["limit"]?.intValue ?? 100
+            let limit = max(0, args?["limit"]?.intValue ?? 100)
             do {
                 let items = try events.recent(since: since, types: types, limit: limit).map { entry -> Any in
                     (try? JSONSerialization.jsonObject(with: Data(entry.line.utf8)))
