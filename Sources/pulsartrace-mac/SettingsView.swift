@@ -117,8 +117,10 @@ struct SettingsView: View {
             }
 
             // PT-R115 / PT-R125: the opt-in agent control surface. Disabled
-            // by default; shows the live `/healthz` status, the paste-ready
-            // setup command, and a manual restart.
+            // by default; shows the live `/healthz` status and — once the
+            // server is actually accepting — the loopback endpoint and bearer
+            // token to paste into any MCP client, plus regenerate-token and
+            // restart actions (PT-R116).
             Section("MCP Server (agent control surface)") {
                 Toggle("Enable MCP server", isOn: $settings.mcpServerEnabled)
                 LabeledContent("Port") {
@@ -129,19 +131,29 @@ struct SettingsView: View {
                 LabeledContent("Status") {
                     Text(statusText(mcpStatus)).foregroundStyle(.secondary)
                 }
-                if settings.mcpServerEnabled, !mcpToken.isEmpty {
-                    LabeledContent("Connect") {
+                // Surface the connection details off the *actually bound* port
+                // (not the editable field), so editing the port mid-session
+                // never shows an endpoint the server isn't listening on yet —
+                // they update once the restart rebinds and the probe confirms.
+                if case .running(let runningPort) = mcpStatus, !mcpToken.isEmpty {
+                    LabeledContent("Endpoint") {
                         HStack {
-                            Text(MCPConnectionSnippet.endpoint(
-                                port: UInt16(settings.mcpServerPort)))
+                            Text(MCPConnectionSnippet.endpoint(port: runningPort))
                                 .textSelection(.enabled)
                                 .foregroundStyle(.secondary)
-                            Button("Copy setup command") {
-                                let snippet = MCPConnectionSnippet.claudeCode(
-                                    port: UInt16(settings.mcpServerPort), token: mcpToken)
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(snippet, forType: .string)
+                            Button("Copy") {
+                                copyToPasteboard(MCPConnectionSnippet.endpoint(port: runningPort))
                             }
+                        }
+                    }
+                    LabeledContent("Token") {
+                        HStack {
+                            Button("Copy token") { copyToPasteboard(mcpToken) }
+                            Button("Regenerate") {
+                                Task { await mcp.regenerateToken(); await refreshMCP() }
+                            }
+                            .help("Mint a new token and invalidate the old one. "
+                                + "A connected agent must be updated with the new token.")
                         }
                     }
                     Button("Restart server") {
@@ -150,14 +162,23 @@ struct SettingsView: View {
                 }
                 Text("A local-only control surface an agent can drive over "
                     + "loopback (127.0.0.1). Off by default; every request is "
-                    + "bearer-authenticated. Copy the setup command into your "
-                    + "agent to connect.")
+                    + "bearer-authenticated. Paste the endpoint and token into "
+                    + "your agent's MCP client — see the README for "
+                    + "client-specific setup (Claude Code, Codex).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .task(id: settings.mcpServerEnabled) { await refreshMCP() }
+        // Poll the live status while Settings is open (PT-P6-D10): a probe each
+        // second flips the pane to "Running" within ~1s of the server binding,
+        // without the user navigating away and back.
+        .task {
+            while !Task.isCancelled {
+                await refreshMCP()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
         // A window toolbar so this pane's split-view chrome (corner rounding,
         // sidebar extent) matches the Recordings and Speakers panes — those
         // carry a toolbar; a pane without one renders different chrome.
@@ -177,21 +198,47 @@ struct SettingsView: View {
         }
     }
 
-    /// Refresh the MCP token + live `/healthz` status (PT-R125). Probes the
-    /// real socket so Settings reflects whether it is actually accepting.
+    /// Refresh the MCP token + live status (PT-R125). The `/healthz` probe is
+    /// authoritative for *running* (it proves the socket is truly accepting),
+    /// but it cannot see a bind failure — a server that never bound has no
+    /// listener to answer `/healthz` — so when the probe comes back anything
+    /// but running, fall back to the supervisor's in-memory status to surface
+    /// port-in-use / failed rather than a misleading "stopped".
     private func refreshMCP() async {
-        mcpToken = await mcp.token()
-        mcpStatus = await MCPHealthProbe.probe(port: UInt16(settings.mcpServerPort))
+        guard settings.mcpServerEnabled else {
+            if mcpStatus != .stopped { mcpStatus = .stopped }
+            if !mcpToken.isEmpty { mcpToken = "" }
+            return
+        }
+        let token = await mcp.token()
+        if token != mcpToken { mcpToken = token }
+        let probed = await MCPHealthProbe.probe(port: UInt16(settings.mcpServerPort))
+        // The probe is authoritative for "running"; otherwise defer to the
+        // supervisor for port-in-use / failed, which a dead socket can't report.
+        let resolved: MCPServerStatus
+        if case .running = probed { resolved = probed }
+        else { resolved = await mcp.serverStatus() ?? probed }
+        // Assign only on change so the 1 s poll doesn't re-render the form (and
+        // disturb open pickers / fields) when the status is steady.
+        if resolved != mcpStatus { mcpStatus = resolved }
     }
 
-    /// Human-readable form of the probed server status (PT-R125).
+    /// Human-readable form of the server status (PT-R125). While enabled but
+    /// not yet accepting, the server is still coming up — show "Starting…"
+    /// rather than a momentary "Stopped".
     private func statusText(_ s: MCPServerStatus) -> String {
         switch s {
-        case .stopped: return "Stopped"
-        case .running(let p): return "Running on 127.0.0.1:\(p)"
+        case .stopped: return settings.mcpServerEnabled ? "Starting…" : "Stopped"
+        case .running: return "Running"
         case .portInUse(let p): return "Port \(p) is in use — pick another port"
         case .failed(let r): return "Stopped — \(r)"
         }
+    }
+
+    /// Replace the pasteboard with a single string (endpoint or token).
+    private func copyToPasteboard(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
     }
 
     private var micBinding: Binding<String?> {

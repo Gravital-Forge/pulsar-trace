@@ -106,5 +106,20 @@ final class MCPController {
         await apply(enabled: settings.mcpServerEnabled, port: UInt16(settings.mcpServerPort))
     }
 
+    /// Settings "Regenerate token" (PT-R116, PT-P6-D4): mint a fresh token,
+    /// invalidating the previous one, and restart so the running server adopts
+    /// it (the server caches the token, so a plain file rewrite would not take
+    /// effect until the next launch). A connected client must re-copy the new
+    /// token to reconnect.
+    func regenerateToken() async {
+        _ = try? MCPAuth().regenerateToken()
+        await restart()
+    }
+
     func token() async -> String { (try? await server?.currentToken()) ?? "" }
+
+    /// The supervisor's in-memory status (PT-R125). Settings consults this when
+    /// the `/healthz` probe cannot reach the server — a bind failure leaves no
+    /// listener to answer the probe — so port-in-use / failed still surfaces.
+    func serverStatus() async -> MCPServerStatus? { await server?.status }
 }

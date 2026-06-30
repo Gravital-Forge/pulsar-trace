@@ -212,8 +212,8 @@ No plugin, no API key, no SDK — just files your tools already know how to read
 
 Reading the files needs no setup. To let an agent also *drive* PulsarTrace — rename / merge / split speakers (and undo any of it), set a recording's title, request a re-refinement, and query recordings, speakers, and events — the menubar app can expose an opt-in **MCP server**. It is off by default, binds the local loopback interface only, and requires a bearer token on every request.
 
-1. In the menubar app, open **Settings → MCP Server** and toggle it on. It binds `127.0.0.1:8276` (the port is configurable) and shows a copyable connection command containing your token.
-2. Register it with your agent's MCP client (use the token from Settings):
+1. In the menubar app, open **Settings → MCP Server** and toggle it on. It binds `127.0.0.1:8276` (the port is configurable) and, once running, shows the endpoint plus a **Copy token** button (and **Regenerate** / **Restart** actions).
+2. Register it with your agent's MCP client, using the endpoint and token from Settings:
 
    **Claude Code:**
 

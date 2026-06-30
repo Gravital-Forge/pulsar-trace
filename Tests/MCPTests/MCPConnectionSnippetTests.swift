@@ -3,11 +3,9 @@ import Testing
 
 @Suite("MCPConnectionSnippet")
 struct MCPConnectionSnippetTests {
-    @Test("the Claude Code snippet carries the loopback URL and bearer header")
-    func claudeCodeSnippet() {
-        let s = MCPConnectionSnippet.claudeCode(port: 8276, token: "abc123")
-        #expect(s.contains("http://127.0.0.1:8276/mcp"))
-        #expect(s.contains("Authorization: Bearer abc123"))
-        #expect(s.hasPrefix("claude mcp add"))
+    @Test("the endpoint is the loopback MCP URL on the configured port")
+    func endpoint() {
+        #expect(MCPConnectionSnippet.endpoint(port: 8276) == "http://127.0.0.1:8276/mcp")
+        #expect(MCPConnectionSnippet.endpoint(port: 9000) == "http://127.0.0.1:9000/mcp")
     }
 }
