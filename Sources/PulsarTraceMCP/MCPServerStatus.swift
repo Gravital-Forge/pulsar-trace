@@ -1,7 +1,7 @@
 import Foundation
 
-/// What the MCP server is doing right now (PT-P6-R11).
-// PT-P6-R11
+/// What the MCP server is doing right now (PT-R125).
+// PT-R125
 public enum MCPServerStatus: Sendable, Equatable {
     case stopped
     case running(port: UInt16)
@@ -11,7 +11,7 @@ public enum MCPServerStatus: Sendable, Equatable {
 
 extension MCPServerStatus {
     /// The `/healthz` JSON body. The port is numeric so a health probe reads
-    /// `port` as a number rather than a quoted string (PT-P6-R11).
+    /// `port` as a number rather than a quoted string (PT-R125).
     func healthzJSON() -> [String: Any] {
         switch self {
         case .stopped: return ["status": "stopped"]
@@ -33,7 +33,7 @@ final class MCPStatusBox: @unchecked Sendable {
 
 /// The supervision policy (PT-P6-D10): rebuild a failed listener with bounded
 /// backoff; never rotate on a bind failure (PT-P6-D3).
-// PT-P6-R11
+// PT-R125
 public enum MCPSupervisor {
     public static let maxAttempts = 5
     public static let maxBackoff: Duration = .seconds(30)

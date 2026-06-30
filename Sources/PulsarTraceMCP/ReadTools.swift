@@ -3,7 +3,7 @@ import MCP
 import PulsarTraceEngine
 import PulsarTraceMenuBar
 
-/// The read surface: recordings, speakers, events (PT-P6-R3, PT-P6-R4, PT-P6-R7).
+/// The read surface: recordings, speakers, events (PT-R117, PT-R118, PT-R121).
 public enum ReadTools {
 
     /// Shared ISO-8601 parser/formatter. Fully configured at init and
@@ -12,7 +12,7 @@ public enum ReadTools {
     /// same hand-checked invariant `RecordingEntry.iso8601` relies on).
     nonisolated(unsafe) static let iso = ISO8601DateFormatter()
 
-    // PT-P6-R3
+    // PT-R117
     public static func listRecordings(recordings: any RecordingsProviding) -> MCPTool {
         MCPTool(
             name: "list_recordings",
@@ -52,7 +52,7 @@ public enum ReadTools {
         }
     }
 
-    // PT-P6-R3
+    // PT-R117
     public static func getRecordingMeta(recordings: any RecordingsProviding) -> MCPTool {
         MCPTool(
             name: "get_recording_meta",
@@ -94,7 +94,7 @@ public enum ReadTools {
         ]
     }
 
-    // PT-P6-R4
+    // PT-R118
     public static func listSpeakers(library: SpeakerLibrary) -> MCPTool {
         MCPTool(
             name: "list_speakers",
@@ -111,7 +111,7 @@ public enum ReadTools {
         }
     }
 
-    // PT-P6-R4
+    // PT-R118
     public static func getSpeaker(library: SpeakerLibrary) -> MCPTool {
         MCPTool(
             name: "get_speaker",
@@ -148,7 +148,7 @@ public enum ReadTools {
         ["id": s.id, "name": s.name, "appearance_count": s.appearanceCount, "last_seen": s.lastSeen]
     }
 
-    // PT-P6-R7
+    // PT-R121
     public static func recentEvents(events: EventLogReader) -> MCPTool {
         MCPTool(
             name: "recent_events",

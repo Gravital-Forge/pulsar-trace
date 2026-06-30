@@ -3,8 +3,8 @@ import MCP
 import PulsarTraceEngine
 
 /// The full agent surface: read + speaker-management + recording-management +
-/// discovery tools (PT-P6-R3..R8).
-// PT-P6-R3
+/// discovery tools (PT-R117..R122).
+// PT-R117
 public enum MCPToolset {
     public static func all(
         recordings: any RecordingsProviding,

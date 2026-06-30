@@ -4,7 +4,7 @@ import PulsarTraceEngine
 
 /// The in-process MCP server (PT-P6-D1): the SDK `Server` + a stateless HTTP
 /// transport behind a loopback listener, every `POST /mcp` bearer-gated.
-// PT-P6-R1
+// PT-R115
 public actor MCPServer {
 
     private let port: UInt16
@@ -20,7 +20,7 @@ public actor MCPServer {
     private var isRebuilding = false
 
     /// The server's live status — `running` / `portInUse` / `failed` / `stopped`
-    /// (PT-P6-R11). Read off a lock-guarded cell, no actor hop required.
+    /// (PT-R125). Read off a lock-guarded cell, no actor hop required.
     public var status: MCPServerStatus { statusBox.status }
 
     public init(port: UInt16, auth: MCPAuth, tools: [MCPTool] = []) {
@@ -55,7 +55,7 @@ public actor MCPServer {
         let token = try currentToken()
         // Install the tool surface: the registry registers the SDK
         // `tools/list` + `tools/call` handlers off the live tool set, so the
-        // handshake round-trips even with no tools (PT-P6-R3, PT-P6-D1).
+        // handshake round-trips even with no tools (PT-R117, PT-P6-D1).
         await registry.register(initialTools)
         await registry.install(on: server)
         try await server.start(transport: transport)
@@ -65,7 +65,7 @@ public actor MCPServer {
             await MCPServer.route(req, transport: transport, token: token, status: box.status)
         }
         // Observe state *before* starting so the first `.ready` or bind failure
-        // updates the status box and drives supervision (PT-P6-R11, PT-P6-D10).
+        // updates the status box and drives supervision (PT-R125, PT-P6-D10).
         listener.onStateChange { [weak self] state in
             Task { await self?.handleListenerState(state) }
         }
@@ -80,7 +80,7 @@ public actor MCPServer {
         statusBox.set(.stopped)
     }
 
-    /// React to a listener state change (PT-P6-R11, PT-P6-D10): record `running`
+    /// React to a listener state change (PT-R125, PT-P6-D10): record `running`
     /// on `.ready`, surface `portInUse` on a bind clash without rotating
     /// (PT-P6-D3), and rebuild a genuinely failed listener with bounded backoff.
     private func handleListenerState(_ state: LoopbackHTTPListener.ListenerState) async {
@@ -130,7 +130,7 @@ public actor MCPServer {
     }
 
     /// Route one request. `GET /healthz` is unauthenticated; `POST /mcp` is
-    /// bearer-gated and forwarded to the SDK transport (PT-P6-R2, PT-P6-D4).
+    /// bearer-gated and forwarded to the SDK transport (PT-R116, PT-P6-D4).
     static func route(
         _ req: LoopbackHTTPRequest,
         transport: StatelessHTTPServerTransport,

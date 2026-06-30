@@ -2,7 +2,7 @@ import Foundation
 import MCP
 import PulsarTraceEngine
 
-/// The speaker-management surface (PT-P6-R5): thin one-to-one wrappers over the
+/// The speaker-management surface (PT-R119): thin one-to-one wrappers over the
 /// `SpeakerEditService`, each gated against in-progress capture.
 public enum WriteTools {
 
@@ -30,7 +30,7 @@ public enum WriteTools {
         return .success(id)
     }
 
-    /// All nine speaker-management tools (PT-P6-R5, PT-P6-D6).
+    /// All nine speaker-management tools (PT-R119, PT-P6-D6).
     public static func all(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
     ) -> [MCPTool] {
@@ -47,7 +47,7 @@ public enum WriteTools {
         ]
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func renameSpeaker(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
     ) -> MCPTool {
@@ -70,7 +70,7 @@ public enum WriteTools {
         }
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func mergeSpeakers(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
     ) -> MCPTool {
@@ -93,7 +93,7 @@ public enum WriteTools {
         }
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func splitSpeaker(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
     ) -> MCPTool {
@@ -121,7 +121,7 @@ public enum WriteTools {
         }
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func unmergeSpeakers(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
     ) -> MCPTool {
@@ -144,7 +144,7 @@ public enum WriteTools {
         }
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func unsplitSpeaker(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
     ) -> MCPTool {
@@ -167,7 +167,7 @@ public enum WriteTools {
         }
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func deleteSpeaker(service: SpeakerEditService, gate: RecordingGate) -> MCPTool {
         MCPTool(
             name: "delete_speaker",
@@ -188,7 +188,7 @@ public enum WriteTools {
         }
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func undeleteSpeaker(service: SpeakerEditService, gate: RecordingGate) -> MCPTool {
         MCPTool(
             name: "undelete_speaker",
@@ -209,7 +209,7 @@ public enum WriteTools {
         }
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func delistSpeaker(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
     ) -> MCPTool {
@@ -233,7 +233,7 @@ public enum WriteTools {
         }
     }
 
-    // PT-P6-R5
+    // PT-R119
     public static func undelistSpeaker(
         service: SpeakerEditService, gate: RecordingGate, outputRoots: @escaping Roots
     ) -> MCPTool {

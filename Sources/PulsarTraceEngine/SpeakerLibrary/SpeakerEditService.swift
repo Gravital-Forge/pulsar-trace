@@ -6,7 +6,7 @@ import Foundation
 /// effects (Hard Invariant #8). The menubar editor, the MCP server, and the
 /// CLI all call this so an edit produces identical file and event effects
 /// regardless of who triggered it.
-// PT-P6-R9
+// PT-R123
 public actor SpeakerEditService {
 
     /// What an edit rewrote — the recording ids whose `final.md` changed.
@@ -72,7 +72,7 @@ public actor SpeakerEditService {
 
     /// Rename a speaker and rewrite its label across every past `final.md`.
     /// A no-op (no rewrite, no event) when the name is unchanged.
-    // PT-P6-R9
+    // PT-R123
     public func rename(
         speakerId: String, to newName: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
@@ -100,7 +100,7 @@ public actor SpeakerEditService {
 
     /// Merge `otherId` into `primaryId`; rewrite the other's label to the
     /// primary's across past `final.md`, dropping the merged-away metadata row.
-    // PT-P6-R9
+    // PT-R123
     public func merge(
         primaryId: String, otherId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
@@ -123,7 +123,7 @@ public actor SpeakerEditService {
     /// Split `movingRecordingIds` off `originalId` into a new speaker `newName`,
     /// and rewrite the moved recordings' `final.md` to the new name. Appearances
     /// are read from the **new** speaker after the mint.
-    // PT-P6-R9
+    // PT-R123
     public func split(
         originalId: String, movingRecordingIds: [String], newName: String,
         outputFolderRoots: [URL]
@@ -151,7 +151,7 @@ public actor SpeakerEditService {
     /// Drop a speaker's label from past `final.md` (solo → `Unrecognized`,
     /// co-attributed → lose the token). The microphone speaker can never be
     /// delisted — that is enforced here for every caller.
-    // PT-P6-R9
+    // PT-R123
     public func delist(
         speakerId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
@@ -179,7 +179,7 @@ public actor SpeakerEditService {
     }
 
     /// Restore a delisted speaker's label (rewrite `Unrecognized` → name).
-    // PT-P6-R9
+    // PT-R123
     public func undelist(
         speakerId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
@@ -198,7 +198,7 @@ public actor SpeakerEditService {
 
     /// Reverse a merge. The library emits `speaker_unmerged` itself, so the
     /// service emits only the rewrite effects.
-    // PT-P6-R9
+    // PT-R123
     public func unmerge(
         primaryId: String, otherId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
@@ -219,7 +219,7 @@ public actor SpeakerEditService {
 
     /// Reverse a split. The library emits `speaker_unsplit` itself. Appearances
     /// must be read BEFORE the library call (rows still resolve under `newId`).
-    // PT-P6-R9
+    // PT-R123
     public func unsplit(
         originalId: String, newId: String, outputFolderRoots: [URL]
     ) async throws -> EditResult {
@@ -240,7 +240,7 @@ public actor SpeakerEditService {
 
     /// Soft-delete a speaker. No transcript rewrite (deletion does not change
     /// any label); the library emits `speaker_deleted` itself.
-    // PT-P6-R9
+    // PT-R123
     public func delete(speakerId: String) async throws -> EditResult {
         try await Self.editLock.run {
             try await library.delete(speakerId: speakerId)
@@ -250,7 +250,7 @@ public actor SpeakerEditService {
 
     /// Restore a soft-deleted speaker. No rewrite; the library emits
     /// `speaker_undeleted` itself.
-    // PT-P6-R9
+    // PT-R123
     public func undelete(speakerId: String) async throws -> EditResult {
         try await Self.editLock.run {
             try await library.undelete(speakerId: speakerId)

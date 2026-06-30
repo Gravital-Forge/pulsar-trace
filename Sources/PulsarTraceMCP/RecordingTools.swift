@@ -2,10 +2,10 @@ import Foundation
 import MCP
 import PulsarTraceMenuBar
 
-/// The recording-management surface (PT-P6-R6): set a title, request a refine.
+/// The recording-management surface (PT-R120): set a title, request a refine.
 public enum RecordingTools {
 
-    // PT-P6-R6
+    // PT-R120
     public static func renameRecording(recordings: any RecordingsProviding) -> MCPTool {
         MCPTool(
             name: "rename_recording",
@@ -38,7 +38,7 @@ public enum RecordingTools {
         }
     }
 
-    // PT-P6-R6
+    // PT-R120
     public static func requestRefine(
         recordings: any RecordingsProviding, refine: any RefineRequesting
     ) -> MCPTool {

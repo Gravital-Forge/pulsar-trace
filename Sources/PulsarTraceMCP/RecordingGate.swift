@@ -2,8 +2,8 @@ import Foundation
 import MCP
 
 /// Refuse speaker-library mutations while a recording is in progress — the
-/// library is read-only during capture (PT-R32, PT-P6-R5).
-// PT-P6-R5
+/// library is read-only during capture (PT-R32, PT-R119).
+// PT-R119
 public struct RecordingGate: Sendable {
     public let recordings: any RecordingsProviding
 

@@ -27,7 +27,7 @@ public struct UndoToast: Identifiable, Sendable {
 /// run `FinalMarkdownRewriter` over the affected appearances, then emit the
 /// `speaker_*` cause before its `final_md_rewritten` effects (so the cause is
 /// logged first and `applied_to_recordings` lists exactly the rewritten
-/// recordings) — lives in the shared `SpeakerEditService` (PT-P6-R9), which the
+/// recordings) — lives in the shared `SpeakerEditService` (PT-R123), which the
 /// MCP server and CLI also call. This view model delegates each mutating op to
 /// the service inside `withRewrite { }` and owns only the UI concerns: the cheap
 /// pre-checks, `lastError`, `isRewriting`, the undo toasts, and `reload`.
@@ -80,7 +80,7 @@ public final class SpeakerEditorViewModel {
         self.library = library
         self.events = events
         self.settings = settings
-        self.service = SpeakerEditService(library: library, events: events)   // PT-P6-R9
+        self.service = SpeakerEditService(library: library, events: events)   // PT-R123
         self.toastLifetime = toastLifetime
     }
 

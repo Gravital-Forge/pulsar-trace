@@ -2,7 +2,7 @@ import Foundation
 
 /// Probe the loopback `/healthz` endpoint so Settings reflects whether the
 /// socket is truly accepting — not just an in-memory flag (PT-P6-D10). The
-/// port is serialized as a numeric `Int` (PT-P6-R11), so it is parsed as one.
+/// port is serialized as a numeric `Int` (PT-R125), so it is parsed as one.
 public enum MCPHealthProbe {
     public static func probe(port: UInt16, timeout: TimeInterval = 1.0) async -> MCPServerStatus {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/healthz")!)

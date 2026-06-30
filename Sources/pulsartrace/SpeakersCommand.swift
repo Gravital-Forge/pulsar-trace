@@ -7,7 +7,7 @@ import PulsarTraceEngine
 /// Operates directly on `~/Library/Application Support/PulsarTrace/speakers.sqlite`
 /// and emits the corresponding `speaker_*` events.
 ///
-/// Scope note (PT-P6-R9, PT-P6-D7): `rename`, `merge`, and `delete` all route
+/// Scope note (PT-R123, PT-P6-D7): `rename`, `merge`, and `delete` all route
 /// through the shared `SpeakerEditService`, so they produce the same file +
 /// event effects as the menubar and MCP paths. `rename`/`merge` retroactively
 /// rewrite past `final.md` files (and emit the paired `final_md_rewritten`
@@ -27,7 +27,7 @@ enum SpeakersCommand {
         events: EventWriter,
         databaseURL: URL = AppPaths.standard.speakersDatabaseURL
     ) async -> Int32 {
-        // PT-P6-R9: pull the repeated `--output-folder <path>` flags out of the
+        // PT-R123: pull the repeated `--output-folder <path>` flags out of the
         // raw args before dispatching, and resolve the roots the rewrite scans.
         let parsed = OutputFolderArgs.parse(args)
         let roots = OutputFolderRoots.resolved(explicit: parsed.roots)
@@ -92,7 +92,7 @@ enum SpeakersCommand {
 
     // MARK: - rename
 
-    // PT-P6-R9
+    // PT-R123
     private static func rename(
         _ args: [String], service: SpeakerEditService, roots: [URL]
     ) async throws -> Int32 {
@@ -110,7 +110,7 @@ enum SpeakersCommand {
 
     // MARK: - merge
 
-    // PT-P6-R9
+    // PT-R123
     private static func merge(
         _ args: [String], service: SpeakerEditService, roots: [URL]
     ) async throws -> Int32 {
@@ -129,7 +129,7 @@ enum SpeakersCommand {
 
     // MARK: - delete
 
-    // PT-P6-R9
+    // PT-R123
     private static func delete(
         _ args: [String], service: SpeakerEditService
     ) async throws -> Int32 {

@@ -2,8 +2,8 @@ import Foundation
 import MCP
 
 /// One MCP tool: its descriptor and its handler. The handler receives the
-/// decoded `arguments` map and returns a `CallTool.Result` (PT-P6-R8).
-// PT-P6-R3
+/// decoded `arguments` map and returns a `CallTool.Result` (PT-R122).
+// PT-R117
 public struct MCPTool: Sendable {
     public let name: String
     public let description: String

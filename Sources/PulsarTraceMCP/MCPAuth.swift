@@ -1,10 +1,10 @@
 import Foundation
 import PulsarTraceEngine
 
-/// The MCP server's bearer-token guard (PT-P6-R2). The token is generated once,
+/// The MCP server's bearer-token guard (PT-R116). The token is generated once,
 /// persisted owner-only, and reused across launches so a configured client keeps
 /// working; every request is validated against it (PT-P6-D4).
-// PT-P6-R2
+// PT-R116
 public struct MCPAuth: Sendable {
 
     public let tokenURL: URL

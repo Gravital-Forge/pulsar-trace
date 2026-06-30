@@ -1,8 +1,8 @@
 import Foundation
 
 /// Resolve the output-folder roots a non-menubar caller (the CLI) should scan
-/// when rewriting transcripts (PT-P6-R9, PT-P6-D7).
-// PT-P6-R9
+/// when rewriting transcripts (PT-R123, PT-P6-D7).
+// PT-R123
 public enum OutputFolderRoots {
 
     /// `~/Documents/PulsarTrace` — the product default output folder.

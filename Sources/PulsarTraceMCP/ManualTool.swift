@@ -1,7 +1,7 @@
 import Foundation
 import MCP
 
-/// The discovery surface's operations manual (PT-P6-R8, PT-P6-D5), bundled as a
+/// The discovery surface's operations manual (PT-R122, PT-P6-D5), bundled as a
 /// versioned resource alongside the server.
 public enum ManualTool {
 
@@ -10,7 +10,7 @@ public enum ManualTool {
         return try? String(contentsOf: url, encoding: .utf8)
     }
 
-    // PT-P6-R8
+    // PT-R122
     public static func manual() -> MCPTool {
         MCPTool(
             name: "manual",

@@ -47,7 +47,7 @@ public struct AppPaths: Sendable {
         applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
     }
 
-    /// The owner-only file holding the MCP server's bearer token (PT-P6-R2).
+    /// The owner-only file holding the MCP server's bearer token (PT-R116).
     public var mcpTokenURL: URL {
         applicationSupport.appendingPathComponent("mcp-token", isDirectory: false)
     }

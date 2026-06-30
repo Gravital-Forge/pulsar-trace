@@ -13,7 +13,7 @@ import SwiftUI
 /// and fills the detail column.
 struct SettingsView: View {
     @Environment(MenuBarSettings.self) private var settings
-    /// The opt-in MCP server lifecycle owner (PT-P6-R1), injected by the app.
+    /// The opt-in MCP server lifecycle owner (PT-R115), injected by the app.
     @Environment(MCPController.self) private var mcp
     /// Whether the languages popover is currently shown — the popup-button
     /// click toggles this; clicking outside dismisses.
@@ -21,7 +21,7 @@ struct SettingsView: View {
     /// Live filter inside the popover. Reset to empty when the popover
     /// reopens so the user starts fresh each time.
     @State private var languageFilter = ""
-    /// Last `/healthz` probe result (PT-P6-R11) — the live status, not an
+    /// Last `/healthz` probe result (PT-R125) — the live status, not an
     /// in-memory flag.
     @State private var mcpStatus: MCPServerStatus = .stopped
     /// The server's bearer token, surfaced so the setup snippet is paste-ready.
@@ -116,7 +116,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // PT-P6-R1 / PT-P6-R11: the opt-in agent control surface. Disabled
+            // PT-R115 / PT-R125: the opt-in agent control surface. Disabled
             // by default; shows the live `/healthz` status, the paste-ready
             // setup command, and a manual restart.
             Section("MCP Server (agent control surface)") {
@@ -177,14 +177,14 @@ struct SettingsView: View {
         }
     }
 
-    /// Refresh the MCP token + live `/healthz` status (PT-P6-R11). Probes the
+    /// Refresh the MCP token + live `/healthz` status (PT-R125). Probes the
     /// real socket so Settings reflects whether it is actually accepting.
     private func refreshMCP() async {
         mcpToken = await mcp.token()
         mcpStatus = await MCPHealthProbe.probe(port: UInt16(settings.mcpServerPort))
     }
 
-    /// Human-readable form of the probed server status (PT-P6-R11).
+    /// Human-readable form of the probed server status (PT-R125).
     private func statusText(_ s: MCPServerStatus) -> String {
         switch s {
         case .stopped: return "Stopped"

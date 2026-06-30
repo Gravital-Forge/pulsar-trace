@@ -1,7 +1,7 @@
 import Foundation
 
 /// Extract repeated `--output-folder <path>` flags from a CLI argument list
-/// (PT-P6-R9). Returns the roots and the remaining positional arguments.
+/// (PT-R123). Returns the roots and the remaining positional arguments.
 public enum OutputFolderArgs {
     public static func parse(_ args: [String]) -> (roots: [URL], positional: [String]) {
         var roots: [URL] = []

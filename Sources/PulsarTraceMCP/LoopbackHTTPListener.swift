@@ -102,7 +102,7 @@ public struct LoopbackHTTPResponse: Sendable {
 /// A loopback-only HTTP/1.1 listener (PT-P6-D2). Mirrors the teardown discipline
 /// of the POSIX capture sockets (`@unchecked Sendable` + `NSLock`) but uses
 /// `Network.framework` for the TCP/HTTP plumbing.
-// PT-P6-R1
+// PT-R115
 public final class LoopbackHTTPListener: @unchecked Sendable {
 
     public typealias Handler = @Sendable (LoopbackHTTPRequest) async -> LoopbackHTTPResponse

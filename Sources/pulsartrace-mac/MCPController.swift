@@ -5,7 +5,7 @@ import PulsarTraceMCP
 import PulsarTraceMenuBar
 
 /// Live recordings / `is_live` over the menubar scanner + recording view model
-/// (PT-P6-R3). Both held types are `@MainActor`-isolated (hence `Sendable`); the
+/// (PT-R117). Both held types are `@MainActor`-isolated (hence `Sendable`); the
 /// `RecordingsProviding` methods hop onto the main actor to read them.
 private struct LiveRecordings: RecordingsProviding {
     let scanner: RecordingsScanner
@@ -20,7 +20,7 @@ private struct LiveRecordings: RecordingsProviding {
     }
 }
 
-/// Enqueue a refine through the menubar queue façade (PT-P6-R6). The queue
+/// Enqueue a refine through the menubar queue façade (PT-R120). The queue
 /// dedups, so a repeat enqueue for the same recording is a no-op.
 private struct LiveRefine: RefineRequesting {
     let queueVM: RefinementJobQueueViewModel
@@ -32,11 +32,11 @@ private struct LiveRefine: RefineRequesting {
     }
 }
 
-/// Owns the MCP server lifecycle for the app (PT-P6-R1). Lives in the executable
+/// Owns the MCP server lifecycle for the app (PT-R115). Lives in the executable
 /// composition root because it bridges menubar state into the MCP module — the
 /// `PulsarTraceMenuBar` target must never import `PulsarTraceMCP` (a later epic
 /// makes `PulsarTraceMCP` depend on it, so the reverse edge would be a cycle).
-// PT-P6-R1
+// PT-R115
 @MainActor
 @Observable
 final class MCPController {
@@ -100,7 +100,7 @@ final class MCPController {
         catch { self.server = nil }
     }
 
-    /// Settings "Restart" (PT-P6-R11): stop, then start on the configured port.
+    /// Settings "Restart" (PT-R125): stop, then start on the configured port.
     func restart() async {
         await apply(enabled: false, port: UInt16(settings.mcpServerPort))
         await apply(enabled: settings.mcpServerEnabled, port: UInt16(settings.mcpServerPort))

@@ -108,13 +108,13 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
-    /// Whether the opt-in loopback MCP control surface is enabled (PT-P6-R1).
+    /// Whether the opt-in loopback MCP control surface is enabled (PT-R115).
     /// Default `false` — the server never starts unless the user turns it on.
     public var mcpServerEnabled: Bool {
         didSet { save() }
     }
 
-    /// The loopback port the MCP server binds (PT-P6-R1). Default `8276`. A
+    /// The loopback port the MCP server binds (PT-R115). Default `8276`. A
     /// plain `Int` so this type stays MCP-module-free; `MCPController` narrows
     /// it to `UInt16` when it owns the server lifecycle.
     public var mcpServerPort: Int {
@@ -234,7 +234,7 @@ public final class MenuBarSettings {
         self.allowedLanguages = store.array(forKey: Key.allowedLanguages)
             as? [String] ?? []
 
-        // PT-P6-R1: the MCP control surface is opt-in and disabled by default;
+        // PT-R115: the MCP control surface is opt-in and disabled by default;
         // the default port is 8276.
         self.mcpServerEnabled = store.object(forKey: Key.mcpServerEnabled)
             as? Bool ?? false

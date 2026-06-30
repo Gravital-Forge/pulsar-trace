@@ -1,9 +1,9 @@
 import Foundation
 
 /// Read recent events newest-first across the daily `YYYY-MM-DD.jsonl` files,
-/// filtered by an inclusive ISO-8601 `since` and by type (PT-P6-R7). The events
+/// filtered by an inclusive ISO-8601 `since` and by type (PT-R121). The events
 /// log is otherwise append-only and write-owned by `EventWriter`.
-// PT-P6-R7
+// PT-R121
 public struct EventLogReader: Sendable {
 
     public let directory: URL
