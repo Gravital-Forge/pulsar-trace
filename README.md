@@ -208,6 +208,32 @@ The intended workflow: keep your agent pointed at the transcript files.
 
 No plugin, no API key, no SDK — just files your tools already know how to read.
 
+### Drive PulsarTrace from your agent (MCP)
+
+Reading the files needs no setup. To let an agent also *drive* PulsarTrace — rename / merge / split speakers (and undo any of it), set a recording's title, request a re-refinement, and query recordings, speakers, and events — the menubar app can expose an opt-in **MCP server**. It is off by default, binds the local loopback interface only, and requires a bearer token on every request.
+
+1. In the menubar app, open **Settings → MCP Server** and toggle it on. It binds `127.0.0.1:8276` (the port is configurable) and shows a copyable connection command containing your token.
+2. Register it with your agent's MCP client (use the token from Settings):
+
+   **Claude Code:**
+
+   ```bash
+   claude mcp add --transport http pulsartrace http://127.0.0.1:8276/mcp \
+     --header "Authorization: Bearer <token>"
+   ```
+
+   **Codex CLI** (`~/.codex/config.toml`):
+
+   ```toml
+   [mcp_servers.pulsartrace]
+   url = "http://127.0.0.1:8276/mcp"
+   http_headers = { Authorization = "Bearer <token>" }
+   ```
+
+3. Have your agent call the **`manual`** tool first — it returns a standalone operations manual describing the data model and every tool's semantics and reversibility.
+
+The surface returns metadata and filesystem paths only — never transcript or audio bytes, which the agent reads from the paths it returns — and it cannot change settings or start/stop capture. Speaker edits made over MCP rewrite past `final.md` transcripts exactly as the in-app editor does, and are refused while a recording is in progress. The token persists across launches and can be regenerated any time from Settings. The agent must run on the same machine — a VM-sandboxed or cloud-hosted agent cannot reach the loopback endpoint.
+
 ---
 
 ## Where things live on disk
