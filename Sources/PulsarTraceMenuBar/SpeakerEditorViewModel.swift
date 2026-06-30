@@ -104,6 +104,11 @@ public final class SpeakerEditorViewModel {
     /// the library.
     public func reload() async {
         do {
+            // The editor holds its own `SpeakerLibrary` instance, separate
+            // from the refine pipeline's. Drop its cache first so a speaker
+            // another instance created (an `Unknown #N` from refinement) is
+            // observed on reload, not served stale from a warm cache.
+            await library.refreshFromDisk()
             liveSpeakers = try await library.liveSpeakers()
             deletedSpeakers = try await library.recoverableSpeakers()
             delistedSpeakers = try await library.recoverableDelistedSpeakers()
@@ -199,13 +204,18 @@ public final class SpeakerEditorViewModel {
                 movingRecordingIds: movingRecordingIds,
                 newName: newName, suppressEvent: true)
             // The moved appearances now belong to the new speaker; rewrite
-            // `originalName` → `newName` across them.
+            // `originalName` → `newName` across them and re-point each moved
+            // recording's `metadata.json` speaker_id from the original to the
+            // new speaker. Without the remap the per-recording row keeps the
+            // original id, so a later delist of the new speaker (keyed on
+            // speaker_id) misses it and the pill lingers.
             let appearances = try await self.library.appearances(of: newSpeaker.id)
             let results = try await self.rewriter.rewrite(
                 oldName: originalName, newName: newName,
                 appearances: appearances,
                 outputFolderRoots: self.outputRoots(),
-                reason: .speakerSplit)
+                reason: .speakerSplit,
+                remapSpeakerId: (from: originalId, to: newSpeaker.id))
             _ = try? await self.events?.append(SpeakerSplitEvent(
                 originalSpeakerId: originalId, newSpeakerId: newSpeaker.id,
                 appliedToRecordings: results.map(\.recordingId)))
@@ -382,11 +392,15 @@ public final class SpeakerEditorViewModel {
             try await self.library.unsplit(
                 originalId: originalId, newId: newId)
 
+            // Symmetric to `split`: fold the moved recordings' metadata
+            // speaker_id back from the new speaker to the original, so the
+            // row matches the original again after the undo.
             let results = try await self.rewriter.rewrite(
                 oldName: newName, newName: originalName,
                 appearances: appearances,
                 outputFolderRoots: self.outputRoots(),
-                reason: .speakerUnsplit)
+                reason: .speakerUnsplit,
+                remapSpeakerId: (from: newId, to: originalId))
             await self.emitRewriteEvents(results, reason: .speakerUnsplit)
         }
     }

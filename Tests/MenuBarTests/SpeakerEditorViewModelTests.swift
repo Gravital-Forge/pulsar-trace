@@ -322,6 +322,70 @@ struct SpeakerEditorViewModelTests {
         #expect(unsplitPos < rewrittenPos)
     }
 
+    /// Regression for the reported bug: split a speaker off into a new one,
+    /// then delist the new speaker. The split must re-point the moved
+    /// recording's `metadata.json` speaker_id to the new speaker, otherwise the
+    /// delist drop (keyed on speaker_id) misses the row and the recording's
+    /// pill keeps showing the delisted speaker.
+    @Test("split then delist drops the new speaker's metadata row")
+    func splitThenDelistDropsMetadataRow() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let events = EventWriter(directory: root.appendingPathComponent("events"))
+        await events.bootstrap()
+        let library = try await SpeakerLibrary(
+            databaseURL: root.appendingPathComponent("speakers.sqlite"),
+            events: events)
+
+        // Seed the library first so the recording's metadata.json can link each
+        // row to a real speaker_id — as a refined recording does in production
+        // (the default fixture leaves speaker_id nil).
+        let unknown = try await library.createSpeaker(
+            name: "Unknown #1", centroid: centroid(0.2), modelRevision: "rev1",
+            recordingId: "rec_review", recordingFolderName: "review")
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.5), modelRevision: "rev1",
+            recordingId: "rec_review", recordingFolderName: "review")
+        let reviewFolder = try MenuBarFixtures.makeRecordingFolder(
+            root: root, name: "review", recordingId: "rec_review",
+            speakerIDsByLabel: ["Unknown #1": unknown.id, "Steve": steve.id])
+
+        let vm = SpeakerEditorViewModel(
+            library: library, events: events,
+            settings: try settings(outputRoot: root))
+        await vm.reload()
+
+        // Split `rec_review` off `Unknown #1` into `Bob`, then delist `Bob`.
+        await vm.split(
+            originalId: unknown.id,
+            movingRecordingIds: ["rec_review"], newName: "Bob")
+        #expect(vm.lastError == nil)
+        let live = try await library.liveSpeakers()
+        let bob = try #require(live.first { $0.name == "Bob" })
+
+        await vm.delist(speakerId: bob.id)
+        #expect(vm.lastError == nil)
+
+        // Bob is gone from the live library list…
+        #expect(!(try await library.liveSpeakers()).contains { $0.id == bob.id })
+
+        // …and crucially its row is gone from the recording's metadata.json,
+        // so the per-recording pill (built from metadata.speakers) no longer
+        // shows the delisted speaker. Before the split remap fix the row kept
+        // the original id, the delist drop missed it, and the pill lingered.
+        let meta = try JSONDecoder().decode(
+            RefinementMetadata.self,
+            from: Data(contentsOf: reviewFolder.appendingPathComponent(
+                RecordingFolder.FileName.metadata)))
+        #expect(!meta.speakers.contains { $0.speakerId == bob.id })
+        #expect(!meta.speakers.contains { $0.label == "Bob" })
+        // Steve's row survives untouched.
+        #expect(meta.speakers.contains {
+            $0.label == "Steve" && $0.speakerId == steve.id
+        })
+    }
+
     @Test("delete then undelete round-trips via the undo toast")
     func deleteUndeleteRoundTrip() async throws {
         let root = MenuBarFixtures.tempDir()

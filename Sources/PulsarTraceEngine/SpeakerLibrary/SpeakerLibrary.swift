@@ -322,6 +322,14 @@ public actor SpeakerLibrary {
     /// Drop the live-speaker cache — called after any mutation.
     private func invalidateCache() { cachedLiveSpeakers = nil }
 
+    /// Drop the in-memory live-speaker cache so the next `liveSpeakers()`
+    /// re-reads SQLite. The cache is invalidated only by mutations on *this*
+    /// actor instance, so an editor that holds its own `SpeakerLibrary` cannot
+    /// see speakers another instance created (e.g. an `Unknown #N` minted by
+    /// the refine pipeline) until it forces a re-read. The editor calls this
+    /// before a window-open reload so its list always reflects on-disk truth.
+    public func refreshFromDisk() { invalidateCache() }
+
     /// Every soft-deleted speaker still inside the 30-day recovery window
     /// (PT-R32b "Recently deleted").
     public func recoverableSpeakers() throws -> [Speaker] {
