@@ -1,5 +1,7 @@
 # PT-P6 · Agent-Native MCP Surface — Decision Log
 
+**Status:** Frozen · **Closed:** 2026-06-29
+
 The reasoning behind the agent-native MCP surface, recorded as each choice was taken. Append-only;
 frozen at project close.
 

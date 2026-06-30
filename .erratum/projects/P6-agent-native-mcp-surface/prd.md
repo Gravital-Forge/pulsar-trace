@@ -1,6 +1,6 @@
 # PT-P6 · Agent-Native MCP Surface — Project PRD
 
-**Status:** Open · **Opened:** 2026-06-25
+**Status:** Frozen · **Opened:** 2026-06-25 · **Closed:** 2026-06-29
 
 ## Scope
 
