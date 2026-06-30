@@ -133,6 +133,46 @@ struct SpeakerLibraryUnitTests {
         #expect((match?.similarity ?? 0) > 0.99)
     }
 
+    // MARK: - cross-instance freshness
+
+    /// The menubar editor and the refine pipeline each hold their own
+    /// `SpeakerLibrary` on the same SQLite file. The live-speaker cache is
+    /// invalidated only by mutations on the *same* instance, so a speaker the
+    /// refine instance creates is invisible to the editor's warm cache until it
+    /// re-reads. `refreshFromDisk()` forces that re-read — the fix for the
+    /// "new Unknown #N missing from the speaker settings until you navigate
+    /// away and back" bug.
+    @Test("refreshFromDisk lets a second instance observe another's new speaker")
+    func refreshFromDiskSeesCrossInstanceSpeaker() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbURL = dir.appendingPathComponent("speakers.sqlite")
+        let clock: @Sendable () -> Date = { Date(timeIntervalSince1970: 1_777_000_000) }
+        let factory = DeterministicULIDFactory(seed: 0xE9C5)
+
+        // The "editor" instance and the "refine" instance share one DB file.
+        let editor = try await SpeakerLibrary(
+            databaseURL: dbURL, clock: clock, ulidFactory: { factory.make($0) })
+        let refine = try await SpeakerLibrary(
+            databaseURL: dbURL, clock: clock, ulidFactory: { factory.make($0) })
+
+        // Editor reads once → warms its (empty) live-speaker cache.
+        #expect(try await editor.liveSpeakers().isEmpty)
+
+        // Refine mints a new speaker on its own instance.
+        let created = try await refine.createSpeaker(
+            name: "Unknown #1", centroid: syntheticEmbedding(axis: 1),
+            modelRevision: "rev-a",
+            recordingId: "rec_a", recordingFolderName: "a")
+
+        // Editor's cache is still warm-but-stale: it does not see the speaker.
+        #expect(try await editor.liveSpeakers().isEmpty)
+
+        // After a forced re-read, the editor observes it.
+        await editor.refreshFromDisk()
+        #expect(try await editor.liveSpeakers().map(\.id) == [created.id])
+    }
+
     @Test("a distinct centroid below threshold does not match")
     func distinctNoMatch() async throws {
         let (library, dir) = try await makeLibrary()

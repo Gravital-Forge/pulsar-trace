@@ -139,6 +139,13 @@ struct SpeakerEditorView: View {
             }
         }
         .task { await loadLibrary() }
+        // Reload every time the pane appears — on navigation back to Speakers
+        // and on window reopen (the `Window` scene keeps this view's `@State`,
+        // so the one-shot `.task` build does not re-read). A speaker minted by
+        // refinement (an `Unknown #N`) thus shows without navigating away and
+        // back. Cheap on a small local DB; `reload()` no-ops while `viewModel`
+        // is still nil (the `.task` build owns the first load).
+        .onAppear { Task { await viewModel?.reload() } }
         // Item-driven (see `splitTarget`): the sheet receives the speaker
         // value directly, so it cannot present against a stale operand.
         .sheet(item: $splitTarget) { target in

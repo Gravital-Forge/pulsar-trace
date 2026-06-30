@@ -58,6 +58,7 @@ enum MenuBarFixtures {
         recordingStart: String = "2026-05-01T09:00:00Z",
         durationSeconds: Double = 30,
         speakerLabels: [String] = ["Unknown #1", "Steve", "You"],
+        speakerIDsByLabel: [String: String] = [:],
         withFinalMarkdown: Bool = true,
         finalMarkdownBody: String? = nil
     ) throws -> URL {
@@ -76,7 +77,11 @@ enum MenuBarFixtures {
             refinedAt: "2026-05-01T10:00:00Z",
             durationSeconds: durationSeconds,
             speakers: speakerLabels.map {
-                .init(label: $0, isMicrophone: $0 == "You", speakerId: nil)
+                // A refined recording links each row to its library speaker_id;
+                // tests that exercise speaker_id-keyed rewrites pass a map, the
+                // rest default to `nil` (no link).
+                .init(label: $0, isMicrophone: $0 == "You",
+                      speakerId: speakerIDsByLabel[$0])
             },
             whisperModel: .init(name: "base", sha256: "deadbeef"),
             diarizationModel: nil,

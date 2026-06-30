@@ -352,6 +352,87 @@ struct FinalMarkdownRewriterTests {
         #expect(meta.speakers.filter { $0.label == "Steve" }.count == 1)
     }
 
+    // MARK: - split re-points the metadata.json speaker_id
+
+    /// A split moves the appearance to a NEW speaker id in the library, but the
+    /// per-recording `metadata.json` row still carries the original id. The
+    /// split rewrite must re-point it via `remapSpeakerId`, else a later delist
+    /// keyed on the new id misses the row and the pill lingers (the reported
+    /// split-then-delist bug).
+    @Test("split re-points the moved recording's metadata speaker_id")
+    func metadataSplitRemapsSpeakerId() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(
+            root: root, name: "split-folder", recordingId: "rec_split")
+
+        // Split `Unknown #1` (spk_aaa) off into a new speaker `Alice`
+        // (spk_ccc): the moved recording's row should become {Alice, spk_ccc}.
+        _ = try await FinalMarkdownRewriter().rewrite(
+            oldName: "Unknown #1", newName: "Alice",
+            appearances: [makeAppearance(
+                recordingId: "rec_split", folderName: "split-folder")],
+            outputFolderRoots: [root],
+            reason: .speakerSplit,
+            remapSpeakerId: (from: "spk_aaa", to: "spk_ccc"))
+
+        let meta = try JSONDecoder().decode(
+            RefinementMetadata.self,
+            from: Data(contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.metadata)))
+        // The moved row now points at the new speaker; the original id is gone.
+        #expect(meta.speakers.contains {
+            $0.label == "Alice" && $0.speakerId == "spk_ccc"
+        })
+        #expect(!meta.speakers.contains { $0.speakerId == "spk_aaa" })
+        // Untouched rows are preserved.
+        #expect(meta.speakers.contains {
+            $0.label == "Steve" && $0.speakerId == "spk_bbb"
+        })
+        #expect(meta.speakers.contains { $0.isMicrophone })
+    }
+
+    /// End-to-end regression for the reported bug: split a speaker off, then
+    /// delist the new speaker. Before the remap fix the metadata row still
+    /// carried the original id, so the delist drop (keyed on the new id) left
+    /// the row behind and the recording kept showing the delisted speaker's
+    /// pill. With the remap, the drop finds and removes the row.
+    @Test("split then delist drops the metadata row (no lingering pill)")
+    func metadataSplitThenDelistDropsRow() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try makeRecordingFolder(
+            root: root, name: "split-delist", recordingId: "rec_sd")
+
+        // 1) Split `Unknown #1` (spk_aaa) → `Alice` (spk_ccc).
+        _ = try await FinalMarkdownRewriter().rewrite(
+            oldName: "Unknown #1", newName: "Alice",
+            appearances: [makeAppearance(
+                recordingId: "rec_sd", folderName: "split-delist")],
+            outputFolderRoots: [root],
+            reason: .speakerSplit,
+            remapSpeakerId: (from: "spk_aaa", to: "spk_ccc"))
+
+        // 2) Delist the new speaker `Alice` (spk_ccc).
+        _ = try await FinalMarkdownRewriter().rewriteDropping(
+            name: "Alice", speakerId: "spk_ccc",
+            appearances: [makeAppearance(
+                recordingId: "rec_sd", folderName: "split-delist")],
+            outputFolderRoots: [root])
+
+        let meta = try JSONDecoder().decode(
+            RefinementMetadata.self,
+            from: Data(contentsOf: folder.appendingPathComponent(
+                RecordingFolder.FileName.metadata)))
+        // The delisted speaker's row is gone — neither the new id, the
+        // original id, nor an `Alice` label lingers.
+        #expect(!meta.speakers.contains { $0.speakerId == "spk_ccc" })
+        #expect(!meta.speakers.contains { $0.speakerId == "spk_aaa" })
+        #expect(!meta.speakers.contains { $0.label == "Alice" })
+        // Surviving rows: Steve and You.
+        #expect(meta.speakers.map(\.label).sorted() == ["Steve", "You"])
+    }
+
     /// A `metadata.json` already corrupted by a pre-fix merge (two rows
     /// sharing the same label under different speakerIds) self-heals on the
     /// next rewrite — the dedupe step in `rewriteMetadataIfPresent` collapses

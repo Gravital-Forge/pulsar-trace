@@ -103,6 +103,11 @@ public final class SpeakerEditorViewModel {
     /// the library.
     public func reload() async {
         do {
+            // The editor holds its own `SpeakerLibrary` instance, separate
+            // from the refine pipeline's. Drop its cache first so a speaker
+            // another instance created (an `Unknown #N` from refinement) is
+            // observed on reload, not served stale from a warm cache.
+            await library.refreshFromDisk()
             liveSpeakers = try await library.liveSpeakers()
             deletedSpeakers = try await library.recoverableSpeakers()
             delistedSpeakers = try await library.recoverableDelistedSpeakers()

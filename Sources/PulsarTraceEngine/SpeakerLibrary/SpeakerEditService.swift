@@ -136,10 +136,17 @@ public actor SpeakerEditService {
             let newSpeaker = try await library.split(
                 originalId: originalId, movingRecordingIds: movingRecordingIds,
                 newName: newName, suppressEvent: true)
+            // The moved appearances now belong to the new speaker; rewrite
+            // `originalName` → `newName` across them and re-point each moved
+            // recording's `metadata.json` speaker_id from the original to the
+            // new speaker. Without the remap the per-recording row keeps the
+            // original id, so a later delist of the new speaker (keyed on
+            // speaker_id) misses it and the pill lingers.
             let appearances = try await library.appearances(of: newSpeaker.id)
             let results = try await rewriter.rewrite(
                 oldName: originalName, newName: newName, appearances: appearances,
-                outputFolderRoots: outputFolderRoots, reason: .speakerSplit)
+                outputFolderRoots: outputFolderRoots, reason: .speakerSplit,
+                remapSpeakerId: (from: originalId, to: newSpeaker.id))
             _ = try? await events?.append(SpeakerSplitEvent(
                 originalSpeakerId: originalId, newSpeakerId: newSpeaker.id,
                 appliedToRecordings: results.map(\.recordingId)))
@@ -230,9 +237,13 @@ public actor SpeakerEditService {
             }
             let appearances = try await library.appearances(of: newId)
             try await library.unsplit(originalId: originalId, newId: newId)
+            // Symmetric to `split`: fold the moved recordings' metadata
+            // speaker_id back from the new speaker to the original, so the
+            // row matches the original again after the undo.
             let results = try await rewriter.rewrite(
                 oldName: newName, newName: originalName, appearances: appearances,
-                outputFolderRoots: outputFolderRoots, reason: .speakerUnsplit)
+                outputFolderRoots: outputFolderRoots, reason: .speakerUnsplit,
+                remapSpeakerId: (from: newId, to: originalId))
             await emitRewriteEvents(results, reason: .speakerUnsplit)
             return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
         }

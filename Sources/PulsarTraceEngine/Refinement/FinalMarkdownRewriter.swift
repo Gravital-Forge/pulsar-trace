@@ -97,6 +97,15 @@ public struct FinalMarkdownRewriter: Sendable {
     ///     the menubar pills strip as two chips for the same person.
     ///     `final.md` itself is not affected — drop only applies to
     ///     `metadata.json`.
+    ///   - remapSpeakerId: optional `(from, to)` library-id remap applied to
+    ///     each rewritten recording's `metadata.json` speaker row. Set by
+    ///     split (and its undo): the library moves the appearance to a new
+    ///     speaker id, but the per-recording `metadata.json` still points its
+    ///     row at the original id. A later delist/merge keyed on `speaker_id`
+    ///     would then miss the row, leaving a stale pill — so split re-points
+    ///     the moved recordings' `speaker_id` here, mirroring how merge drops
+    ///     by id. `final.md` itself is not affected — the remap only applies
+    ///     to `metadata.json`.
     /// - Returns: one `RecordingResult` per recording whose `final.md` was
     ///   **genuinely changed**, in the order the appearances were processed.
     ///   Folders not found on disk, folders with no `final.md`, and folders
@@ -111,7 +120,8 @@ public struct FinalMarkdownRewriter: Sendable {
         appearances: [SpeakerAppearance],
         outputFolderRoots: [URL],
         reason: RewriteReason,
-        removedSpeakerId: String? = nil
+        removedSpeakerId: String? = nil,
+        remapSpeakerId: (from: String, to: String)? = nil
     ) async throws -> [RecordingResult] {
         var results: [RecordingResult] = []
 
@@ -140,7 +150,8 @@ public struct FinalMarkdownRewriter: Sendable {
             guard let sha = try rewriteFolder(
                 folder: folder, finalURL: finalURL,
                 oldName: oldName, newName: newName,
-                removedSpeakerId: removedSpeakerId)
+                removedSpeakerId: removedSpeakerId,
+                remapSpeakerId: remapSpeakerId)
             else { continue }
 
             let result = RecordingResult(
@@ -411,7 +422,8 @@ public struct FinalMarkdownRewriter: Sendable {
         finalURL: URL,
         oldName: String,
         newName: String,
-        removedSpeakerId: String?
+        removedSpeakerId: String?,
+        remapSpeakerId: (from: String, to: String)?
     ) throws -> String? {
         let fm = FileManager.default
         let original = try String(contentsOf: finalURL, encoding: .utf8)
@@ -438,7 +450,8 @@ public struct FinalMarkdownRewriter: Sendable {
         // Best-effort metadata.json update — a separate atomic write (v1).
         rewriteMetadataIfPresent(
             in: folder, oldName: oldName, newName: newName,
-            removedSpeakerId: removedSpeakerId)
+            removedSpeakerId: removedSpeakerId,
+            remapSpeakerId: remapSpeakerId)
 
         return sha
     }
@@ -551,11 +564,18 @@ public struct FinalMarkdownRewriter: Sendable {
     /// pair. A defensive label dedupe runs after substitution to collapse any
     /// remaining duplicate `(label, isMicrophone)` rows (e.g. metadata that
     /// was already corrupted by a pre-fix merge) — first occurrence wins.
+    ///
+    /// When `remapSpeakerId` is set, any surviving row whose `speakerId`
+    /// equals `from` is re-pointed to `to` (alongside the label substitution).
+    /// This is the split case: the library moved the appearance to a new
+    /// speaker id, but the row here still carries the original id; without the
+    /// remap a later delist/merge keyed on `speaker_id` would miss the row.
     private func rewriteMetadataIfPresent(
         in folder: URL,
         oldName: String,
         newName: String,
-        removedSpeakerId: String?
+        removedSpeakerId: String?,
+        remapSpeakerId: (from: String, to: String)?
     ) {
         let metadataURL = folder.appendingPathComponent(
             RecordingFolder.FileName.metadata)
@@ -572,10 +592,13 @@ public struct FinalMarkdownRewriter: Sendable {
             let dropApplies = removedSpeakerId.map { id in
                 metadata.speakers.contains { $0.speakerId == id }
             } ?? false
-            // Nothing to do for this recording: neither the rename nor the
-            // drop touches its speakers list. Avoid an atomic rewrite that
-            // would only change the on-disk timestamp.
-            guard renamingApplies || dropApplies else { return }
+            let remapApplies = remapSpeakerId.map { remap in
+                metadata.speakers.contains { $0.speakerId == remap.from }
+            } ?? false
+            // Nothing to do for this recording: neither the rename, the drop,
+            // nor the id remap touches its speakers list. Avoid an atomic
+            // rewrite that would only change the on-disk timestamp.
+            guard renamingApplies || dropApplies || remapApplies else { return }
 
             // Step 1 — drop the merged-away row if requested.
             let afterDrop = metadata.speakers.filter { speaker in
@@ -585,14 +608,22 @@ public struct FinalMarkdownRewriter: Sendable {
                 }
                 return speakerId != removedId
             }
-            // Step 2 — apply the label substitution to the remaining rows.
-            let relabelled = afterDrop.map { speaker in
-                speaker.label == oldName
-                    ? RefinementMetadata.Speaker(
-                        label: newName,
-                        isMicrophone: speaker.isMicrophone,
-                        speakerId: speaker.speakerId)
-                    : speaker
+            // Step 2 — apply the label substitution and (for split / unsplit)
+            // the speaker_id remap to the remaining rows.
+            let relabelled = afterDrop.map { speaker -> RefinementMetadata.Speaker in
+                let newLabel = speaker.label == oldName ? newName : speaker.label
+                let mappedId: String?
+                if let remap = remapSpeakerId, speaker.speakerId == remap.from {
+                    mappedId = remap.to
+                } else {
+                    mappedId = speaker.speakerId
+                }
+                guard newLabel != speaker.label || mappedId != speaker.speakerId
+                else { return speaker }
+                return RefinementMetadata.Speaker(
+                    label: newLabel,
+                    isMicrophone: speaker.isMicrophone,
+                    speakerId: mappedId)
             }
             // Step 3 — defensive dedupe by `(label, isMicrophone)` (first
             // occurrence wins). Handles two edge cases: the rename created
