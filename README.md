@@ -21,6 +21,7 @@ Part of the Gravital Forge product family (sibling to OrbitNote).
 | Real microphone / system-audio capture (`pulsartrace-capture`) | ✅ Working |
 | Headless CLI — `pulsartrace record`, `doctor`, `events tail`, `install-cli` | ✅ Working |
 | Menubar app — record, settings, speaker editor, live transcript preview, global hotkey, notifications | ✅ Working (unsigned dev build) |
+| Agent control surface — opt-in loopback **MCP server** (manage speakers & recordings, query state) | ✅ Working (unsigned dev build) |
 | Signed/notarized DMG, first-run permissions wizard | ⏳ Planned (Epic 10) |
 
 PulsarTrace is a complete **command-line tool** today: record a meeting with `pulsartrace record`, or feed it an existing WAV with `pulsartrace refine`. A **menubar app** (`pulsartrace-mac`) drives the same flow without a terminal — it runs today as an unsigned dev build. A signed/notarized DMG and a first-run permissions wizard are the remaining milestone — see [Roadmap](#roadmap). The entire AI pipeline is built and tested against an audio-source abstraction, so most of it builds and runs without touching audio hardware.
@@ -34,7 +35,7 @@ Every dominant meeting-transcription tool (Otter, Fireflies, Granola, Fathom, Zo
 - **Strictly local.** Your audio never leaves the machine. No telemetry, no analytics, no account, no auto-update pings. The only network calls are first-launch model downloads from Hugging Face.
 - **Speaker labels that persist.** Diarization separates who said what, and a speaker library learns recurring voices — so by someone's third meeting they're auto-labeled by name.
 - **Two-pass design.** A fast *live* pass writes `live.md` while the meeting happens; an offline *refinement* pass re-runs at full quality afterward and produces `final.md`, the source of truth.
-- **Files as the API.** No in-app chatbot. PulsarTrace writes clean Markdown and JSONL; you point your own agent at it. The integration is the product.
+- **Files as the API.** No in-app chatbot. PulsarTrace writes clean Markdown and JSONL; you point your own agent at it. The integration is the product. An opt-in local **MCP server** lets your agent also *drive* PulsarTrace — managing speaker identity and recordings — while still reading content straight from the files.
 
 ---
 
