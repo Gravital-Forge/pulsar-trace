@@ -49,6 +49,19 @@ struct LoopbackHTTPListenerTests {
         #expect((getResponse as? HTTPURLResponse)?.statusCode == 405)
     }
 
+    /// A malformed negative `Content-Length` must be rejected by the parser,
+    /// never fed to `Data.prefix(_:)` — `prefix(-1)` traps and aborts the whole
+    /// process, so an unauthenticated local client could crash the app with one
+    /// request. `URLSession` will not emit a negative length, so the parser is
+    /// exercised directly on a raw buffer. Returning `nil` ("need more bytes")
+    /// leaves the connection to the idle-timeout reaper (PT-R115).
+    // PT-R115
+    @Test("a negative Content-Length is rejected by the parser, not fatal")
+    func negativeContentLengthRejected() {
+        let raw = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: -1\r\n\r\n"
+        #expect(LoopbackHTTPRequest.parse(Data(raw.utf8)) == nil)
+    }
+
     /// URLSession rewrites a manually-set `Content-Length` to match the real
     /// body, so we drive the cap with an actual oversized body against a tiny
     /// `maxRequestBytes` seam — proving the 413 fires without the listener

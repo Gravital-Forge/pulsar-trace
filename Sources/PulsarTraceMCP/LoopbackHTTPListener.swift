@@ -36,6 +36,10 @@ public struct LoopbackHTTPRequest: Sendable {
         let bodyStart = headEnd.upperBound
         let available = buffer[bodyStart...]
         let expected = headers["content-length"].flatMap { Int($0) } ?? 0
+        // A negative `Content-Length` is malformed, and `prefix(-1)` below
+        // would trap — treat it like any other unparseable request (the idle
+        // timeout reaps the connection).
+        guard expected >= 0 else { return nil }
         guard available.count >= expected else { return nil }      // need more bytes
         let body = Data(available.prefix(expected))
         return LoopbackHTTPRequest(method: method, path: path, headers: headers, body: body)
