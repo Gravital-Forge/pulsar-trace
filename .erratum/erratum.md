@@ -27,7 +27,12 @@ built from, and how each requirement traces to the work that delivered it. Opera
 and lives outside this directory. User-facing narrative (`README.md`, `CHANGELOG.md`) also lives
 outside it.
 
-## Conventions specific to this product
+## Tailoring
+
+Erratum 0.1.0 has no first-class "tailoring" artifact — the framework does not define the term. This
+product adapts the framework through the product-specific conventions recorded in this section; that
+is the sanctioned place for a deliberate deviation from, or extension of, the framework's defaults.
+Anything below is a local rule layered on top of the framework, not a change to it.
 
 - **Architecture is a directory, not a single file.** `product/architecture/` holds an `index.md`
   component map plus per-area files, including `events-log.md` and `transcript-format.md`, which
@@ -36,6 +41,13 @@ outside it.
 - **Requirement numbering.** Product requirement IDs `PT-R1`–`PT-R86` carry the numbers used by the
   product's originating specification, so existing references resolve unchanged; `PT-R87` onward are
   derived as max-plus-one in the usual way.
+- **A product-level known-issues register.** `product/known-issues.md` records accepted limitations
+  and consciously-deferred work, so a known gap is a tracked decision rather than a surprise. Its
+  entries use a local `KI-n` tag that is **outside** the Erratum ID namespace (R / C / D / P / E / T
+  / rev) — they are neither requirements nor decisions and never participate in traceability or the
+  active-set integrity check (I6). An entry is retired when the work lands or is promoted into a
+  project; a deferral that hardens into a requirement is minted through the normal project flow, not
+  by editing the register.
 
 ## Adoption status
 
