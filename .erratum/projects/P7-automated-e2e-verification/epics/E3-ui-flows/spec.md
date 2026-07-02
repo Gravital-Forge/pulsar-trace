@@ -10,7 +10,9 @@ top of the floor: a full record → stop → refine pass over fixture capture (P
 and event assertions; settings persistence across an app relaunch; speaker rename with the
 retroactive `final.md` rewrite; and merge with the undo toast round-trip, both against the
 `SeededHome` state (PT-P7-D6). Closes with the checklist annotation pass: every
-`docs/release-smoke-test.md` item the suites now cover gets marked as automated.
+`docs/release-smoke-test.md` item the suites now cover gets marked as automated. Test code
+references identifiers through the shared `A11yID` constants (`import PulsarTraceMenuBar`); the task
+snippets show raw strings only for readability.
 
 ## Acceptance criteria
 
