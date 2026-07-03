@@ -9,6 +9,10 @@ let package = Package(
     products: [
         .library(name: "PulsarTraceEngine", targets: ["PulsarTraceEngine"]),
         .library(name: "PulsarTraceMenuBar", targets: ["PulsarTraceMenuBar"]),
+        // Exposed for the UI-test wrapper project (PT-P7-R5): the Xcode app
+        // target replicates pulsartrace-mac's imports via package products.
+        .library(name: "PulsarTraceMCP", targets: ["PulsarTraceMCP"]),
+        .library(name: "PulsarTraceCapture", targets: ["PulsarTraceCapture"]),
         .executable(name: "pulsartrace-engine", targets: ["pulsartrace-engine"]),
         .executable(name: "pulsartrace", targets: ["pulsartrace"]),
         .executable(name: "pulsartrace-capture", targets: ["pulsartrace-capture"]),

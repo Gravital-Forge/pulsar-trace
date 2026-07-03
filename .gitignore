@@ -5,6 +5,9 @@
 *.xcodeproj
 .swiftpm/
 
+# Generated UI-test wrapper Info.plist (XcodeGen writes this; PT-P7-R5)
+UITests/App-Info.plist
+
 # Developer audio preflight artifacts (scripts/audio-loopback-check.sh)
 .preflight/
 

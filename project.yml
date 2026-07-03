@@ -1,0 +1,61 @@
+# UI-test wrapper project (PT-P7-R5). Generated output (PulsarTraceUIHarness.xcodeproj)
+# is gitignored — regenerate with `xcodegen generate` or scripts/run-ui-tests.sh.
+# SwiftPM remains the only build system for shipped products; this project exists
+# solely to compile the menubar app into a testable bundle and host XCUITest.
+name: PulsarTraceUIHarness
+options:
+  bundleIdPrefix: com.gravitalforge
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  PulsarTracePackage:
+    path: .
+targets:
+  PulsarTraceApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/pulsartrace-mac
+    dependencies:
+      - package: PulsarTracePackage
+        product: PulsarTraceMenuBar
+      - package: PulsarTracePackage
+        product: PulsarTraceEngine
+      - package: PulsarTracePackage
+        product: PulsarTraceMCP
+      - package: PulsarTracePackage
+        product: PulsarTraceCapture
+    info:
+      path: UITests/App-Info.plist
+      properties:
+        CFBundleDisplayName: PulsarTrace (UI Harness)
+        LSUIElement: true
+        NSMicrophoneUsageDescription: >-
+          PulsarTrace records meeting audio for local, on-device transcription.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gravitalforge.PulsarTrace.uiharness
+        CODE_SIGN_IDENTITY: "-"
+  PulsarTraceUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: UITests/PulsarTraceUITests
+    dependencies:
+      - target: PulsarTraceApp
+      - package: PulsarTracePackage
+        product: PulsarTraceEngine
+      - package: PulsarTracePackage
+        product: PulsarTraceMenuBar
+    settings:
+      base:
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  UITests:
+    build:
+      targets:
+        PulsarTraceApp: all
+        PulsarTraceUITests: all
+    test:
+      targets:
+        - PulsarTraceUITests
