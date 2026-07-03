@@ -25,6 +25,13 @@ struct SeededHome {
 
     /// Remove the home tree and the suite's persistent defaults domain.
     func tearDown() {
+        Self.cleanUp(home: home, suite: suite)
+    }
+
+    /// Remove the home tree and the suite's persistent defaults domain.
+    /// Static so a mid-`make()` throw — before any `SeededHome` value exists —
+    /// can still purge the UUID-named plist the OS never reclaims.
+    private static func cleanUp(home: URL, suite: String) {
         try? FileManager.default.removeItem(at: home)
         UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
     }
@@ -34,64 +41,74 @@ struct SeededHome {
             .appendingPathComponent("pt-ui-seed-\(UUID().uuidString)")
         let outputRoot = home.appendingPathComponent(
             "Documents/PulsarTrace", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: outputRoot, withIntermediateDirectories: true)
-
-        // Settings: safe defaults per PT-P7-R9 — output folder inside the home,
-        // system audio on, no hotkey, MCP off.
         let suite = "com.gravitalforge.PulsarTrace.uitest.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.set(outputRoot.path, forKey: "outputFolderPath")     // PT-P7-R9
-        defaults.set(true, forKey: "systemAudioEnabled")              // PT-P7-R9
-        defaults.set(false, forKey: "mcpServerEnabled")               // PT-P7-R9
-        // No `globalHotkey` key is written — an absent key loads as `nil`
-        // (PT-P7-R9: the seeded suite carries no record-toggle hotkey).
+        do {
+            try FileManager.default.createDirectory(
+                at: outputRoot, withIntermediateDirectories: true)
 
-        // Speaker library — the same paths the app resolves under this home.
-        let paths = AppPaths(home: home)
-        try FileManager.default.createDirectory(
-            at: paths.applicationSupport, withIntermediateDirectories: true)
-        let events = EventWriter(directory: paths.eventsDirectory)
-        await events.bootstrap()
-        let library = try await SpeakerLibrary(
-            databaseURL: paths.speakersDatabaseURL, events: events)
+            // Settings: safe defaults per PT-P7-R9 — output folder inside the home,
+            // system audio on, no hotkey, MCP off.
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(outputRoot.path, forKey: "outputFolderPath")     // PT-P7-R9
+            defaults.set(true, forKey: "systemAudioEnabled")              // PT-P7-R9
+            defaults.set(false, forKey: "mcpServerEnabled")               // PT-P7-R9
+            // No `globalHotkey` key is written — an absent key loads as `nil`
+            // (PT-P7-R9: the seeded suite carries no record-toggle hotkey).
 
-        func centroid(_ v: Float) -> [Float] {
-            Array(repeating: v, count: 256)
+            // Speaker library — the same paths the app resolves under this home.
+            let paths = AppPaths(home: home)
+            try FileManager.default.createDirectory(
+                at: paths.applicationSupport, withIntermediateDirectories: true)
+            let events = EventWriter(directory: paths.eventsDirectory)
+            await events.bootstrap()
+            let library = try await SpeakerLibrary(
+                databaseURL: paths.speakersDatabaseURL, events: events)
+
+            // Basis-aligned so the three seeds are mutually orthogonal (pairwise
+            // cosine similarity 0) — inert for id-driven flows, and deterministic
+            // if any future surface computes similarity over the library.
+            func centroid(_ index: Int) -> [Float] {
+                var v = [Float](repeating: 0, count: 256)
+                v[index] = 1
+                return v
+            }
+            let rec1 = RecordingFolder.recordingId(forName: recordingFolders[0])
+            let rec2 = RecordingFolder.recordingId(forName: recordingFolders[1])
+
+            // Alice: two appearances (rec1 then rec2). Bob: one (rec1).
+            // Carol: one (rec2). All on the same model revision so a returning
+            // voice folds into its centroid rather than being refused.
+            let alice = try await library.createSpeaker(
+                name: "Alice", centroid: centroid(0), modelRevision: "seed-r1",
+                recordingId: rec1, recordingFolderName: recordingFolders[0])
+            _ = try await library.recordAppearance(
+                speakerId: alice.id, centroid: centroid(0),
+                modelRevision: "seed-r1", recordingId: rec2,
+                recordingFolderName: recordingFolders[1])
+            let bob = try await library.createSpeaker(
+                name: "Bob", centroid: centroid(1), modelRevision: "seed-r1",
+                recordingId: rec1, recordingFolderName: recordingFolders[0])
+            let carol = try await library.createSpeaker(
+                name: "Carol", centroid: centroid(2), modelRevision: "seed-r1",
+                recordingId: rec2, recordingFolderName: recordingFolders[1])
+
+            // Two refined recordings whose transcripts name the seeded speakers.
+            try writeRecording(
+                root: outputRoot, folder: recordingFolders[0], recordingId: rec1,
+                startStamp: "2026-06-01T09:00:00Z",
+                speakers: [("Alice", alice.id), ("Bob", bob.id)])
+            try writeRecording(
+                root: outputRoot, folder: recordingFolders[1], recordingId: rec2,
+                startStamp: "2026-06-02T10:00:00Z",
+                speakers: [("Alice", alice.id), ("Carol", carol.id)])
+
+            return SeededHome(
+                home: home, suite: suite, outputRoot: outputRoot,
+                speakerIds: ["Alice": alice.id, "Bob": bob.id, "Carol": carol.id])
+        } catch {
+            cleanUp(home: home, suite: suite)
+            throw error
         }
-        let rec1 = RecordingFolder.recordingId(forName: recordingFolders[0])
-        let rec2 = RecordingFolder.recordingId(forName: recordingFolders[1])
-
-        // Alice: two appearances (rec1 then rec2). Bob: one (rec1).
-        // Carol: one (rec2). All on the same model revision so a returning
-        // voice folds into its centroid rather than being refused.
-        let alice = try await library.createSpeaker(
-            name: "Alice", centroid: centroid(0.1), modelRevision: "seed-r1",
-            recordingId: rec1, recordingFolderName: recordingFolders[0])
-        _ = try await library.recordAppearance(
-            speakerId: alice.id, centroid: centroid(0.1),
-            modelRevision: "seed-r1", recordingId: rec2,
-            recordingFolderName: recordingFolders[1])
-        let bob = try await library.createSpeaker(
-            name: "Bob", centroid: centroid(0.5), modelRevision: "seed-r1",
-            recordingId: rec1, recordingFolderName: recordingFolders[0])
-        let carol = try await library.createSpeaker(
-            name: "Carol", centroid: centroid(0.9), modelRevision: "seed-r1",
-            recordingId: rec2, recordingFolderName: recordingFolders[1])
-
-        // Two refined recordings whose transcripts name the seeded speakers.
-        try writeRecording(
-            root: outputRoot, folder: recordingFolders[0], recordingId: rec1,
-            startStamp: "2026-06-01T09:00:00Z",
-            speakers: [("Alice", alice.id), ("Bob", bob.id)])
-        try writeRecording(
-            root: outputRoot, folder: recordingFolders[1], recordingId: rec2,
-            startStamp: "2026-06-02T10:00:00Z",
-            speakers: [("Alice", alice.id), ("Carol", carol.id)])
-
-        return SeededHome(
-            home: home, suite: suite, outputRoot: outputRoot,
-            speakerIds: ["Alice": alice.id, "Bob": bob.id, "Carol": carol.id])
     }
 
     /// Write one refined recording folder — `final.md` (completion marker +
