@@ -9,13 +9,26 @@ public struct AppPaths: Sendable {
     /// Base directory; the real app uses the user's home directory.
     public let home: URL
 
-    public init(home: URL) {
+    /// Optional model-store override (`PULSARTRACE_MODELS_DIR`, PT-P7-R1) so
+    /// an isolated E2E home can still share the already-downloaded models.
+    public let modelsOverride: URL?
+
+    public init(home: URL, modelsOverride: URL? = nil) {
         self.home = home
+        self.modelsOverride = modelsOverride
     }
 
-    /// The real application paths, rooted at the current user's home.
-    public static var standard: AppPaths {
-        AppPaths(home: FileManager.default.homeDirectoryForCurrentUser)
+    /// The real application paths — the user's home unless the E2E override
+    /// re-roots them (PT-P7-R1).
+    public static var standard: AppPaths { standard(overrides: .current) }
+
+    /// Overrides-aware resolver; tests inject a synthetic environment.
+    // PT-P7-R1
+    public static func standard(overrides: EnvironmentOverrides) -> AppPaths {
+        AppPaths(
+            home: overrides.home
+                ?? FileManager.default.homeDirectoryForCurrentUser,
+            modelsOverride: overrides.modelsDirectory)
     }
 
     /// Operational log directory: `~/Library/Logs/PulsarTrace/` (PT-R57).
@@ -28,11 +41,12 @@ public struct AppPaths: Sendable {
         home.appendingPathComponent("Library/Application Support/PulsarTrace", isDirectory: true)
     }
 
-    /// Model cache root: `~/Library/Caches/PulsarTrace/models/` (PT-P1-D10). The
-    /// CoreML bundles (Parakeet `parakeet-tdt-0.6b-v3-coreml/`, WhisperKit
+    /// Model cache root: `~/Library/Caches/PulsarTrace/models/` (PT-P1-D10),
+    /// or the `PULSARTRACE_MODELS_DIR` override verbatim (PT-P7-R1). The CoreML
+    /// bundles (Parakeet `parakeet-tdt-0.6b-v3-coreml/`, WhisperKit
     /// `whisperkit/`) live in SDK-managed subdirectories beneath it (PT-P5-D2).
     public var modelsCacheDirectory: URL {
-        home.appendingPathComponent(
+        modelsOverride ?? home.appendingPathComponent(
             "Library/Caches/PulsarTrace/models", isDirectory: true)
     }
 
