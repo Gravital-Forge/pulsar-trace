@@ -1,5 +1,6 @@
 // PT-P7-R5
 import XCTest
+import PulsarTraceMenuBar
 
 /// Harness proof (PT-P7-R5): the wrapper app launches on an isolated home
 /// and surfaces its status item. Isolation only — no seeded state yet.
@@ -19,13 +20,11 @@ final class LaunchSmokeTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
 
-        // The MenuBarExtra label carries A11yID.statusItem (PT-P7-R3); fall
-        // back to firstMatch if the identifier does not surface on the status
-        // item itself on this macOS version — record which path passed.
-        let byId = app.statusItems["pt.statusItem"]
-        let item = byId.waitForExistence(timeout: 15)
-            ? byId : app.statusItems.firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout: 15),
-                      "status item never appeared")
+        // The MenuBarExtra label carries A11yID.statusItem (PT-P7-R3) —
+        // empirically proven to surface on `app.statusItems` directly, so no
+        // firstMatch fallback (an id regression must fail, not degrade).
+        XCTAssertTrue(app.statusItems[A11yID.statusItem]
+            .waitForExistence(timeout: 15),
+            "status item never appeared")
     }
 }

@@ -58,7 +58,13 @@ final class FloorTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        app.terminate()
+        app?.terminate()
+        // Clean the seed BEFORE the mtime assertions: with
+        // `continueAfterFailure = false` a failing assertion raises
+        // immediately, and the seed's defaults-domain plist must never leak
+        // (the OS reclaims the tmp tree but not the plist). Removing the
+        // isolated home cannot affect the real-path mtimes below.
+        seed?.tearDown()
         // PT-P7-R9: the run must not have touched any real daily-state path.
         // The app-under-test re-roots all of AppPaths + the settings suite via
         // PULSARTRACE_HOME / PULSARTRACE_DEFAULTS_SUITE (PT-P7-R1), so it never
@@ -80,7 +86,6 @@ final class FloorTests: XCTestCase {
                                "daily state was modified: \(path)")
             }
         }
-        seed?.tearDown()
     }
 
     // MARK: - Surface openers
@@ -195,8 +200,11 @@ final class FloorTests: XCTestCase {
         let field = app.descendants(matching: .any)[A11yID.Settings.outputFolderField]
         XCTAssertTrue(field.waitForExistence(timeout: 10),
                       "output folder field not rendered")
+        // Fallback needle is the seed home's unique `pt-ui-seed-<uuid>` path
+        // component — "PulsarTrace" alone would also match a daily value and
+        // mask a defaults-suite regression.
         XCTAssertTrue(fieldShows(field, seed.outputRoot.path)
-            || fieldShows(field, seed.outputRoot.lastPathComponent),
+            || fieldShows(field, seed.home.lastPathComponent),
             "seeded output folder not shown — value=\(String(describing: field.value)) "
             + "label=\(field.label)")
     }
