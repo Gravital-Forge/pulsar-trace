@@ -50,6 +50,9 @@ targets:
     settings:
       base:
         CODE_SIGN_IDENTITY: "-"
+        # Test bundles have no info: block; without this, signing fails for
+        # want of an Info.plist.
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   UITests:
     build:
