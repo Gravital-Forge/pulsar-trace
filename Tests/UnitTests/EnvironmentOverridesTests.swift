@@ -1,0 +1,47 @@
+import Testing
+import Foundation
+@testable import PulsarTraceEngine
+
+/// The end-to-end override variables (PT-P7-R1, PT-P7-R2).
+@Suite("EnvironmentOverrides")
+struct EnvironmentOverridesTests {
+
+    @Test("all five variables parse; paths become file URLs")
+    func parsesAll() {
+        let o = EnvironmentOverrides(environment: [
+            "PULSARTRACE_HOME": "/tmp/pt-home",
+            "PULSARTRACE_DEFAULTS_SUITE": "com.gravitalforge.PulsarTrace.uitest",
+            "PULSARTRACE_MODELS_DIR": "/tmp/models",
+            "PULSARTRACE_SYSTEM_FIXTURE": "/tmp/system.wav",
+            "PULSARTRACE_MIC_FIXTURE": "/tmp/mic.wav",
+        ])
+        #expect(o.home == URL(fileURLWithPath: "/tmp/pt-home"))
+        #expect(o.defaultsSuite == "com.gravitalforge.PulsarTrace.uitest")
+        #expect(o.modelsDirectory == URL(fileURLWithPath: "/tmp/models"))
+        #expect(o.systemFixture == URL(fileURLWithPath: "/tmp/system.wav"))
+        #expect(o.micFixture == URL(fileURLWithPath: "/tmp/mic.wav"))
+        #expect(o.fixtureCaptureActive)
+    }
+
+    @Test("absent and empty values are unset; fixture capture inactive")
+    func absentAndEmpty() {
+        let o = EnvironmentOverrides(environment: [
+            "PULSARTRACE_HOME": "",
+            "UNRELATED": "x",
+        ])
+        #expect(o.home == nil)
+        #expect(o.defaultsSuite == nil)
+        #expect(o.modelsDirectory == nil)
+        #expect(o.systemFixture == nil)
+        #expect(o.micFixture == nil)
+        #expect(!o.fixtureCaptureActive)
+    }
+
+    @Test("one fixture variable alone activates fixture capture")
+    func singleFixture() {
+        let o = EnvironmentOverrides(
+            environment: ["PULSARTRACE_MIC_FIXTURE": "/tmp/mic.wav"])
+        #expect(o.fixtureCaptureActive)
+        #expect(o.systemFixture == nil)
+    }
+}
