@@ -78,3 +78,108 @@ extension XCTestCase {
 /// Thrown by `poll` on timeout so a missed precondition halts the test at the
 /// point of failure rather than cascading into misleading later assertions.
 struct PollTimeout: Error { let message: String }
+
+// MARK: - Failure-time evidence preservation (PT-P7-R4)
+
+extension XCTestCase {
+
+    /// Copy the seed home's diagnosable state out to a repo-local directory
+    /// BEFORE the seed is purged in `tearDown`, so an intermittent UI-flow
+    /// failure leaves behind the artifacts needed to root-cause it (PT-P7-R4).
+    ///
+    /// The seed home is a throwaway `$TMPDIR/pt-ui-seed-<uuid>` that `tearDown`
+    /// deletes — which is why a flake that only reproduces on the CI/desktop
+    /// box otherwise vanishes without a trace. This captures, into
+    /// `.build/ui-test-diagnostics/<stamp>-<label>/`:
+    ///
+    /// - `logs/` — the operational log (`Library/Logs/PulsarTrace/`): the
+    ///   engine's `parakeet:`/`diarizer:`/`live.md created` notices and the
+    ///   app/menubar lines, so a wedge before `live.md` is pinpointed by the
+    ///   last line the engine wrote.
+    /// - `events/` — the events JSONL (`…/PulsarTrace/events/`): which
+    ///   lifecycle events actually fired (`live_md_started`, `refinement_*`).
+    /// - `recording/<name>/` — the newest non-seeded recording folder under
+    ///   the output root: exactly what the engine did or did not produce.
+    /// - `manifest.txt` — a recursive listing (path + size) of the output root
+    ///   and the two Library subtrees, so an empty recording folder (folder
+    ///   created, `live.md` never written) is itself visible.
+    ///
+    /// Behavior-neutral on green runs (callers gate it on a non-zero failure
+    /// count); best-effort throughout — never throws, so it cannot turn a
+    /// diagnostic copy into a second failure. Returns the destination, or
+    /// `nil` if it could not even be created.
+    @discardableResult
+    func preserveSeedDiagnostics(_ seed: SeededHome, label: String) -> URL? {
+        let fm = FileManager.default
+        let stamp: String = {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyyMMdd-HHmmss"   // colon-free: filesystem-safe
+            return f.string(from: Date())
+        }()
+        // Repo root from this file: UITests/PulsarTraceUITests/ArtifactProbes.swift.
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // PulsarTraceUITests
+            .deletingLastPathComponent()   // UITests
+            .deletingLastPathComponent()   // repo root
+        let dest = repoRoot
+            .appendingPathComponent(".build/ui-test-diagnostics", isDirectory: true)
+            .appendingPathComponent("\(stamp)-\(label)", isDirectory: true)
+        do {
+            try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        } catch {
+            return nil
+        }
+
+        let paths = AppPaths(home: seed.home)
+        copyTree(paths.logDirectory, to: dest.appendingPathComponent("logs"))
+        copyTree(paths.eventsDirectory, to: dest.appendingPathComponent("events"))
+        if let folder = try? newestFolder(
+            in: seed.outputRoot, excluding: SeededHome.recordingFolders) {
+            copyTree(folder, to: dest.appendingPathComponent(
+                "recording/\(folder.lastPathComponent)"))
+        }
+
+        // A recursive size manifest so an *absent* file (e.g. live.md never
+        // written into a folder that does exist) is itself evidence.
+        var manifest = "seed home: \(seed.home.path)\n\n"
+        for root in [seed.outputRoot,
+                     paths.applicationSupport,
+                     paths.logDirectory] {
+            manifest += "## \(root.path)\n" + listTree(root) + "\n"
+        }
+        try? manifest.write(
+            to: dest.appendingPathComponent("manifest.txt"),
+            atomically: true, encoding: .utf8)
+        return dest
+    }
+
+    /// Copy a directory (or file) tree, best-effort — a missing source or a
+    /// mid-flight file is skipped, never fatal.
+    private func copyTree(_ src: URL, to dst: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: src.path) else { return }
+        try? fm.createDirectory(
+            at: dst.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try? fm.copyItem(at: src, to: dst)
+    }
+
+    /// A recursive `path\t<bytes>` listing of `root` (relative paths), or a
+    /// one-line note when it does not exist.
+    private func listTree(_ root: URL) -> String {
+        let fm = FileManager.default
+        guard let en = fm.enumerator(
+            at: root, includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey])
+        else { return "  (absent)\n" }
+        var lines: [String] = []
+        for case let url as URL in en {
+            let vals = try? url.resourceValues(
+                forKeys: [.fileSizeKey, .isDirectoryKey])
+            let isDir = vals?.isDirectory ?? false
+            let rel = url.path.replacingOccurrences(of: root.path + "/", with: "")
+            lines.append(isDir ? "  \(rel)/" : "  \(rel)\t\(vals?.fileSize ?? 0)")
+        }
+        return lines.isEmpty ? "  (empty)\n" : lines.sorted().joined(separator: "\n") + "\n"
+    }
+}

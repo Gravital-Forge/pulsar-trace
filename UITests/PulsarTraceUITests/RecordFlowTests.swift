@@ -44,6 +44,15 @@ final class RecordFlowTests: XCTestCase {
     }
 
     override func tearDown() {
+        // On failure, copy the seed home's logs/events/artifacts out BEFORE the
+        // seed is purged — the throwaway home is otherwise deleted with the
+        // only evidence of an intermittent wedge (PT-P7-R4). Done before the
+        // app is terminated so a hung main thread's state is captured as-is.
+        if (testRun?.totalFailureCount ?? 0) > 0, let seed {
+            let dir = preserveSeedDiagnostics(seed, label: "RecordFlow")
+            print("PT-DIAG preserved failure evidence at "
+                + "\(dir?.path ?? "<none>")")
+        }
         // Terminate the app before purging the seed (nil-safe — either may be
         // unset if setUp threw before assigning it).
         app?.terminate()
