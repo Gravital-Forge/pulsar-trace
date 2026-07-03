@@ -7,6 +7,11 @@ import Foundation
 /// WAVs instead of device capture. With no variables set every consumer
 /// behaves exactly as before. All consumers read the one `current` value;
 /// tests construct their own with an injected dictionary.
+///
+/// An empty value is treated as unset — this is how a harness explicitly
+/// clears a variable it does not want to override. Path values must be
+/// absolute: a relative path resolves against the launching process's
+/// working directory, which is `/` for a Finder- or launchd-launched app.
 // PT-P7-R1
 public struct EnvironmentOverrides: Sendable, Equatable {
     /// `PULSARTRACE_HOME` — re-roots every `AppPaths` location and the
@@ -28,14 +33,16 @@ public struct EnvironmentOverrides: Sendable, Equatable {
             guard let raw = environment[key], !raw.isEmpty else { return nil }
             return raw
         }
-        func url(_ key: String) -> URL? {
-            value(key).map { URL(fileURLWithPath: $0) }
+        func url(_ key: String, isDirectory: Bool) -> URL? {
+            value(key).map {
+                URL(fileURLWithPath: $0, isDirectory: isDirectory)
+            }
         }
-        self.home = url("PULSARTRACE_HOME")
+        self.home = url("PULSARTRACE_HOME", isDirectory: true)
         self.defaultsSuite = value("PULSARTRACE_DEFAULTS_SUITE")
-        self.modelsDirectory = url("PULSARTRACE_MODELS_DIR")
-        self.systemFixture = url("PULSARTRACE_SYSTEM_FIXTURE")
-        self.micFixture = url("PULSARTRACE_MIC_FIXTURE")
+        self.modelsDirectory = url("PULSARTRACE_MODELS_DIR", isDirectory: true)
+        self.systemFixture = url("PULSARTRACE_SYSTEM_FIXTURE", isDirectory: false)
+        self.micFixture = url("PULSARTRACE_MIC_FIXTURE", isDirectory: false)
     }
 
     /// Fixture capture mode is active when at least one fixture is set.
