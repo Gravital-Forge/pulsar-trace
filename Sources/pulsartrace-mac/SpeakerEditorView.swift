@@ -172,8 +172,19 @@ struct SpeakerEditorView: View {
                         speakerRow(speaker, viewModel: viewModel)
                             .tag(speaker.id)
                             // PT-P7-R3: keyed on the stable spk_<ulid>, never
-                            // the (renamable) speaker name.
-                            .accessibilityIdentifier(A11yID.Speakers.row(speaker.id))
+                            // the (renamable) speaker name. During inline-rename
+                            // the row collapses to just the `TextField`, and this
+                            // outer identifier would otherwise SHADOW that
+                            // field's own `renameField` id (SwiftUI applies the
+                            // outermost `.accessibilityIdentifier` to the single
+                            // leaf AX element the row becomes, so the field
+                            // surfaced under the row id). Expose `renameField`
+                            // while the row is being renamed and the stable row
+                            // id otherwise — identifier-only, no behavior change.
+                            .accessibilityIdentifier(
+                                renameTarget == speaker.id
+                                    ? A11yID.Speakers.renameField
+                                    : A11yID.Speakers.row(speaker.id))
                     }
                 }
                 if !viewModel.deletedSpeakers.isEmpty {

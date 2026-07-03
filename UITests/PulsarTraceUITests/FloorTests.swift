@@ -168,16 +168,7 @@ final class FloorTests: XCTestCase {
     // a fixture session. The PT-P7-E3 record flow (which drives a real fixture
     // recording anyway) opens and asserts that window mid-recording instead.
 
-    // MARK: - Helpers
-
-    /// Assert a row surfaces the speaker's name — as a child staticText, or,
-    /// when the List merges the row into a single element, in its label/value.
-    private func assertRowShowsName(_ row: XCUIElement, _ name: String) {
-        let shows = row.staticTexts[name].exists
-            || row.label.contains(name)
-            || (row.value as? String)?.contains(name) == true
-        XCTAssertTrue(shows,
-            "row does not show the name \(name) — label=\(row.label) "
-            + "value=\(String(describing: row.value))")
-    }
+    // `assertRowShowsName(_:_:)` — the tolerant "row surfaces this name" check —
+    // is shared in `PanelDriver.swift`: the speaker-flow suite needs the same
+    // check to prove a rename lands in the pane, so it lives there once.
 }
