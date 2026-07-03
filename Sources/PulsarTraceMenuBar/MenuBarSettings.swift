@@ -43,12 +43,24 @@ public final class MenuBarSettings {
     public static let defaultRefineModelName = WhisperKitModelCatalog.defaultModel.name
 
     /// Default output folder when the user has never chosen one:
-    /// `~/Documents/PulsarTrace`. Derived at read time and **never persisted**
-    /// — clearing `outputFolderPath` re-defaults on the next read. `nil` only
-    /// in the theoretical case where the Documents directory cannot be
-    /// resolved.
+    /// `~/Documents/PulsarTrace`, or `<home>/Documents/PulsarTrace` under the
+    /// E2E home override (PT-P7-R1). Derived at read time and **never
+    /// persisted** — clearing `outputFolderPath` re-defaults on the next read.
+    /// `nil` only in the theoretical case where the Documents directory cannot
+    /// be resolved.
     public static var defaultOutputFolderURL: URL? {
-        FileManager.default.urls(
+        defaultOutputFolderURL(overrides: .current)
+    }
+
+    // PT-P7-R1
+    public static func defaultOutputFolderURL(
+        overrides: EnvironmentOverrides
+    ) -> URL? {
+        if let home = overrides.home {
+            return home.appendingPathComponent(
+                "Documents/PulsarTrace", isDirectory: true)
+        }
+        return FileManager.default.urls(
             for: .documentDirectory, in: .userDomainMask).first?
             .appendingPathComponent("PulsarTrace", isDirectory: true)
     }
@@ -167,12 +179,21 @@ public final class MenuBarSettings {
         static let mcpServerPort = "mcpServerPort"
     }
 
-    /// Load settings from `defaults` (default: the production suite).
+    /// Load settings from `defaults` (default: the production suite, or the
+    /// `PULSARTRACE_DEFAULTS_SUITE` override — PT-P7-R1).
     ///
-    /// - Parameter defaults: injectable store — tests pass a temp suite.
-    public init(defaults: UserDefaults? = nil) {
+    /// - Parameters:
+    ///   - defaults: injectable store — tests pass a temp suite.
+    ///   - overrides: the E2E environment overrides (default `.current`).
+    public init(
+        defaults: UserDefaults? = nil,
+        overrides: EnvironmentOverrides = .current
+    ) {
+        // PT-P7-R1: an explicit store wins; then the override suite; then the
+        // production suite.
         let store = defaults
-            ?? UserDefaults(suiteName: Self.defaultSuiteName)
+            ?? UserDefaults(suiteName:
+                overrides.defaultsSuite ?? Self.defaultSuiteName)
             ?? .standard
         self.defaults = store
 
