@@ -57,7 +57,15 @@ public enum A11yID {
             "pt.speakers.row.\(id)"
         }
         public static let renameField = "pt.speakers.renameField"
+        /// The "Merge With" submenu (context menu). Merge is a submenu of
+        /// per-speaker targets, not a single button — this ids the submenu; the
+        /// per-target buttons under it carry `mergeTarget(_:)`.
         public static let mergeButton = "pt.speakers.mergeButton"
+        /// One "Merge With ▸ ⟨speaker⟩" target; `id` is the stable `spk_<ulid>`
+        /// of the speaker to fold into the right-clicked one, never a name.
+        public static func mergeTarget(_ id: String) -> String {
+            "pt.speakers.mergeTarget.\(id)"
+        }
         public static let mergeConfirm = "pt.speakers.mergeConfirm"
         public static let deleteButton = "pt.speakers.deleteButton"
         public static let undoToast = "pt.speakers.undoToast"
