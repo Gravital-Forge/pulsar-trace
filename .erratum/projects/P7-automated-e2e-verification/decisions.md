@@ -152,3 +152,20 @@ deterministic enough to gate merges — its value is breadth and judgment on the
 automation cannot express (visual states, notification behavior), as a complement to the
 deterministic suite, cheaper and more repeatable than a human walk. Quitting the daily instance
 removes the one real ambiguity: two identical status items in one menu bar.
+
+### PT-P7-D8 · The floor covers the idle-reachable surfaces; the live-transcript window is asserted by the record flow
+
+*2026-07-03*
+
+**Decision:** The PT-P7-R4 floor suite verifies the four idle-reachable surfaces — menubar panel,
+Recordings, Speakers, Settings — on the seeded home. The live-transcript window is verified by the
+E3 record flow, which opens it mid-recording through its real affordance and asserts it renders.
+User decision 2026-07-03, made when the floor first ran against the real app.
+
+**Because:** the live-transcript window's only entry point is the menubar panel row that
+`MenuBarMenuView` renders solely while a recording is running; when idle the window is unreachable
+by design, and the LSUIElement harness app has no on-screen menu bar to offer an alternative route.
+Keeping the check in the floor would force the floor to run a fixture recording with the shared
+model cache — making the floor model-dependent, which the hosted-CI floor tier (PT-P7-R6) must not
+be. The record flow already drives a fixture recording, so asserting the window there costs one
+extra click and keeps the floor fast, model-free, and honest about what "idle breadth" can reach.

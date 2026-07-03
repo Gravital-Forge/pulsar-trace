@@ -29,11 +29,11 @@ The deterministic suite itself is XCUITest, hosted by a generated wrapper projec
 declare a UI-test bundle, so a committed XcodeGen spec generates a disposable `.xcodeproj` (already
 gitignored) whose app target compiles the same menubar sources against the same package libraries.
 The suite's non-negotiable floor is breadth: launch the app on an isolated, pre-seeded home and open
-**every** surface — menubar panel, Recordings, Speakers, and Settings panes, the live-transcript
-window — verifying the seeded data actually renders. Deeper flows build on that floor: a full record
-→ stop → refine pass over fixture capture with artifact and event assertions, settings persistence
-across relaunch, and the speaker rename / merge / undo flows run against pre-seeded library and
-recording state.
+every idle-reachable surface — menubar panel, Recordings, Speakers, and Settings panes — verifying
+the seeded data actually renders. Deeper flows build on that floor: a full record → stop → refine
+pass over fixture capture with artifact and event assertions (including the live-transcript window,
+whose only entry point exists while recording — PT-P7-D8), settings persistence across relaunch, and
+the speaker rename / merge / undo flows run against pre-seeded library and recording state.
 
 Verification splits across three hosts by what each can carry. **Hosted CI** (a greenfield GitHub
 Actions workflow, the repo has none today) runs the audio-independent tiers — build, the
@@ -118,19 +118,20 @@ control's label breaks no test.
 ### PT-P7-R4 · Functional · Introduce — Deterministic UI end-to-end suite
 
 An XCUITest suite drives the real app bundle end to end, runnable locally with one command. Its
-floor — the gate every run must clear before deeper flows count — is breadth over every surface: the
-app launches against an isolated, pre-seeded home (settings, speaker library, recording folders with
-refined transcripts), and the suite opens the menubar panel, each main-window pane, and the
-live-transcript window, verifying the seeded data renders in each. On that floor sit the deep flows:
-record → stop → refine over fixture capture asserting on `live.md` growth, `final.md` content, and
-the paired events; settings persistence across an app relaunch; and speaker rename, merge, and undo
-against the seeded state, asserting the retroactive `final.md` rewrite. Checklist items the suite
-covers are marked in `docs/release-smoke-test.md`.
+floor — the gate every run must clear before deeper flows count — is breadth over every
+idle-reachable surface: the app launches against an isolated, pre-seeded home (settings, speaker
+library, recording folders with refined transcripts), and the suite opens the menubar panel and each
+main-window pane, verifying the seeded data renders in each. The live-transcript window — a
+recording-only affordance, unreachable when idle — is verified mid-recording by the record flow
+(PT-P7-D8). On that floor sit the deep flows: record → stop → refine over fixture capture asserting
+on `live.md` growth, `final.md` content, and the paired events; settings persistence across an app
+relaunch; and speaker rename, merge, and undo against the seeded state, asserting the retroactive
+`final.md` rewrite. Checklist items the suite covers are marked in `docs/release-smoke-test.md`.
 
 *Introduces:* one new product requirement, minted at close-out. *Acceptance:* one command runs the
-suite green on a dev host; the floor scenarios open every listed surface and assert seeded content;
-the record flow asserts transcript artifacts and event pairing; the speaker flows assert the
-rewrite; covered items are marked in the smoke checklist.
+suite green on a dev host; the floor scenarios open every idle-reachable surface and assert seeded
+content; the record flow asserts transcript artifacts, event pairing, and the live-transcript
+window; the speaker flows assert the rewrite; covered items are marked in the smoke checklist.
 
 ### PT-P7-R5 · Technical · Introduce — Generated wrapper project hosts the UI suite
 

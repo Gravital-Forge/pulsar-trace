@@ -26,9 +26,10 @@ the seeded data renders, and prove the daily instance's state untouched.
   generates `PulsarTraceUIHarness.xcodeproj` (gitignored), and runs the UI suite green; no
   `.xcodeproj` or generated plist is committed; `swift build` / `swift test` are unaffected
   (PT-P7-R5).
-- The floor test launches on a `SeededHome`, opens the menubar panel, the Recordings, Speakers, and
-  Settings panes, and the live-transcript window, asserts seeded content in each — and asserts the
-  real daily-state paths' modification times are unchanged by the run (PT-P7-R9).
+- The floor test launches on a `SeededHome`, opens the menubar panel and the Recordings, Speakers,
+  and Settings panes, asserts seeded content in each — and asserts the real daily-state paths'
+  modification times are unchanged by the run (PT-P7-R9). The live-transcript window (recording-only
+  affordance) is asserted by the PT-P7-E3 record flow instead (PT-P7-D8).
 - `docs/development.md` documents prerequisites and the one-command run.
 
 ## Tasks

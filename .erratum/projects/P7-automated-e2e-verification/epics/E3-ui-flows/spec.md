@@ -17,10 +17,12 @@ snippets show raw strings only for readability.
 ## Acceptance criteria
 
 - The record flow launches with the paired fixture WAVs and a shared models directory, starts
-  recording from the menubar panel, observes `live.md` growing, and — after the engine's fixture-EOF
-  self-exit — waits for the queued refinement to produce a well-formed `final.md`; it asserts the
-  live/final markers, at least one utterance line, and the causal event order in the isolated home's
-  events log (exact type strings pinned from the events-log contract, PT-C6).
+  recording from the menubar panel, opens the live-transcript window mid-recording through the
+  recording-only panel row and asserts it renders (the floor cannot reach this window when idle —
+  PT-P7-D8), observes `live.md` growing, and — after the engine's fixture-EOF self-exit — waits for
+  the queued refinement to produce a well-formed `final.md`; it asserts the live/final markers, at
+  least one utterance line, and the causal event order in the isolated home's events log (exact type
+  strings pinned from the events-log contract, PT-C6).
 - Settings persistence: a toggle changed through the UI survives `terminate()` + relaunch on the
   same suite; the seeded output folder still renders.
 - Rename: renaming Alice → Alicia rewrites both seeded `final.md` files (content asserted on disk),
