@@ -47,4 +47,35 @@ extension XCTestCase {
         }
         item.click()
     }
+
+    /// Open the main window at a specific pane via that pane's dedicated
+    /// menubar opener (`Recordings…` / `Speakers…` / `Settings…`), each of
+    /// which sets the sidebar section before opening the window. Shared because
+    /// every window-reaching suite navigates identically — open the panel,
+    /// click the per-section opener, wait for the window — so this panel-driven
+    /// navigation lives here once rather than being copied per suite.
+    func openMainWindow(_ app: XCUIApplication, section opener: String) throws {
+        try openPanel(app)
+        let button = app.buttons[opener]
+        XCTAssertTrue(button.waitForExistence(timeout: 5),
+                      "menubar opener \(opener) not found")
+        button.click()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10),
+                      "main window did not open")
+    }
+
+    /// Whether `field` surfaces `needle` in its value, its label, or a contained
+    /// staticText. Shared because both the floor and settings-persistence suites
+    /// assert that a seeded path is shown, and XCUITest renders the same field's
+    /// text in any of those three places across macOS versions — so the tolerant
+    /// three-way check lives here once rather than being copied per suite.
+    func fieldShows(_ field: XCUIElement, _ needle: String) -> Bool {
+        if (field.value as? String)?.contains(needle) == true { return true }
+        if field.label.contains(needle) { return true }
+        if field.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS %@", needle)).count > 0 {
+            return true
+        }
+        return false
+    }
 }

@@ -90,22 +90,10 @@ final class FloorTests: XCTestCase {
 
     // MARK: - Surface openers
 
-    // `openPanel(_:)` — the shared status-item opener with its on-screen skip
-    // gate — lives in `PanelDriver.swift` (every suite drives surfaces through
-    // the panel, so the opener is factored out).
-
-    /// Open the main window at a specific pane via that pane's dedicated
-    /// menubar opener (`Recordings…` / `Speakers…` / `Settings…`), each of
-    /// which sets the sidebar section before opening the window.
-    private func openMainWindow(section opener: String) throws {
-        try openPanel(app)
-        let button = app.buttons[opener]
-        XCTAssertTrue(button.waitForExistence(timeout: 5),
-                      "menubar opener \(opener) not found")
-        button.click()
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10),
-                      "main window did not open")
-    }
+    // `openPanel(_:)` and `openMainWindow(_:section:)` — the shared status-item
+    // opener (with its on-screen skip gate) and the per-section main-window
+    // opener — live in `PanelDriver.swift` (every suite drives surfaces through
+    // the panel, so the openers are factored out).
 
     // MARK: - Tests
 
@@ -123,7 +111,7 @@ final class FloorTests: XCTestCase {
     }
 
     func testRecordingsPaneRendersSeededRecordings() throws {
-        try openMainWindow(section: A11yID.MenuBar.openRecordings)
+        try openMainWindow(app, section: A11yID.MenuBar.openRecordings)
         // The sidebar itself renders (PT-P7-R4): all three section entries.
         for id in [A11yID.Sidebar.recordings, A11yID.Sidebar.speakers,
                    A11yID.Sidebar.settings] {
@@ -141,7 +129,7 @@ final class FloorTests: XCTestCase {
     }
 
     func testSpeakersPaneRendersSeededLibrary() throws {
-        try openMainWindow(section: A11yID.MenuBar.openSpeakers)
+        try openMainWindow(app, section: A11yID.MenuBar.openSpeakers)
         // Content-bearing (PT-P7-R4): each seeded speaker renders as a row
         // (keyed on the stable id) that shows the speaker's name.
         for (name, id) in seed.speakerIds {
@@ -153,7 +141,7 @@ final class FloorTests: XCTestCase {
     }
 
     func testSettingsPaneRendersSeededValues() throws {
-        try openMainWindow(section: A11yID.MenuBar.openSettings)
+        try openMainWindow(app, section: A11yID.MenuBar.openSettings)
         for id in [A11yID.Settings.micPicker, A11yID.Settings.refineModelPicker,
                    A11yID.Settings.outputFolderField,
                    A11yID.Settings.systemAudioToggle,
@@ -191,16 +179,5 @@ final class FloorTests: XCTestCase {
         XCTAssertTrue(shows,
             "row does not show the name \(name) — label=\(row.label) "
             + "value=\(String(describing: row.value))")
-    }
-
-    /// Whether the output-folder element surfaces `needle` in value or label.
-    private func fieldShows(_ field: XCUIElement, _ needle: String) -> Bool {
-        if (field.value as? String)?.contains(needle) == true { return true }
-        if field.label.contains(needle) { return true }
-        if field.staticTexts.containing(
-            NSPredicate(format: "label CONTAINS %@", needle)).count > 0 {
-            return true
-        }
-        return false
     }
 }

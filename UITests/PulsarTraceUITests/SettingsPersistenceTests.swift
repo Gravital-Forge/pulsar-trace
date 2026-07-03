@@ -31,7 +31,7 @@ final class SettingsPersistenceTests: XCTestCase {
     func testSystemAudioToggleSurvivesRelaunch() throws {
         // First launch: flip the seeded-on system-audio toggle off.
         app = launch()
-        try openSettings()
+        try openMainWindow(app, section: A11yID.MenuBar.openSettings)
         let toggle = app.descendants(matching: .any)[A11yID.Settings.systemAudioToggle]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10),
                       "system-audio toggle not rendered")
@@ -43,7 +43,7 @@ final class SettingsPersistenceTests: XCTestCase {
         // Relaunch on the SAME seeded suite — the off state must survive.
         app.terminate()
         app = launch()
-        try openSettings()
+        try openMainWindow(app, section: A11yID.MenuBar.openSettings)
         let after = app.descendants(matching: .any)[A11yID.Settings.systemAudioToggle]
         XCTAssertTrue(after.waitForExistence(timeout: 10),
                       "system-audio toggle not rendered after relaunch")
@@ -77,19 +77,9 @@ final class SettingsPersistenceTests: XCTestCase {
         return app
     }
 
-    /// Open the main window at the Settings pane via its dedicated menubar
-    /// opener — mirrors `FloorTests.openMainWindow(section:)`. `openPanel`
-    /// handles the status item (and skips the run when it can't be placed
-    /// on-screen), so there is no `statusItems` fallback here.
-    private func openSettings() throws {
-        try openPanel(app)
-        let button = app.buttons[A11yID.MenuBar.openSettings]
-        XCTAssertTrue(button.waitForExistence(timeout: 5),
-                      "menubar Settings opener not found")
-        button.click()
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10),
-                      "main window did not open")
-    }
+    // The Settings pane is reached via the shared `openMainWindow(_:section:)`
+    // in `PanelDriver.swift` — `openPanel` handles the status item (and skips
+    // the run when it can't be placed on-screen).
 
     // MARK: - Toggle helpers
 
@@ -128,19 +118,5 @@ final class SettingsPersistenceTests: XCTestCase {
             usleep(100_000)
         }
         return toggleState(element) == target
-    }
-
-    // MARK: - Field helper
-
-    /// Whether the output-folder element surfaces `needle` in value, label, or a
-    /// contained staticText — mirrors `FloorTests.fieldShows(_:_:)`.
-    private func fieldShows(_ field: XCUIElement, _ needle: String) -> Bool {
-        if (field.value as? String)?.contains(needle) == true { return true }
-        if field.label.contains(needle) { return true }
-        if field.staticTexts.containing(
-            NSPredicate(format: "label CONTAINS %@", needle)).count > 0 {
-            return true
-        }
-        return false
     }
 }
