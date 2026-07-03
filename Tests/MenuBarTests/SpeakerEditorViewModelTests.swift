@@ -299,19 +299,54 @@ struct SpeakerEditorViewModelTests {
         // The merged-away speaker is gone from the live list and the
         // recording now says `Steve`.
         #expect(!vm.liveSpeakers.contains { $0.id == unknown.id })
+        // …and the merge soft-deleted it into the "Recently deleted" bucket
+        // (mirrors delist's delistedSpeakers check in delistUndoToastRoundTrip).
+        #expect(vm.deletedSpeakers.contains { $0.id == unknown.id })
         var finalText = try String(
             contentsOf: folder.appendingPathComponent("final.md"), encoding: .utf8)
         #expect(finalText.contains("] Steve:**"))
 
-        // Running the toast action unmerges: the speaker returns live and the
-        // recording label rewrites back to `Unknown #1`.
+        // Running the toast action unmerges: the speaker returns live, leaves
+        // the "Recently deleted" bucket, and the recording label rewrites back
+        // to `Unknown #1`.
         await toast.action()
         #expect(vm.lastError == nil)
         #expect(vm.liveSpeakers.contains { $0.id == unknown.id })
+        #expect(!vm.deletedSpeakers.contains { $0.id == unknown.id })
         finalText = try String(
             contentsOf: folder.appendingPathComponent("final.md"), encoding: .utf8)
         #expect(finalText.contains("] Unknown #1:**"))
         #expect(!finalText.contains("] Steve:**"))
+    }
+
+    @Test("a merge that throws surfaces the error and NO undo toast (I1)")
+    func mergeFailureShowsNoToastAndSurfacesError() async throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let library = try await SpeakerLibrary(
+            databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.2), modelRevision: "rev1",
+            recordingId: "rec_x", recordingFolderName: "x")
+
+        let vm = SpeakerEditorViewModel(
+            library: library, settings: try settings(outputRoot: root))
+        await vm.reload()
+
+        // Merge into a non-existent `otherId`: `library.merge` throws
+        // `speakerNotFound`, so the operation never happens. The reload after
+        // `withRewrite` clears `lastError` on its own success — the fix must
+        // capture the failure verdict BEFORE that reload so no phantom undo
+        // toast is shown for an operation that never ran, and the error stays
+        // visible to the user.
+        await vm.merge(primaryId: steve.id, otherId: "spk_does_not_exist")
+
+        #expect(vm.undoToast == nil)
+        #expect(vm.lastError != nil)
+        // Steve is untouched — still the only live speaker, none soft-deleted.
+        #expect(vm.liveSpeakers.contains { $0.id == steve.id })
+        #expect(vm.deletedSpeakers.isEmpty)
     }
 
     @Test("unsplit folds the split-off speaker's final.md labels back")

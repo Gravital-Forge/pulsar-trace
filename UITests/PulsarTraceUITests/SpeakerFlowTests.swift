@@ -179,9 +179,9 @@ final class SpeakerFlowTests: XCTestCase {
     /// PT-P7-E3-T4 — the merge half of the smoke-checklist round-trip: fold Carol
     /// INTO Alice through the context-menu "Merge With" submenu and its
     /// `confirmationDialog`, then assert the retroactive `final.md` rewrite and
-    /// cause-before-effect ordering (Hard Invariant #8). The undo half is a
-    /// separate, GATED test below — the GUI merge flow presents no undo toast
-    /// today (see `testMergeUndoRoundTripRestoresLibraryAndTranscript`).
+    /// cause-before-effect ordering (Hard Invariant #8). The undo half is the
+    /// separate round-trip test below
+    /// (`testMergeUndoRoundTripRestoresLibraryAndTranscript`).
     ///
     /// This is the first live drive of three speaker-editor AX bridges, all
     /// verified working on macOS 26.5: the `mergeButton` submenu, its
@@ -217,17 +217,7 @@ final class SpeakerFlowTests: XCTestCase {
         // same snapshot. Carol's ABSENCE is the real signal: Alice already had a
         // line in this file before the merge, so "Alice:**" present alone proves
         // nothing — but "Carol:**" gone means her label was folded into Alice.
-        let secondFinal = seed.outputRoot
-            .appendingPathComponent(SeededHome.recordingFolders[1])
-            .appendingPathComponent(RecordingFolder.FileName.final)
-        let merged = try poll(
-            timeout: 30, message: "merge rewrite of recording 2") {
-            () -> String? in
-            guard let text = try? String(contentsOf: secondFinal, encoding: .utf8)
-            else { return nil }
-            return text.contains("Alice:**") && !text.contains("Carol:**")
-                ? text : nil
-        }
+        let merged = try waitForMergeRewrite()
         XCTAssertFalse(merged.contains("Carol:**"),
                        "recording 2 still labels the merged-away Carol")
 
@@ -285,16 +275,7 @@ final class SpeakerFlowTests: XCTestCase {
 
         // Wait for the merge rewrite to land (returns as soon as the ms–s write
         // completes, well within the toast window), then undo.
-        let secondFinal = seed.outputRoot
-            .appendingPathComponent(SeededHome.recordingFolders[1])
-            .appendingPathComponent(RecordingFolder.FileName.final)
-        try poll(timeout: 30, message: "merge rewrite of recording 2") {
-            () -> String? in
-            guard let text = try? String(contentsOf: secondFinal, encoding: .utf8)
-            else { return nil }
-            return text.contains("Alice:**") && !text.contains("Carol:**")
-                ? text : nil
-        }
+        _ = try waitForMergeRewrite()
         undo.click()
 
         // The library is restored: Carol's row (keyed on her unchanged id, which
@@ -306,6 +287,9 @@ final class SpeakerFlowTests: XCTestCase {
 
         // The transcript is restored: recording 2 is rewritten back from Alice to
         // Carol (solo lines round-trip; PT-R44 undo).
+        let secondFinal = seed.outputRoot
+            .appendingPathComponent(SeededHome.recordingFolders[1])
+            .appendingPathComponent(RecordingFolder.FileName.final)
         try poll(timeout: 30, message: "undo rewrite restores Carol") {
             () -> String? in
             guard let text = try? String(contentsOf: secondFinal, encoding: .utf8)
@@ -314,8 +298,9 @@ final class SpeakerFlowTests: XCTestCase {
         }
 
         // Cause before effect (Hard Invariant #8): the undo's `speaker_unmerged`
-        // precedes its `final_md_rewritten`. ≥2 rewrites total by now (merge +
-        // undo, both on recording 2).
+        // precedes its `final_md_rewritten`. Tighten to the merge test's
+        // discipline: exactly one rewrite after the unmerge cause, and exactly
+        // two total by now (the merge's + the undo's, both on recording 2).
         let types = try poll(timeout: 10, message: "unmerge events flushed") {
             let t = try eventTypes(home: seed.home)
             return t.contains(SpeakerUnmergedEvent.eventType)
@@ -325,12 +310,16 @@ final class SpeakerFlowTests: XCTestCase {
         let unmergeIdx = try XCTUnwrap(
             types.firstIndex(of: SpeakerUnmergedEvent.eventType),
             "no \(SpeakerUnmergedEvent.eventType) event")
-        XCTAssertTrue(
-            types.indices.contains {
-                types[$0] == FinalMDRewrittenEvent.eventType && $0 > unmergeIdx
-            },
-            "no \(FinalMDRewrittenEvent.eventType) after the "
+        let rewritesAfterUnmerge = types.indices.filter {
+            types[$0] == FinalMDRewrittenEvent.eventType && $0 > unmergeIdx
+        }
+        XCTAssertEqual(rewritesAfterUnmerge.count, 1,
+            "expected exactly one \(FinalMDRewrittenEvent.eventType) after the "
             + "\(SpeakerUnmergedEvent.eventType) undo cause (Hard Invariant #8)")
+        XCTAssertEqual(
+            types.filter { $0 == FinalMDRewrittenEvent.eventType }.count, 2,
+            "expected exactly two \(FinalMDRewrittenEvent.eventType) total "
+            + "(the merge's and the undo's, both on recording 2)")
     }
 
     // MARK: - Navigation
@@ -361,6 +350,25 @@ final class SpeakerFlowTests: XCTestCase {
     ///   bridge in the registry, now confirmed working. Located tolerantly
     ///   (`descendants`) since a confirmationDialog can render its buttons as
     ///   `.button` or `.menuItem` across macOS versions.
+    /// Poll recording 2's `final.md` until the merge rewrite has settled —
+    /// Alice's label present, the merged-away Carol's gone — and return the
+    /// settled text. Both merge tests probe the same "Alice present, Carol
+    /// absent" condition on the same file, so it lives here once. The read is
+    /// `try?`-tolerant: a transient read during the atomic write keeps polling
+    /// rather than aborting.
+    private func waitForMergeRewrite() throws -> String {
+        let secondFinal = seed.outputRoot
+            .appendingPathComponent(SeededHome.recordingFolders[1])
+            .appendingPathComponent(RecordingFolder.FileName.final)
+        return try poll(timeout: 30, message: "merge rewrite of recording 2") {
+            () -> String? in
+            guard let text = try? String(contentsOf: secondFinal, encoding: .utf8)
+            else { return nil }
+            return text.contains("Alice:**") && !text.contains("Carol:**")
+                ? text : nil
+        }
+    }
+
     private func mergeCarolIntoAlice(
         survivorRow: XCUIElement, absorbedId: String
     ) throws {
