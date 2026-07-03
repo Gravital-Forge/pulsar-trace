@@ -41,8 +41,8 @@ extension XCTestCase {
             throw XCTSkip(
                 "status item not placeable on-screen (frame \(item.frame)); the "
                 + "menu bar is not presenting it — a frontmost full-screen app, "
-                + "a full menu bar, or a secondary-display session. The floor "
-                + "suite drives every surface through this item. Re-run on an "
+                + "a full menu bar, or a secondary-display session. Every UI "
+                + "suite drives surfaces through this item. Re-run on an "
                 + "interactive session with the menu bar visible.")
         }
         item.click()

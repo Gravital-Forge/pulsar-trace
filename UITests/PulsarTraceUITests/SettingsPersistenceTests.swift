@@ -35,7 +35,8 @@ final class SettingsPersistenceTests: XCTestCase {
         let toggle = app.descendants(matching: .any)[A11yID.Settings.systemAudioToggle]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10),
                       "system-audio toggle not rendered")
-        XCTAssertEqual(toggleState(toggle), true, "seeded default is on")
+        XCTAssertEqual(toggleState(toggle), true,
+                       "seeded system-audio toggle is not on at first launch")
         setToggle(toggle, to: false)
         XCTAssertEqual(toggleState(toggle), false,
                        "toggle did not flip off on click")
@@ -105,9 +106,15 @@ final class SettingsPersistenceTests: XCTestCase {
     /// container promotion"), so a click on the id-bearing element flips it —
     /// the locator stays identifier-based.
     private func setToggle(_ element: XCUIElement, to target: Bool) {
-        guard toggleState(element) != target else { return }
+        guard let current = toggleState(element) else {
+            XCTFail("unreadable toggle value: \(String(describing: element.value))")
+            return
+        }
+        guard current != target else { return }
         element.click()
-        _ = waitToggle(element, becomes: target)
+        XCTAssertTrue(waitToggle(element, becomes: target),
+            "toggle did not settle to \(target) — "
+            + "value=\(String(describing: element.value))")
     }
 
     /// Poll the toggle's state until it reaches `target` or a short deadline.

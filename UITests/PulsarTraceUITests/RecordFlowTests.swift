@@ -26,6 +26,19 @@ final class RecordFlowTests: XCTestCase {
     override func setUp() async throws {
         continueAfterFailure = false
         seed = try await SeededHome.make()
+        // Model-cache preflight (PT-P7-R4): the paired run borrows the host's
+        // already-warm live + refine models (PT-P7-D3). An empty cache would
+        // otherwise burn the full 300 s final.md budget on an unhelpful
+        // timeout, so gate explicitly per the project's test posture.
+        let modelsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/PulsarTrace/models")
+        let modelCachePopulated = (try? FileManager.default.contentsOfDirectory(
+            atPath: modelsDir.path))?.isEmpty == false
+        guard modelCachePopulated else {
+            throw XCTSkip(
+                "host model cache empty at \(modelsDir.path) — run "
+                + "swift test --filter Parakeet / WhisperKitRefine once")
+        }
         app = XCUIApplication()
         app.launchEnvironment.merge(
             seed.launchEnvironment, uniquingKeysWith: { _, new in new })
@@ -36,10 +49,9 @@ final class RecordFlowTests: XCTestCase {
         app.launchEnvironment["PULSARTRACE_MIC_FIXTURE"] =
             Self.pairedDir.appendingPathComponent("mic.wav").path
         // Explicit read-only model share (PT-P7-D3, PT-P7-R9) — the isolated
-        // home borrows the host's already-warm live + refine models.
-        app.launchEnvironment["PULSARTRACE_MODELS_DIR"] =
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Caches/PulsarTrace/models").path
+        // home borrows the host's already-warm live + refine models
+        // (preflighted above).
+        app.launchEnvironment["PULSARTRACE_MODELS_DIR"] = modelsDir.path
         app.launch()
     }
 
@@ -79,8 +91,12 @@ final class RecordFlowTests: XCTestCase {
             if !recordToggle.exists { try openPanel(app) }
             usleep(300_000)
         }
+        // Fold in the crash/error rows (they render only in those states) so a
+        // wedged engine is distinguishable from slow startup on timeout.
         XCTAssertTrue(liveRow.isHittable,
-                      "live-transcript row never became available while recording")
+                      "live-transcript row never became available while recording "
+                      + "recoverVisible=\(app.buttons[A11yID.MenuBar.recoverTranscript].exists) "
+                      + "dismissVisible=\(app.buttons[A11yID.MenuBar.dismiss].exists)")
         liveRow.click()
         // The id lives on a promoted group inside the window — query descendants,
         // never `app.windows[id]` (PT-P7-D8).
@@ -92,7 +108,11 @@ final class RecordFlowTests: XCTestCase {
         // budget is generous (the engine spawns a fresh process that must load
         // the live model onto the ANE — a cold ANE can take a minute before the
         // file is created at session start).
-        let newFolder = try poll(timeout: 90, message: "recording folder") {
+        let newFolder = try poll(timeout: 90, message: "recording folder", observed: {
+            let entries = (try? FileManager.default.contentsOfDirectory(
+                atPath: self.seed.outputRoot.path))?.sorted().joined(separator: ", ")
+            return "outputRoot entries: [\(entries ?? "<unreadable>")]"
+        }) {
             try newestFolder(in: seed.outputRoot,
                              excluding: SeededHome.recordingFolders)
         }
@@ -106,14 +126,24 @@ final class RecordFlowTests: XCTestCase {
         // throwing), or a cold-ANE burst-then-rename (never observed "growing")
         // each read as a false timeout.
         let liveBak = newFolder.appendingPathComponent(RecordingFolder.FileName.liveBackup)
-        _ = try poll(timeout: 180, message: "live.md") {
+        _ = try poll(timeout: 180, message: "live.md", observed: {
+            let files = (try? FileManager.default.contentsOfDirectory(
+                atPath: newFolder.path))?.sorted().joined(separator: ", ")
+            return "folder exists="
+                + "\(FileManager.default.fileExists(atPath: newFolder.path)) "
+                + "files: [\(files ?? "<none>")]"
+        }) {
             FileManager.default.fileExists(atPath: liveURL.path)
                 || FileManager.default.fileExists(atPath: liveBak.path) ? true : nil
         }
         let sizeA = (try? size(of: liveURL)) ?? 0
         _ = try poll(timeout: 90, message: "live.md growth") {
             // Superseded by final — the live pass ran; event order below proves it.
-            if FileManager.default.fileExists(atPath: liveBak.path) { return true }
+            // The backup must be NON-EMPTY: an empty live.md renamed to .bak must
+            // not satisfy the fast path, so nil (keep polling) on empty/unreadable.
+            if FileManager.default.fileExists(atPath: liveBak.path) {
+                return (try? size(of: liveBak)).map { $0 > 0 ? true : nil } ?? nil
+            }
             guard let s = try? size(of: liveURL) else { return nil }  // mid-rename window
             return s > sizeA ? true : nil
         }

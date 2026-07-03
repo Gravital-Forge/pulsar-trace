@@ -11,17 +11,23 @@ extension XCTestCase {
 
     /// Poll `probe` until it returns a non-nil value or `timeout` elapses,
     /// failing (and throwing) on timeout so the test stops at the first
-    /// unmet precondition rather than cascading.
+    /// unmet precondition rather than cascading. `observed`, when supplied, is
+    /// evaluated only on timeout and appended to the failure message — a
+    /// snapshot of on-disk/UI state that tells an engine crash apart from slow
+    /// startup. Existing callers omit it and compile unchanged.
     @discardableResult
     func poll<T>(
-        timeout: TimeInterval, message: String, _ probe: () throws -> T?
+        timeout: TimeInterval, message: String,
+        observed: (() -> String)? = nil, _ probe: () throws -> T?
     ) throws -> T {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if let value = try probe() { return value }
             usleep(200_000)
         }
-        XCTFail("timed out after \(Int(timeout))s waiting for \(message)")
+        var failure = "timed out after \(Int(timeout))s waiting for \(message)"
+        if let observed { failure += " — observed \(observed())" }
+        XCTFail(failure)
         throw PollTimeout(message: message)
     }
 
