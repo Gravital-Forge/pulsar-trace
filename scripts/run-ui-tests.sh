@@ -18,6 +18,12 @@ swift build
 xcodegen generate
 
 mkdir -p .build/ui-test-results
+# Hand the real host model cache to the XCUITest runner. The runner process has
+# a containerized home, so an in-test `~` derivation resolves to the xctrunner
+# container, not the warm cache — xcodebuild surfaces TEST_RUNNER_X as X inside
+# the runner, and this script runs unsandboxed in the real user session so its
+# $HOME is correct. Respect an already-set override (PT-P7-R9).
+TEST_RUNNER_PULSARTRACE_MODELS_DIR="${PULSARTRACE_MODELS_DIR:-$HOME/Library/Caches/PulsarTrace/models}" \
 exec xcodebuild test \
   -project PulsarTraceUIHarness.xcodeproj \
   -scheme UITests \

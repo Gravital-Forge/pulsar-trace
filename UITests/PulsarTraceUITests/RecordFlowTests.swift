@@ -30,8 +30,26 @@ final class RecordFlowTests: XCTestCase {
         // already-warm live + refine models (PT-P7-D3). An empty cache would
         // otherwise burn the full 300 s final.md budget on an unhelpful
         // timeout, so gate explicitly per the project's test posture.
-        let modelsDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/PulsarTrace/models")
+        //
+        // Resolving the cache path is the trap (PT-P7-R9): this test runs in the
+        // xctrunner process, whose `homeDirectoryForCurrentUser` is the runner's
+        // sandbox CONTAINER, not the real user home — so a `~`-derived path
+        // points at an empty container cache. Prefer the path handed in by
+        // scripts/run-ui-tests.sh via TEST_RUNNER_ passthrough; fall back to an
+        // Open Directory lookup of the real user home; container `~` last.
+        let modelsDir: URL = {
+            if let override = ProcessInfo.processInfo
+                .environment["PULSARTRACE_MODELS_DIR"], !override.isEmpty {
+                return URL(fileURLWithPath: override)
+            }
+            if let realHome = FileManager.default
+                .homeDirectory(forUser: NSUserName()) {
+                return realHome
+                    .appendingPathComponent("Library/Caches/PulsarTrace/models")
+            }
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Caches/PulsarTrace/models")
+        }()
         let modelCachePopulated = (try? FileManager.default.contentsOfDirectory(
             atPath: modelsDir.path))?.isEmpty == false
         guard modelCachePopulated else {
