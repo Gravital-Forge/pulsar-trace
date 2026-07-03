@@ -13,10 +13,12 @@ public enum A11yID {
     public static let statusItem = "pt.statusItem"
 
     /// The menubar dropdown panel (`MenuBarMenuView`).
-    public enum Menubar {
+    public enum MenuBar {
         public static let panel = "pt.menubar.panel"
         public static let recordToggle = "pt.menubar.recordToggle"
-        public static let openMainWindow = "pt.menubar.openMainWindow"
+        /// The "Recordings…" opener — opens the main window at the Recordings
+        /// section (the row UI tests use to open the main window).
+        public static let openRecordings = "pt.menubar.openRecordings"
         public static let openLiveTranscript = "pt.menubar.openLiveTranscript"
         public static let progressLabel = "pt.menubar.progressLabel"
         /// The "Speakers…" opener (opens the main window's Speakers pane).

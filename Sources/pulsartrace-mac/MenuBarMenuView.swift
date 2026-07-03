@@ -27,7 +27,7 @@ struct MenuBarMenuView: View {
                 .padding(.vertical, 4)
                 // PT-P7-R3: the always-present status/progress line — the
                 // E2E suite reads recording + refine progress off this label.
-                .accessibilityIdentifier(A11yID.Menubar.progressLabel)
+                .accessibilityIdentifier(A11yID.MenuBar.progressLabel)
 
             // A determinate bar under the status line while a refinement is
             // running — same data the "Refining N% · Stage" text reads, just
@@ -56,20 +56,20 @@ struct MenuBarMenuView: View {
             menuDivider
 
             menuButton(
-                "Recordings…", identifier: A11yID.Menubar.openMainWindow
+                "Recordings…", identifier: A11yID.MenuBar.openRecordings
             ) { open(WindowID.main, section: .recordings) }
             menuButton(
-                "Speakers…", identifier: A11yID.Menubar.openSpeakers
+                "Speakers…", identifier: A11yID.MenuBar.openSpeakers
             ) { open(WindowID.main, section: .speakers) }
             menuButton(
-                "Settings…", identifier: A11yID.Menubar.openSettings
+                "Settings…", identifier: A11yID.MenuBar.openSettings
             ) { open(WindowID.main, section: .settings) }
 
             menuDivider
 
             // ⌘Q works while the panel is open (the panel is the key window).
             menuButton(
-                "Quit PulsarTrace", identifier: A11yID.Menubar.quit,
+                "Quit PulsarTrace", identifier: A11yID.MenuBar.quit,
                 shortcut: KeyboardShortcut("q")
             ) {
                 NSApplication.shared.terminate(nil)
@@ -82,8 +82,11 @@ struct MenuBarMenuView: View {
         // starts or finishes while the panel is open.
         .animation(.default, value: runningProgress != nil)
         // PT-P7-R3: the panel's root container — the E2E suite scopes every
-        // menubar query to this identifier.
-        .accessibilityIdentifier(A11yID.Menubar.panel)
+        // menubar query to this identifier. A bare VStack isn't an AX element
+        // on macOS, so promote it to a container element (children: .contain)
+        // for the identifier to surface in the AX tree.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(A11yID.MenuBar.panel)
     }
 
     /// Start/stop plus the state-specific actions (live transcript, crash
@@ -94,41 +97,41 @@ struct MenuBarMenuView: View {
             // One identifier (`recordToggle`) across Start/Starting/Stop so
             // the record control is locatable in every state (PT-P7-R3).
             menuButton(
-                "Start Recording", identifier: A11yID.Menubar.recordToggle,
+                "Start Recording", identifier: A11yID.MenuBar.recordToggle,
                 hint: hotkeyHint
             ) {
                 Task { await recording.startRecording() }
             }
         case .launching:
             menuButton(
-                "Starting…", identifier: A11yID.Menubar.recordToggle,
+                "Starting…", identifier: A11yID.MenuBar.recordToggle,
                 enabled: false
             ) {}
         case .recording:
             menuButton(
-                "Stop Recording", identifier: A11yID.Menubar.recordToggle,
+                "Stop Recording", identifier: A11yID.MenuBar.recordToggle,
                 hint: hotkeyHint
             ) {
                 Task { await recording.stopRecording() }
             }
             menuButton(
                 "Show Live Transcript…",
-                identifier: A11yID.Menubar.openLiveTranscript
+                identifier: A11yID.MenuBar.openLiveTranscript
             ) {
                 open(WindowID.liveTranscript)
             }
         case .crashed:
             menuButton(
                 "Recover Transcript",
-                identifier: A11yID.Menubar.recoverTranscript
+                identifier: A11yID.MenuBar.recoverTranscript
             ) {
                 Task { await recording.recoverFromCrash() }
             }
-            menuButton("Dismiss", identifier: A11yID.Menubar.dismiss) {
+            menuButton("Dismiss", identifier: A11yID.MenuBar.dismiss) {
                 recording.dismissCrash()
             }
         case .error:
-            menuButton("Dismiss", identifier: A11yID.Menubar.dismiss) {
+            menuButton("Dismiss", identifier: A11yID.MenuBar.dismiss) {
                 recording.dismissCrash()
             }
         }
