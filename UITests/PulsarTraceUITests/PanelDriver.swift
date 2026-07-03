@@ -79,17 +79,24 @@ extension XCTestCase {
         return false
     }
 
+    /// Whether a row surfaces the speaker's name — as a child staticText, or,
+    /// when the List merges the row into a single element, in its label/value.
+    /// The tolerant three-way check lives here once because XCUITest renders a
+    /// List row's text in any of those places across macOS versions; both the
+    /// assert form and the speaker-flow suite's rename poll build on it.
+    func rowShowsName(_ row: XCUIElement, _ name: String) -> Bool {
+        row.staticTexts[name].exists
+            || row.label.contains(name)
+            || (row.value as? String)?.contains(name) == true
+    }
+
     /// Assert a row surfaces the speaker's name — as a child staticText, or,
     /// when the List merges the row into a single element, in its label/value.
     /// Shared because both the floor suite (rows render the seeded names) and
     /// the speaker-flow suite (the pane reflects a rename) need the same
-    /// tolerant three-way check, and XCUITest renders a List row's text in any
-    /// of those places across macOS versions.
+    /// tolerant three-way check.
     func assertRowShowsName(_ row: XCUIElement, _ name: String) {
-        let shows = row.staticTexts[name].exists
-            || row.label.contains(name)
-            || (row.value as? String)?.contains(name) == true
-        XCTAssertTrue(shows,
+        XCTAssertTrue(rowShowsName(row, name),
             "row does not show the name \(name) — label=\(row.label) "
             + "value=\(String(describing: row.value))")
     }

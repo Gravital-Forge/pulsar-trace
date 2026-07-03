@@ -465,6 +465,8 @@ struct SpeakerEditorView: View {
                         renameText = speaker.name
                         renameTarget = speaker.id
                     }
+                    // PT-P7-R3: identifier-located, not by title.
+                    .accessibilityIdentifier(A11yID.Speakers.renameButton)
                     // Merge/Split moved here from the toolbar (QA round 3):
                     // ⌘-click arming was undiscoverable, and the operand
                     // pickers were redundant once two speakers were already

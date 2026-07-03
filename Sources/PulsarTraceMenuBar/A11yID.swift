@@ -57,6 +57,8 @@ public enum A11yID {
             "pt.speakers.row.\(id)"
         }
         public static let renameField = "pt.speakers.renameField"
+        /// The "Rename" context-menu button (arms the inline rename field).
+        public static let renameButton = "pt.speakers.renameButton"
         /// The "Merge With" submenu (context menu). Merge is a submenu of
         /// per-speaker targets, not a single button — this ids the submenu; the
         /// per-target buttons under it carry `mergeTarget(_:)`.

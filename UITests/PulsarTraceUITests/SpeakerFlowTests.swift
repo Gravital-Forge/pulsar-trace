@@ -36,6 +36,16 @@ final class SpeakerFlowTests: XCTestCase {
     }
 
     override func tearDown() {
+        // On failure, copy the seed home's final.md/.bak/events/logs out BEFORE
+        // the seed is purged — this suite's failure modes (a rewrite that didn't
+        // land, a missing backup, an out-of-order event log) are diagnosable
+        // only from that throwaway state (PT-P7-R4). Done before the app is
+        // terminated so a hung main thread's state is captured as-is.
+        if (testRun?.totalFailureCount ?? 0) > 0, let seed {
+            let dir = preserveSeedDiagnostics(seed, label: "SpeakerFlow")
+            print("PT-DIAG preserved failure evidence at "
+                + "\(dir?.path ?? "<none>")")
+        }
         // Terminate the app before purging the seed (nil-safe — either may be
         // unset if setUp threw before assigning it), matching the sibling suites.
         app?.terminate()
@@ -51,7 +61,7 @@ final class SpeakerFlowTests: XCTestCase {
         // Locate Alice by her stable seed-time id — the row identifier keys on
         // `spk_<ulid>`, which the rename leaves unchanged, so we never look the
         // row up by (mutating) display name (PT-P7-R3).
-        let aliceId = seed.speakerIds["Alice"]!
+        let aliceId = try XCTUnwrap(seed.speakerIds["Alice"], "Alice not seeded")
         let row = app.descendants(matching: .any)[A11yID.Speakers.row(aliceId)]
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "seeded speaker Alice not rendered")
@@ -64,11 +74,13 @@ final class SpeakerFlowTests: XCTestCase {
         // source comments flag this same "NSHostingView-eats-mouseDown" race),
         // so `row.doubleClick()` lands on the table, the gesture never fires, and
         // no rename field appears. The context menu is deterministic: right-click
-        // the row, then click "Rename" (the item carries no identifier — it is a
-        // plain SwiftUI `Button("Rename")` — so it is located by its menu-item
-        // title, the one place a raw string is unavoidable here).
+        // the row, then click "Rename", located by its identifier
+        // (`A11yID.Speakers.renameButton`, PT-P7-R3) — this is also the first
+        // proof that a SwiftUI `.contextMenu` Button's `.accessibilityIdentifier`
+        // propagates to the AX menu item, which is how the merge flow (T4) will
+        // locate `mergeButton`/`mergeTarget`.
         row.rightClick()
-        let renameItem = app.menuItems["Rename"]
+        let renameItem = app.menuItems[A11yID.Speakers.renameButton]
         XCTAssertTrue(renameItem.waitForExistence(timeout: 5),
                       "Rename context-menu item did not surface on right-click")
         renameItem.click()
@@ -79,7 +91,11 @@ final class SpeakerFlowTests: XCTestCase {
         // rename mode so the field's id is not shadowed by the row id). Select-
         // all defensively, type the new name, and submit with Return (the
         // field's `.onSubmit` commits like Save).
+        // `.firstMatch`: while renaming, both the collapsed row and the inner
+        // TextField can legitimately carry `renameField` on some macOS AX shapes;
+        // they are the same control, so taking the first is safe.
         let field = app.descendants(matching: .any)[A11yID.Speakers.renameField]
+            .firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 10),
                       "inline rename field did not surface after Rename")
         field.click()
@@ -96,11 +112,16 @@ final class SpeakerFlowTests: XCTestCase {
             let folderURL = seed.outputRoot.appendingPathComponent(folder)
             let finalURL = folderURL.appendingPathComponent(
                 RecordingFolder.FileName.final)
-            try poll(timeout: 30, message: "rewrite of \(folder)") {
-                let text = try String(contentsOf: finalURL, encoding: .utf8)
-                return text.contains("Alicia:**") ? true : nil
+            // Return the settled text from the probe (and read it `try?`-tolerant
+            // so a transient read during the atomic write keeps polling rather
+            // than aborting), then run the negative assert on that same snapshot
+            // instead of re-reading — no second read to race the rewrite.
+            let text = try poll(timeout: 30, message: "rewrite of \(folder)") {
+                () -> String? in
+                guard let text = try? String(contentsOf: finalURL, encoding: .utf8)
+                else { return nil }
+                return text.contains("Alicia:**") ? text : nil
             }
-            let text = try String(contentsOf: finalURL, encoding: .utf8)
             XCTAssertFalse(text.contains("Alice:**"),
                            "\(folder) still carries the old speaker label")
 
@@ -117,9 +138,17 @@ final class SpeakerFlowTests: XCTestCase {
 
         // Cause before effect (Hard Invariant #8): `SpeakerEditService.rename`
         // appends the `speaker_renamed` cause, THEN one `final_md_rewritten` per
-        // rewritten recording. The `eventTypes` helper returns raw type strings
-        // in file order, matched exactly against the pinned event-type constants.
-        let types = try eventTypes(home: seed.home)
+        // rewritten recording. Those appends (an actor hop + a file write each)
+        // complete AFTER the disk rewrite the polls above already observed, so
+        // poll the log — a single read here can catch it before the lines land.
+        // `eventTypes` returns raw type strings in file order, matched exactly
+        // against the pinned event-type constants.
+        let types = try poll(timeout: 10, message: "rename events flushed") {
+            let t = try eventTypes(home: seed.home)
+            return t.contains(SpeakerRenamedEvent.eventType)
+                && t.filter { $0 == FinalMDRewrittenEvent.eventType }.count >= 2
+                ? t : nil
+        }
         let renameIdx = try XCTUnwrap(
             types.firstIndex(of: SpeakerRenamedEvent.eventType),
             "no \(SpeakerRenamedEvent.eventType) event")
@@ -142,10 +171,7 @@ final class SpeakerFlowTests: XCTestCase {
         // List can merge a row into a single AX element (PanelDriver
         // .assertRowShowsName), so `row.staticTexts["Alicia"]` alone is fragile.
         try poll(timeout: 10, message: "pane reflects the rename") {
-            row.staticTexts["Alicia"].exists
-                || row.label.contains("Alicia")
-                || (row.value as? String)?.contains("Alicia") == true
-                ? true : nil
+            rowShowsName(row, "Alicia") ? true : nil
         }
         assertRowShowsName(row, "Alicia")
     }
