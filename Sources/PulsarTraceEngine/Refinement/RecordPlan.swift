@@ -25,6 +25,31 @@ public struct RecordPlan: Sendable, Equatable {
     /// argv for `pulsartrace-engine` (excludes the binary itself).
     public let engineArguments: [String]
 
+    /// Fixture WAVs standing in for the two capture streams (PT-P7-R2).
+    ///
+    /// Engine semantics: the primary `--source fixture` stream is the
+    /// *system* stream (diarized); `--mic-fixture` pairs the `You` stream.
+    /// With only `mic` set, that WAV rides as the primary single stream and
+    /// its utterances get diarized labels rather than `You`.
+    public struct Fixtures: Sendable, Equatable {
+        public let system: URL?
+        public let mic: URL?
+
+        /// At least one stream is required.
+        public init?(system: URL?, mic: URL?) {
+            guard system != nil || mic != nil else { return nil }
+            self.system = system
+            self.mic = mic
+        }
+
+        /// The process overrides' fixtures; `nil` when fixture capture is
+        /// inactive (the production path).
+        public static func from(_ overrides: EnvironmentOverrides) -> Fixtures? {
+            Fixtures(system: overrides.systemFixture,
+                     mic: overrides.micFixture)
+        }
+    }
+
     /// Build the launch plan.
     ///
     /// - Parameters:
@@ -41,52 +66,69 @@ public struct RecordPlan: Sendable, Equatable {
     ///     Parakeet (which has no language-ID head); otherwise → auto. The
     ///     refine pass reproduces the old pin / detect-among semantics over the
     ///     allow list (tasks 13/14). Empty (the default) → auto.
+    ///   - fixtures: when non-nil (PT-P7-R2), the plan replaces both device
+    ///     streams with committed fixture WAVs and suppresses the capture
+    ///     subprocess — `captureArguments` is empty and the engine reads the
+    ///     fixtures through its realtime `--source fixture` source. `nil` (the
+    ///     default) is the unchanged device-capture path.
     public static func make(
         outputFolder: URL,
         paths: AppPaths,
         micDeviceID: String?,
         systemAudioEnabled: Bool,
-        allowedLanguages: [String] = []
+        allowedLanguages: [String] = [],
+        fixtures: Fixtures? = nil
     ) -> RecordPlan {
         let recordingId = RecordingFolder.recordingId(
             forName: outputFolder.lastPathComponent)
         let systemSocket = paths.systemSocketURL(recordingId: recordingId)
         let micSocket = paths.micSocketURL(recordingId: recordingId)
 
-        var captureArgs = [
-            "--recording-id", recordingId,
-            "--out", outputFolder.path,
-            "--system-socket", systemSocket.path,
-            "--mic-socket", micSocket.path,
-            // The live pass has exactly one backend (PT-P5-D1). Capture still
-            // takes `--model` because the value feeds the public
-            // `recording_started` event's `model_live` field
-            // (RecordingStartedEvent) — removing an event field is a
-            // breaking public-API change. Fixed to the only live model.
-            "--model", "parakeet-v3",
-        ]
-        if let micDeviceID {
-            captureArgs += ["--mic-device", micDeviceID]
-        }
-        if !systemAudioEnabled {
-            captureArgs.append("--no-system-audio")
-        }
-
         var engineArgs = [
             "--live",
             "--out", outputFolder.path,
             "--recording-id", recordingId,
         ]
-        if systemAudioEnabled {
-            // Two-socket mode: the system stream is diarized, the mic stream
-            // is the `You` stream.
-            engineArgs += [
+        var captureArgs: [String] = []
+        if let fixtures {
+            // PT-P7-R2: no capture daemon; the engine reads the committed
+            // fixture WAVs through its existing realtime fixture source.
+            let primary = fixtures.system ?? fixtures.mic!
+            engineArgs += ["--source", "fixture", primary.path]
+            if fixtures.system != nil, let mic = fixtures.mic {
+                engineArgs += ["--mic-fixture", mic.path]
+            }
+        } else {
+            captureArgs = [
+                "--recording-id", recordingId,
+                "--out", outputFolder.path,
                 "--system-socket", systemSocket.path,
                 "--mic-socket", micSocket.path,
+                // The live pass has exactly one backend (PT-P5-D1). Capture still
+                // takes `--model` because the value feeds the public
+                // `recording_started` event's `model_live` field
+                // (RecordingStartedEvent) — removing an event field is a
+                // breaking public-API change. Fixed to the only live model.
+                "--model", "parakeet-v3",
             ]
-        } else {
-            // Mic-only: the engine reads a single stream from the mic socket.
-            engineArgs += ["--mic-socket", micSocket.path]
+            if let micDeviceID {
+                captureArgs += ["--mic-device", micDeviceID]
+            }
+            if !systemAudioEnabled {
+                captureArgs.append("--no-system-audio")
+            }
+
+            if systemAudioEnabled {
+                // Two-socket mode: the system stream is diarized, the mic stream
+                // is the `You` stream.
+                engineArgs += [
+                    "--system-socket", systemSocket.path,
+                    "--mic-socket", micSocket.path,
+                ]
+            } else {
+                // Mic-only: the engine reads a single stream from the mic socket.
+                engineArgs += ["--mic-socket", micSocket.path]
+            }
         }
         if !allowedLanguages.isEmpty {
             engineArgs += ["--allowed-languages",
