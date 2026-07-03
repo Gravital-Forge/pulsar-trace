@@ -11,6 +11,10 @@ struct MenuBarSettingsIsolationTests {
     @Test("defaults-suite override routes persistence to the named suite")
     func suiteOverride() {
         let suite = "com.gravitalforge.PulsarTrace.isolation-test-\(UUID().uuidString)"
+        // Never leak into the production suite from this test path.
+        defer {
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        }
         let overrides = EnvironmentOverrides(
             environment: ["PULSARTRACE_DEFAULTS_SUITE": suite])
         let settings = MenuBarSettings(overrides: overrides)
@@ -18,18 +22,18 @@ struct MenuBarSettingsIsolationTests {
 
         let store = UserDefaults(suiteName: suite)
         #expect(store?.object(forKey: "systemAudioEnabled") as? Bool == false)
-        // Never leak into the production suite from this test path.
-        store?.removePersistentDomain(forName: suite)
     }
 
     @Test("fresh overridden suite has the safe E2E defaults")
     func safeDefaults() {
         let suite = "com.gravitalforge.PulsarTrace.isolation-test-\(UUID().uuidString)"
+        defer {
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        }
         let settings = MenuBarSettings(overrides: EnvironmentOverrides(
             environment: ["PULSARTRACE_DEFAULTS_SUITE": suite]))
         #expect(settings.globalHotkey == nil)      // PT-P7-R9
         #expect(settings.mcpServerEnabled == false) // PT-P7-R9
-        UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
     }
 
     @Test("default output folder follows the home override")

@@ -57,8 +57,9 @@ public actor EngineOnlyOrchestrator: RecordingOrchestrating {
     }
 
     public func stop() async {
-        guard let engine, engine.isRunning else { return }
-        engine.terminate()
+        if let engine, engine.isRunning {
+            engine.terminate()
+        }
         _ = await exitTask?.value
     }
 }

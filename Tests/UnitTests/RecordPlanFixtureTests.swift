@@ -71,4 +71,17 @@ struct RecordPlanFixtureTests {
         #expect(!device.captureArguments.isEmpty)
         #expect(device.engineArguments.contains("--system-socket"))
     }
+
+    @Test("fixture mode ignores the device knobs (mic device, system-audio)")
+    func ignoresDeviceKnobs() {
+        let plan = RecordPlan.make(
+            outputFolder: out, paths: paths, micDeviceID: "mic-1",
+            systemAudioEnabled: false,
+            fixtures: RecordPlan.Fixtures(system: system, mic: mic))
+        #expect(plan.captureArguments.isEmpty)
+        for knob in ["--mic-device", "--no-system-audio",
+                     "--system-socket", "--mic-socket"] {
+            #expect(!plan.engineArguments.contains(knob))
+        }
+    }
 }

@@ -21,6 +21,7 @@ struct EngineOnlyOrchestratorTests {
     @Test("engine exit is observed; liveness flips")
     func exitObserved() async throws {
         let bin = try script("exit 0")
+        defer { try? FileManager.default.removeItem(at: bin) }
         let o = EngineOnlyOrchestrator(engineBinary: bin, engineArguments: [])
         try await o.start(readyTimeout: .seconds(5))
         await o.waitForEngineExit()
@@ -30,6 +31,7 @@ struct EngineOnlyOrchestratorTests {
     @Test("stop terminates a long-running engine")
     func stopTerminates() async throws {
         let bin = try script("sleep 60")
+        defer { try? FileManager.default.removeItem(at: bin) }
         let o = EngineOnlyOrchestrator(engineBinary: bin, engineArguments: [])
         try await o.start(readyTimeout: .seconds(5))
         #expect(await o.isEngineRunning() == true)
@@ -50,6 +52,7 @@ struct EngineOnlyOrchestratorTests {
     @Test("stop after natural exit is a safe no-op")
     func stopAfterExit() async throws {
         let bin = try script("exit 0")
+        defer { try? FileManager.default.removeItem(at: bin) }
         let o = EngineOnlyOrchestrator(engineBinary: bin, engineArguments: [])
         try await o.start(readyTimeout: .seconds(5))
         await o.waitForEngineExit()

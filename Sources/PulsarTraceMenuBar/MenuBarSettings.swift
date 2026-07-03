@@ -42,16 +42,17 @@ public final class MenuBarSettings {
     /// WhisperKit (PT-P5-D1): near-large-v3 accuracy, ~626 MB, GPU-free.
     public static let defaultRefineModelName = WhisperKitModelCatalog.defaultModel.name
 
+    /// Delegates to `defaultOutputFolderURL(overrides:)` with `.current`.
+    public static var defaultOutputFolderURL: URL? {
+        defaultOutputFolderURL(overrides: .current)
+    }
+
     /// Default output folder when the user has never chosen one:
     /// `~/Documents/PulsarTrace`, or `<home>/Documents/PulsarTrace` under the
     /// E2E home override (PT-P7-R1). Derived at read time and **never
     /// persisted** — clearing `outputFolderPath` re-defaults on the next read.
     /// `nil` only in the theoretical case where the Documents directory cannot
     /// be resolved.
-    public static var defaultOutputFolderURL: URL? {
-        defaultOutputFolderURL(overrides: .current)
-    }
-
     // PT-P7-R1
     public static func defaultOutputFolderURL(
         overrides: EnvironmentOverrides

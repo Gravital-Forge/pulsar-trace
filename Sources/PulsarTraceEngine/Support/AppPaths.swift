@@ -2,9 +2,9 @@ import Foundation
 
 /// Resolves the on-disk locations PulsarTrace uses.
 ///
-/// All locations are derived from a `root` (the user's home directory by
-/// default). Tests inject a temporary root so they never touch the real
-/// `~/Library`.
+/// All locations derive from `home` (the user's home directory by default),
+/// except the model cache when `modelsOverride` is set. Tests inject a
+/// temporary `home` so they never touch the real `~/Library`.
 public struct AppPaths: Sendable {
     /// Base directory; the real app uses the user's home directory.
     public let home: URL

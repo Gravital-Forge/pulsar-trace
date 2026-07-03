@@ -16,9 +16,11 @@ public struct RecordPlan: Sendable, Equatable {
     /// The recording folder — engine writes `live.md` + the audio WAVs here;
     /// a later `refine` of this folder produces `final.md`.
     public let outputFolder: URL
-    /// The system-audio capture socket.
+    /// The system-audio capture socket. Derived unconditionally, but unused
+    /// (not wired into any argv) in fixture mode.
     public let systemSocket: URL
-    /// The microphone capture socket.
+    /// The microphone capture socket. Derived unconditionally, but unused
+    /// (not wired into any argv) in fixture mode.
     public let micSocket: URL
     /// argv for `pulsartrace-capture` (excludes the binary itself).
     public let captureArguments: [String]
@@ -34,6 +36,10 @@ public struct RecordPlan: Sendable, Equatable {
     public struct Fixtures: Sendable, Equatable {
         public let system: URL?
         public let mic: URL?
+
+        /// The stream that rides as the engine's primary `--source fixture`
+        /// argument. Non-nil by the init invariant (at least one stream).
+        public var primary: URL { system ?? mic! }
 
         /// At least one stream is required.
         public init?(system: URL?, mic: URL?) {
@@ -67,10 +73,12 @@ public struct RecordPlan: Sendable, Equatable {
     ///     refine pass reproduces the old pin / detect-among semantics over the
     ///     allow list (tasks 13/14). Empty (the default) → auto.
     ///   - fixtures: when non-nil (PT-P7-R2), the plan replaces both device
-    ///     streams with committed fixture WAVs and suppresses the capture
-    ///     subprocess — `captureArguments` is empty and the engine reads the
-    ///     fixtures through its realtime `--source fixture` source. `nil` (the
-    ///     default) is the unchanged device-capture path.
+    ///     streams with committed fixture WAVs and empties `captureArguments`;
+    ///     the orchestrator factory
+    ///     (`RecordingViewModel.defaultOrchestratorFactory`) skips the capture
+    ///     spawn for such plans, and the engine reads the fixtures through its
+    ///     realtime `--source fixture` source. `nil` (the default) is the
+    ///     unchanged device-capture path.
     public static func make(
         outputFolder: URL,
         paths: AppPaths,
@@ -93,8 +101,7 @@ public struct RecordPlan: Sendable, Equatable {
         if let fixtures {
             // PT-P7-R2: no capture daemon; the engine reads the committed
             // fixture WAVs through its existing realtime fixture source.
-            let primary = fixtures.system ?? fixtures.mic!
-            engineArgs += ["--source", "fixture", primary.path]
+            engineArgs += ["--source", "fixture", fixtures.primary.path]
             if fixtures.system != nil, let mic = fixtures.mic {
                 engineArgs += ["--mic-fixture", mic.path]
             }

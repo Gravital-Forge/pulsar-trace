@@ -329,10 +329,20 @@ public final class RecordingViewModel {
         // The live pass has ended — stop advertising its `live.md` (FIX 1).
         liveMarkdownURL = nil
 
+        await finalizeCleanStop(recordingId: id)
+    }
+
+    /// Shared clean-stop finalization: enqueue an auto-refine of the recording
+    /// folder, clear the in-flight session state (folder + fixture flag), return
+    /// to `.idle`, clear the progress message, and resume the refine queue. Used
+    /// by both the deliberate `stopRecording()` path and the fixture
+    /// engine-EOF path in `handleEngineExit`.
+    private func finalizeCleanStop(recordingId: String) async {
         if let folder = currentRecordingFolder {
-            await enqueueAutoRefine(folder, id)
+            await enqueueAutoRefine(folder, recordingId)
         }
         currentRecordingFolder = nil
+        currentSessionIsFixture = false
         status = .idle
         progressMessage = ""
         await resumeRefinement()
@@ -354,15 +364,10 @@ public final class RecordingViewModel {
         // PT-P7-R2: a fixture session ends when the engine finishes the WAVs —
         // finalize exactly like a user stop, never as a crash.
         if currentSessionIsFixture {
-            if let folder = currentRecordingFolder {
-                await enqueueAutoRefine(folder, id)
-            }
-            currentRecordingFolder = nil
-            status = .idle
-            progressMessage = ""
-            await resumeRefinement()
+            await finalizeCleanStop(recordingId: id)
             return
         }
+        currentSessionIsFixture = false
         status = .crashed(id: recordingId, partialFolderURL: partialFolder)
         progressMessage = "Recording stopped unexpectedly."
         await resumeRefinement()

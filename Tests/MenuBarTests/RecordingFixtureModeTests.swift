@@ -29,8 +29,10 @@ struct RecordingFixtureModeTests {
     }
 
     /// Reference-semantics mailbox so @Sendable closures can record into it —
-    /// Swift 6 forbids mutating a captured local; this is the
-    /// RecordingViewModelTests idiom.
+    /// Swift 6 forbids mutating a captured local. `@unchecked Sendable` is
+    /// sound here because each write happens before the awaited closure that
+    /// performs it returns, and the test only reads `value` after observing the
+    /// resulting state change — the `await` chain establishes happens-before.
     final class Box<Value>: @unchecked Sendable {
         var value: Value?
     }
@@ -44,16 +46,25 @@ struct RecordingFixtureModeTests {
         ])
     }
 
-    private func settings() -> MenuBarSettings {
+    private func settings() -> (MenuBarSettings, String) {
         let suite = "com.gravitalforge.PulsarTrace.fxm-\(UUID().uuidString)"
-        return MenuBarSettings(defaults: UserDefaults(suiteName: suite)!)
+        return (MenuBarSettings(defaults: UserDefaults(suiteName: suite)!), suite)
     }
 
     @Test("fixture start skips the TCC preflight and builds a fixture plan")
     func skipsPreflight() async {
-        let s = settings()
-        s.outputFolderPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pt-fxm-out-\(UUID().uuidString)").path
+        let (s, suite) = settings()
+        let outRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-fxm-out-\(UUID().uuidString)")
+        s.outputFolderPath = outRoot.path
+        let overrides = fixtureOverrides
+        defer {
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: outRoot)
+            if let home = overrides.home {
+                try? FileManager.default.removeItem(at: home)
+            }
+        }
         let planBox = Box<RecordPlan>()
         let vm = RecordingViewModel(
             settings: s,
@@ -64,7 +75,7 @@ struct RecordingFixtureModeTests {
             // A denied preflight must NOT block a fixture start (PT-P7-R2).
             preflight: PermissionPreflight(
                 microphone: { false }, screenRecording: { false }),
-            overrides: fixtureOverrides)
+            overrides: overrides)
         await vm.startRecording()
         #expect(vm.status.canStopRecording)
         #expect(planBox.value?.captureArguments.isEmpty == true)
@@ -73,9 +84,18 @@ struct RecordingFixtureModeTests {
 
     @Test("engine self-exit at fixture EOF finalizes as a clean stop")
     func eofIsCleanStop() async throws {
-        let s = settings()
-        s.outputFolderPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pt-fxm-out-\(UUID().uuidString)").path
+        let (s, suite) = settings()
+        let outRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-fxm-out-\(UUID().uuidString)")
+        s.outputFolderPath = outRoot.path
+        let overrides = fixtureOverrides
+        defer {
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: outRoot)
+            if let home = overrides.home {
+                try? FileManager.default.removeItem(at: home)
+            }
+        }
         let refinedBox = Box<(URL, String)>()
         let stub = StubOrchestrator(exitImmediately: true)
         let vm = RecordingViewModel(
@@ -84,7 +104,7 @@ struct RecordingFixtureModeTests {
             enqueueAutoRefine: { url, id in refinedBox.value = (url, id) },
             preflight: PermissionPreflight(
                 microphone: { false }, screenRecording: { false }),
-            overrides: fixtureOverrides)
+            overrides: overrides)
         await vm.startRecording()
         // The crash watch observes the (immediate) exit asynchronously.
         for _ in 0..<50 where vm.status != .idle {
@@ -96,9 +116,14 @@ struct RecordingFixtureModeTests {
 
     @Test("device sessions still crash on unexpected engine exit")
     func deviceStillCrashes() async throws {
-        let s = settings()
-        s.outputFolderPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pt-fxm-out-\(UUID().uuidString)").path
+        let (s, suite) = settings()
+        let outRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-fxm-out-\(UUID().uuidString)")
+        s.outputFolderPath = outRoot.path
+        defer {
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: outRoot)
+        }
         let stub = StubOrchestrator(exitImmediately: true)
         let vm = RecordingViewModel(
             settings: s,

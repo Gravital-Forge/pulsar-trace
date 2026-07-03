@@ -9,6 +9,7 @@ public enum OutputFolderRoots {
     /// `PULSARTRACE_HOME` override, `<home>/Documents/PulsarTrace` (PT-P7-R1).
     public static var defaultRoot: URL { defaultRoot(overrides: .current) }
 
+    /// Overrides-aware resolver; tests inject a synthetic environment.
     // PT-P7-R1
     public static func defaultRoot(overrides: EnvironmentOverrides) -> URL {
         if let home = overrides.home {
