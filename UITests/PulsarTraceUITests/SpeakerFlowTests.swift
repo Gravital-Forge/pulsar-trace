@@ -257,29 +257,17 @@ final class SpeakerFlowTests: XCTestCase {
             "a \(FinalMDRewrittenEvent.eventType) fired outside the merge cause")
     }
 
-    /// PT-P7-E3-T4 second AC — the undo round-trip. **GATED**: the GUI merge flow
-    /// presents no undo toast today, so this cannot pass as written. Unlike
-    /// `delete`/`delist`, `SpeakerEditorViewModel.merge` never calls `showToast`,
-    /// and `viewModel.unmerge` (the restore path) is wired only into the MCP
-    /// surface (`WriteTools`) and unit tests — never into any SwiftUI view. So
-    /// `undoToast`/`undoButton` never render after a GUI merge (verified live:
-    /// `undoButton` did not appear in the full 8 s toast-lifetime window after
-    /// confirming a merge). The smoke checklist (`docs/release-smoke-test.md`,
-    /// "Speaker merge … the undo toast (auto-dismisses after ~8 s)") and PT-R44
-    /// specify this toast, so this is a **product gap, not a test defect** — the
-    /// E2E layer catching exactly the kind of missing wiring it exists to find.
-    ///
-    /// Gate condition: un-gate (delete the `XCTSkipIf`) once `merge` shows an
-    /// undo toast whose action runs `unmerge`; the body below then drives the
-    /// full round-trip (toast → restore library + transcript, unmerge cause
-    /// before its rewrite effect).
+    /// PT-P7-E3-T4 second AC — the undo round-trip. Now that
+    /// `SpeakerEditorViewModel.merge` surfaces an undo toast whose action runs
+    /// `unmerge` (PT-R32b; mirroring `delete`/`delist`), the full round-trip is
+    /// exercised end to end: confirm the merge, assert the `undoButton` renders
+    /// in the ~8 s toast window, click it, and verify it restores both the
+    /// library (Carol's row returns) and the transcript (recording 2 rewritten
+    /// back from Alice to Carol), with `speaker_unmerged` logged before its
+    /// paired `final_md_rewritten` (Hard Invariant #8). This matches the smoke
+    /// checklist (`docs/release-smoke-test.md`, "Speaker merge … the undo toast
+    /// … restores both the library and the transcripts").
     func testMergeUndoRoundTripRestoresLibraryAndTranscript() throws {
-        try XCTSkipIf(true,
-            "Gate: the GUI merge flow presents no undo toast — "
-            + "SpeakerEditorViewModel.merge does not call showToast and unmerge "
-            + "is unwired in the GUI (PT-P7-E3-T4 finding vs. the release smoke "
-            + "checklist / PT-R44). Un-gate when the merge undo toast is wired.")
-
         try openSpeakers()
         let aliceId = try XCTUnwrap(seed.speakerIds["Alice"], "Alice not seeded")
         let carolId = try XCTUnwrap(seed.speakerIds["Carol"], "Carol not seeded")

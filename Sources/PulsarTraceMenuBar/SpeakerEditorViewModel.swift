@@ -147,12 +147,26 @@ public final class SpeakerEditorViewModel {
     // MARK: - Merge
 
     /// Merge `otherId` into `primaryId` and rewrite the merged speaker's past
-    /// `final.md` files (PT-R44, PT-P1-D16).
+    /// `final.md` files (PT-R44, PT-P1-D16). Offers an undo toast whose action
+    /// reverses the merge (restores the merged-away speaker and its labels).
     public func merge(primaryId: String, otherId: String) async {
+        // Capture both names before the merge: the merged-away speaker
+        // (`otherId`) is soft-deleted by the merge, so it is no longer in
+        // `liveSpeakers` once `withRewrite` reloads.
+        let otherName = liveSpeakers.first { $0.id == otherId }?.name ?? "speaker"
+        let primaryName = liveSpeakers.first { $0.id == primaryId }?.name ?? "speaker"
         await withRewrite {
             _ = try await self.service.merge(
                 primaryId: primaryId, otherId: otherId,
                 outputFolderRoots: self.outputRoots())
+        }
+        if lastError == nil {
+            // PT-R32b: the destructive merge must be recoverable within the
+            // undo window — mirror delete/delist and surface an undo toast.
+            showToast(UndoToast(message: "Merged \(otherName) into \(primaryName)") {
+                [weak self] in
+                await self?.unmerge(primaryId: primaryId, otherId: otherId)
+            })
         }
     }
 
