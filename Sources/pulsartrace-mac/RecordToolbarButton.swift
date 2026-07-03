@@ -17,6 +17,15 @@ struct RecordToolbarButton: View {
     @Environment(AppNavigation.self) private var navigation
 
     var body: some View {
+        control
+            // PT-P7-R3: one identifier across every visual state
+            // (Record / Starting… / Stop / disabled), deliberately distinct
+            // from the panel's `recordToggle` so a query never matches across
+            // surfaces when the panel and window are both open.
+            .accessibilityIdentifier(A11yID.Window.recordToolbar)
+    }
+
+    @ViewBuilder private var control: some View {
         switch recording.status {
         case .idle:
             Button(action: startFromButton) {

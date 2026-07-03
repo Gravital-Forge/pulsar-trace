@@ -25,6 +25,9 @@ struct MenuBarMenuView: View {
                 .lineLimit(2)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
+                // PT-P7-R3: the always-present status/progress line — the
+                // E2E suite reads recording + refine progress off this label.
+                .accessibilityIdentifier(A11yID.Menubar.progressLabel)
 
             // A determinate bar under the status line while a refinement is
             // running — same data the "Refining N% · Stage" text reads, just
@@ -52,14 +55,23 @@ struct MenuBarMenuView: View {
 
             menuDivider
 
-            menuButton("Recordings…") { open(WindowID.main, section: .recordings) }
-            menuButton("Speakers…") { open(WindowID.main, section: .speakers) }
-            menuButton("Settings…") { open(WindowID.main, section: .settings) }
+            menuButton(
+                "Recordings…", identifier: A11yID.Menubar.openMainWindow
+            ) { open(WindowID.main, section: .recordings) }
+            menuButton(
+                "Speakers…", identifier: A11yID.Menubar.openSpeakers
+            ) { open(WindowID.main, section: .speakers) }
+            menuButton(
+                "Settings…", identifier: A11yID.Menubar.openSettings
+            ) { open(WindowID.main, section: .settings) }
 
             menuDivider
 
             // ⌘Q works while the panel is open (the panel is the key window).
-            menuButton("Quit PulsarTrace", shortcut: KeyboardShortcut("q")) {
+            menuButton(
+                "Quit PulsarTrace", identifier: A11yID.Menubar.quit,
+                shortcut: KeyboardShortcut("q")
+            ) {
                 NSApplication.shared.terminate(nil)
             }
         }
@@ -69,6 +81,9 @@ struct MenuBarMenuView: View {
         // below it slide smoothly instead of snapping when a refinement
         // starts or finishes while the panel is open.
         .animation(.default, value: runningProgress != nil)
+        // PT-P7-R3: the panel's root container — the E2E suite scopes every
+        // menubar query to this identifier.
+        .accessibilityIdentifier(A11yID.Menubar.panel)
     }
 
     /// Start/stop plus the state-specific actions (live transcript, crash
@@ -76,25 +91,46 @@ struct MenuBarMenuView: View {
     @ViewBuilder private var recordControls: some View {
         switch recording.status {
         case .idle:
-            menuButton("Start Recording", hint: hotkeyHint) {
+            // One identifier (`recordToggle`) across Start/Starting/Stop so
+            // the record control is locatable in every state (PT-P7-R3).
+            menuButton(
+                "Start Recording", identifier: A11yID.Menubar.recordToggle,
+                hint: hotkeyHint
+            ) {
                 Task { await recording.startRecording() }
             }
         case .launching:
-            menuButton("Starting…", enabled: false) {}
+            menuButton(
+                "Starting…", identifier: A11yID.Menubar.recordToggle,
+                enabled: false
+            ) {}
         case .recording:
-            menuButton("Stop Recording", hint: hotkeyHint) {
+            menuButton(
+                "Stop Recording", identifier: A11yID.Menubar.recordToggle,
+                hint: hotkeyHint
+            ) {
                 Task { await recording.stopRecording() }
             }
-            menuButton("Show Live Transcript…") {
+            menuButton(
+                "Show Live Transcript…",
+                identifier: A11yID.Menubar.openLiveTranscript
+            ) {
                 open(WindowID.liveTranscript)
             }
         case .crashed:
-            menuButton("Recover Transcript") {
+            menuButton(
+                "Recover Transcript",
+                identifier: A11yID.Menubar.recoverTranscript
+            ) {
                 Task { await recording.recoverFromCrash() }
             }
-            menuButton("Dismiss") { recording.dismissCrash() }
+            menuButton("Dismiss", identifier: A11yID.Menubar.dismiss) {
+                recording.dismissCrash()
+            }
         case .error:
-            menuButton("Dismiss") { recording.dismissCrash() }
+            menuButton("Dismiss", identifier: A11yID.Menubar.dismiss) {
+                recording.dismissCrash()
+            }
         }
     }
 
@@ -102,9 +138,12 @@ struct MenuBarMenuView: View {
     ///
     /// `hint` renders trailing secondary text (the global-hotkey glyphs on
     /// Start/Stop); `shortcut` registers a local keyboard shortcut for the
-    /// row (⌘Q on Quit).
+    /// row (⌘Q on Quit). `identifier` is the row's stable a11y id (PT-P7-R3)
+    /// — required so a newly added row must mint a constant in `A11yID`
+    /// before it can be driven by the end-to-end suite.
     private func menuButton(
         _ title: String,
+        identifier: String,
         hint: String? = nil,
         shortcut: KeyboardShortcut? = nil,
         enabled: Bool = true,
@@ -124,6 +163,7 @@ struct MenuBarMenuView: View {
         .buttonStyle(MenuRowButtonStyle())
         .keyboardShortcut(shortcut)
         .disabled(!enabled)
+        .accessibilityIdentifier(identifier)  // PT-P7-R3
     }
 
     /// The configured global hotkey as glyphs (e.g. ⇧⌘R) for the Start/Stop
