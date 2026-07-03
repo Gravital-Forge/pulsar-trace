@@ -88,12 +88,25 @@ final class RecordFlowTests: XCTestCase {
                              excluding: SeededHome.recordingFolders)
         }
         let liveURL = newFolder.appendingPathComponent(RecordingFolder.FileName.live)
+        // Refinement MOVES live.md → `.live.md.bak` when it writes final.md
+        // (TranscriptAssembly.writeFinalMarkdown does `moveItem(liveURL,
+        // liveBackup)` at final-write time). So make the live-pass probes
+        // terminal-state aware: the backup's existence proves the live pass
+        // completed and was superseded. Without this, a fast warm run (rename
+        // before the existence poll), a rename landing mid-poll (size(of:)
+        // throwing), or a cold-ANE burst-then-rename (never observed "growing")
+        // each read as a false timeout.
+        let liveBak = newFolder.appendingPathComponent(RecordingFolder.FileName.liveBackup)
         _ = try poll(timeout: 180, message: "live.md") {
-            FileManager.default.fileExists(atPath: liveURL.path) ? true : nil
+            FileManager.default.fileExists(atPath: liveURL.path)
+                || FileManager.default.fileExists(atPath: liveBak.path) ? true : nil
         }
-        let sizeA = try size(of: liveURL)
+        let sizeA = (try? size(of: liveURL)) ?? 0
         _ = try poll(timeout: 90, message: "live.md growth") {
-            (try size(of: liveURL)) > sizeA ? true : nil
+            // Superseded by final — the live pass ran; event order below proves it.
+            if FileManager.default.fileExists(atPath: liveBak.path) { return true }
+            guard let s = try? size(of: liveURL) else { return nil }  // mid-rename window
+            return s > sizeA ? true : nil
         }
 
         // No stop click — the engine self-exits at fixture EOF (~16 s of paired
@@ -128,74 +141,5 @@ final class RecordFlowTests: XCTestCase {
                           "live-start did not precede refinement-start")
         XCTAssertLessThan(refineStarted, refineCompleted,
                           "refinement-start did not precede refinement-completion")
-    }
-
-    // MARK: - Helpers
-
-    private struct PollTimeout: Error { let message: String }
-
-    /// Poll `probe` until it returns a non-nil value or `timeout` elapses,
-    /// failing (and throwing) on timeout so the test stops at the first
-    /// unmet precondition rather than cascading.
-    @discardableResult
-    private func poll<T>(
-        timeout: TimeInterval, message: String, _ probe: () throws -> T?
-    ) throws -> T {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let value = try probe() { return value }
-            usleep(200_000)
-        }
-        XCTFail("timed out after \(Int(timeout))s waiting for \(message)")
-        throw PollTimeout(message: message)
-    }
-
-    /// The newest sub-directory of `root` whose basename is not in `excluding`,
-    /// or nil while none has appeared yet.
-    private func newestFolder(in root: URL, excluding: [String]) throws -> URL? {
-        let entries = try FileManager.default.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.creationDateKey, .isDirectoryKey],
-            options: [.skipsHiddenFiles])
-        let candidates = entries.filter {
-            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-                && !excluding.contains($0.lastPathComponent)
-        }
-        return candidates.max { a, b in
-            let da = (try? a.resourceValues(
-                forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-            let db = (try? b.resourceValues(
-                forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-            return da < db
-        }
-    }
-
-    /// The size in bytes of the file at `url`.
-    private func size(of url: URL) throws -> Int {
-        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-        return (attrs[.size] as? Int) ?? 0
-    }
-
-    /// The `type` of every event in the seeded home's events log, in file order
-    /// (files sorted by name, lines in order) — reads
-    /// `<home>/Library/Application Support/PulsarTrace/events/*.jsonl`.
-    private func eventTypes(home: URL) throws -> [String] {
-        let dir = AppPaths(home: home).eventsDirectory
-        let files = try FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "jsonl" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        var types: [String] = []
-        for file in files {
-            let text = try String(contentsOf: file, encoding: .utf8)
-            for line in text.split(separator: "\n") {
-                guard let data = line.data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data),
-                      let type = (object as? [String: Any])?["type"] as? String
-                else { continue }
-                types.append(type)
-            }
-        }
-        return types
     }
 }
