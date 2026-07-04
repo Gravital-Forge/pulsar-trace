@@ -177,6 +177,17 @@ final class RecordFlowTests: XCTestCase {
         XCTAssertTrue(final.hasPrefix("<!-- pulsartrace:final -->"),
                       "final.md missing the completion marker")
         XCTAssertTrue(final.contains("**["), "no utterance line in final.md")
+
+        // The live artifact (moved to .live.md.bak at final-write) carries the live
+        // marker from session start (PT-C11). Literal string matches the file's
+        // final-marker assert style; contract lives in
+        // TranscriptDocument.Marker.live (Sources/PulsarTraceEngine).
+        let liveText = try String(
+            contentsOf: FileManager.default.fileExists(atPath: liveBak.path) ? liveBak : liveURL,
+            encoding: .utf8)
+        XCTAssertTrue(liveText.hasPrefix("<!-- pulsartrace:live -->"),
+                      "live.md missing the live marker")
+
         let metadata = newFolder.appendingPathComponent(RecordingFolder.FileName.metadata)
         XCTAssertGreaterThan(try size(of: metadata), 0,
                              "metadata.json is empty")

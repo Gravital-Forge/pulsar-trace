@@ -63,7 +63,8 @@ the global hotkey, audio playback.
   and displays as ⌃⌥⇧⌘ glyphs; Clear removes it. Without relaunching, the hotkey starts and stops a
   recording from another app in the foreground.
 - [ ] Settings: change mic, model, output folder, system-audio toggle — all persist across an app
-  relaunch. *(automated: PulsarTraceUITests/SettingsPersistenceTests)*
+  relaunch. *(automated: PulsarTraceUITests/SettingsPersistenceTests — system-audio toggle + output
+  folder; mic/model persistence stays manual)*
 - [ ] With no output folder ever chosen, the first recording lands in `~/Documents/PulsarTrace`
   (created automatically) instead of failing; the mic + screen-recording permission prompts appear
   *before* the recording starts, not mid-start.
@@ -72,7 +73,8 @@ the global hotkey, audio playback.
   stays manual)*
 - [ ] Stop → the refine pass runs — the dropdown shows a determinate progress bar with the stage
   name — and the recordings list picks up the new `final.md`. *(automated:
-  PulsarTraceUITests/RecordFlowTests)*
+  PulsarTraceUITests/RecordFlowTests — final.md content + event order; progress bar and list pickup
+  stay manual)*
 - [ ] (bundled `.app` only) When the refine completes, a "Transcript ready — N speakers, M min"
   notification arrives; a failed refine posts a failure notification, and the Refinements pane
   offers Retry.
@@ -82,11 +84,12 @@ the global hotkey, audio playback.
   states stay manual)*
 - [ ] Speaker rename in the editor rewrites every past `final.md`; the editor disables with a
   toolbar spinner during the rewrite; a `.bak` sits next to each rewritten file. *(automated:
-  PulsarTraceUITests/SpeakerFlowTests)*
+  PulsarTraceUITests/SpeakerFlowTests — rewrite + .bak + event order; toolbar spinner stays manual)*
 - [ ] Speaker merge: the confirmation states how many recordings will be rewritten; after
   confirming, the merged speaker is soft-deleted, past `final.md` files update; the undo toast
   (auto-dismisses after ~8 s) restores both the library and the transcripts. *(automated:
-  PulsarTraceUITests/SpeakerFlowTests)*
+  PulsarTraceUITests/SpeakerFlowTests — rewrite, undo round-trip; auto-dismiss timing stays
+  manual)*
 - [ ] "Don't recognize this speaker": the confirmation states the rewrite count; affected `final.md`
   lines become "Unrecognized"; undoable for 30 days.
 - [ ] Speaker delete remains one-click — no confirmation, an undo toast.

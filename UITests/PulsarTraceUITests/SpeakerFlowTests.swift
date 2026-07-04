@@ -388,6 +388,22 @@ final class SpeakerFlowTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 10),
                       "merge confirmation button did not surface")
+
+        // The dialog states the rewrite count before the user commits
+        // (SpeakerEditorView message: "…N recording(s) will be rewritten."). Carol
+        // appears in exactly one seeded recording, so the copy reads "1 recording".
+        // Assert on that substring, not the full copy, to stay robust to wording:
+        // the LOCATOR for the button (mergeConfirm) is what pins the affordance;
+        // this is a content-only check. Scope to the whole app rather than the
+        // dialog element — a confirmationDialog's message renders as a sibling of
+        // the button across macOS AX shapes, so an app-level staticText match on
+        // its own label is the robust reach (`.matching`, not `.containing`, which
+        // filters by descendants).
+        let countText = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "1 recording")).firstMatch
+        XCTAssertTrue(countText.waitForExistence(timeout: 5),
+                      "merge confirmation did not state the rewrite count")
+
         confirm.click()
     }
 }
