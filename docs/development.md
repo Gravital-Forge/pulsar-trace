@@ -54,3 +54,30 @@ existing model cache instead of re-downloading.
 
 Element lookup is by accessibility identifier only; the convention and the full identifier list live
 in `Sources/PulsarTraceMenuBar/A11yID.swift`.
+
+### Automation-mode authorization (dev session)
+
+macOS gates every XCUITest run behind "Automation Mode". `testmanagerd` enables it per test
+session, and the enable sometimes pops a SecurityAgent password dialog ("XCTest is trying to Enable
+UI Automation"). The grant persists for the login session but is invalidated by a screen lock (and
+by logout) — after which the next unattended run stalls for ~60 s and fails with
+`Failed to initialize for UI testing: … Timed out while enabling automation mode.`
+
+To keep suites running unattended, front that prompt at a moment of your choosing rather than letting
+it ambush a run:
+
+```
+scripts/start-ui-session.sh
+```
+
+Run it once at the start of a dev session, and again after every screen lock. It runs the 15-second
+launch smoke; if the password dialog appears, enter your login password. It then prints one verdict:
+`✅ Automation session ACTIVE` (suites can now run unattended) or `❌ Authorization NOT granted`
+(re-run and answer the dialog).
+
+If a normal `scripts/run-ui-tests.sh` run hits the timeout signature above, it prints a boxed hint
+telling you to run `scripts/start-ui-session.sh`, enter the password, then retry. Both scripts write
+a per-run log under `.build/ui-test-results/`.
+
+This is a local-desktop concern only: hosted CI runners pre-authorize automation mode, so the
+ceremony is never needed there.
