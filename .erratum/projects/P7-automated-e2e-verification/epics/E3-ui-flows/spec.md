@@ -1,6 +1,6 @@
 # PT-P7-E3 · UI End-to-End Flows — Specification
 
-**Status:** Open · **Opened:** 2026-07-02
+**Status:** Frozen · **Opened:** 2026-07-02 · **Closed:** 2026-07-04
 
 ## Intent
 

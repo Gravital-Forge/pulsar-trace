@@ -169,3 +169,44 @@ Keeping the check in the floor would force the floor to run a fixture recording 
 model cache — making the floor model-dependent, which the hosted-CI floor tier (PT-P7-R6) must not
 be. The record flow already drives a fixture recording, so asserting the window there costs one
 extra click and keeps the floor fast, model-free, and honest about what "idle breadth" can reach.
+
+### PT-P7-D9 · Product gaps the E2E suite surfaces get fixed in-branch when an epic AC depends on them
+
+*2026-07-04*
+
+**Decision:** When an E3 flow test exposed shipped GUI behavior contradicting the product layer —
+the merge flow presented no undo toast (`SpeakerEditorViewModel.merge` never called `showToast`;
+`unmerge` was reachable only from the MCP surface), contradicting PT-R32b and the smoke checklist —
+the fix was made in-branch, mirroring the existing delete/delist toast pattern, with unit tests
+shipped in the same commit. The same round fixed the dead success gate the pattern carried in all
+three destructive flows (`reload()` clears `lastError`, so every `lastError == nil` toast gate
+passed even for failed edits — a failed merge/delete/delist showed a phantom undo toast and
+swallowed its error). The split flow's identical missing-toast gap is deliberately NOT fixed: no E3
+test covers split, tests ship with the code that creates them, and it is recorded as a known issue
+for a follow-up instead.
+
+**Because:** the epic's acceptance criteria (undo-toast round-trip) were unreachable against the
+shipped app, and the alternative — weakening the AC or gating the test indefinitely — would paper
+over a real defect the verification layer exists to catch. Fixing at the source with the sibling
+pattern and unit coverage is the smallest honest change; expanding to split without a test would
+ship an unverified behavior change.
+
+### PT-P7-D10 · macOS automation-mode authorization is an explicit dev-session ceremony, not a blanket grant
+
+*2026-07-04*
+
+**Decision:** Local UI-suite runs treat macOS Automation Mode as an engineered precondition:
+`scripts/start-ui-session.sh` fronts the "XCTest is trying to Enable UI Automation" password prompt
+at a chosen moment by running the launch smoke, and prints one unambiguous verdict;
+`scripts/run-ui-tests.sh` logs every run to a file and, on the 60-second
+`Timed out while enabling automation mode` failure, prints an actionable hint instead of a bare exit
+65\. The blanket local enable (`automationmodetool enable-automationmode-without-authentication`,
+which hosted CI images pre-run — PT-P7-D1) was considered and declined by the user for the dev
+desktop.
+
+**Because:** the authorization is granted per login session and empirically invalidated by screen
+lock, with no `authd` right behind it to pre-grant selectively — so the choice was blanket
+convenience versus machine security posture, and the user chose posture. An automation suite that
+can silently stall on a security dialog must instead fail fast and legibly, and the recurring prompt
+is an operating fact of the platform that the runbook (PT-P7-R8) and CI notes (PT-P7-R6) carry
+rather than a nuisance to click through.
