@@ -392,15 +392,20 @@ final class SpeakerFlowTests: XCTestCase {
         // The dialog states the rewrite count before the user commits
         // (SpeakerEditorView message: "…N recording(s) will be rewritten."). Carol
         // appears in exactly one seeded recording, so the copy reads "1 recording".
-        // Assert on that substring, not the full copy, to stay robust to wording:
-        // the LOCATOR for the button (mergeConfirm) is what pins the affordance;
-        // this is a content-only check. Scope to the whole app rather than the
-        // dialog element — a confirmationDialog's message renders as a sibling of
-        // the button across macOS AX shapes, so an app-level staticText match on
-        // its own label is the robust reach (`.matching`, not `.containing`, which
-        // filters by descendants).
-        let countText = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "1 recording")).firstMatch
+        // Assert on that count-bearing substring, not the full copy, to stay robust
+        // to wording; the LOCATOR for the button (mergeConfirm) is what pins the
+        // affordance, this is a content-only check.
+        //
+        // Empirically (macOS 26.5): the SwiftUI confirmationDialog surfaces as an AX
+        // Sheet (label 'alert') attached to the Speakers window, and its message is
+        // a StaticText sibling of the confirm button whose text lives in the `value`
+        // attribute — the `label` is EMPTY. So match value-OR-label (mirroring
+        // `fieldShows`) and scope to the sheet that contains the button, rather than
+        // an app-level `label CONTAINS` reach that never sees the value.
+        let dialog = app.sheets.firstMatch
+        let countText = dialog.staticTexts.matching(
+            NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@",
+                        "1 recording", "1 recording")).firstMatch
         XCTAssertTrue(countText.waitForExistence(timeout: 5),
                       "merge confirmation did not state the rewrite count")
 
