@@ -69,3 +69,35 @@ jobs:
           name: ui-floor-xcresult
           path: .build/ui-test-results
           if-no-files-found: ignore
+
+  ui-flows:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Restore model cache
+        id: models
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/PulsarTrace/models
+          # Bump the suffix when the pinned model set changes
+          # (FluidAudio/WhisperKit versions in Package.swift).
+          key: pt-models-${{ runner.os }}-v1
+      - name: Prime models (cold cache only)
+        if: steps.models.outputs.cache-hit != 'true'
+        run: |
+          swift test --filter Parakeet
+          swift test --filter WhisperKitRefine
+      - name: Record flow (fixture capture; CPU/GPU fallback — no ANE in VM)
+        run: >-
+          scripts/run-ui-tests.sh
+          -only-testing:PulsarTraceUITests/RecordFlowTests
+      - name: Upload result bundle
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-flows-xcresult
+          path: .build/ui-test-results
+          if-no-files-found: ignore
