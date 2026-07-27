@@ -13,14 +13,21 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Pin the toolchain to the dev host's (Xcode 26.6 / Swift 6.3.3): the macos-26
+# image's default. An image update that drops it fails loudly here rather than
+# silently building with a different compiler (macos-15's default Swift 6.1
+# rejects code the project's Swift 6.3 accepts).
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app
+
 jobs:
   build-and-test:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - name: Swift version
-        run: swift --version
+      - name: Toolchain versions
+        run: swift --version && xcodebuild -version
       - name: Build
         run: swift build
       # One bare invocation per hermetic filter — never the broad
@@ -45,7 +52,7 @@ jobs:
         run: swift test --filter MenuBarTests
 
   ui-floor:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
