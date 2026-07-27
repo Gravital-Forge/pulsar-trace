@@ -67,7 +67,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ui-floor-xcresult
-          path: .build/ui-test-results
+          path: |
+            .build/ui-test-results
+            .build/ui-test-diagnostics
           if-no-files-found: ignore
 
   ui-flows:
@@ -99,7 +101,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ui-flows-xcresult
-          path: .build/ui-test-results
+          path: |
+            .build/ui-test-results
+            .build/ui-test-diagnostics
           if-no-files-found: ignore
 
   # Fact-gathering only (PT-P7-D4): what does this VM actually support?
