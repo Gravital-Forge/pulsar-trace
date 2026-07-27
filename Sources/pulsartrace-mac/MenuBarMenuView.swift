@@ -16,6 +16,7 @@ struct MenuBarMenuView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(MenuBarSettings.self) private var settings
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -257,6 +258,11 @@ struct MenuBarMenuView: View {
     private func open(_ id: String, section: AppSection? = nil) {
         if let section { navigation.section = section }
         openWindow(id: id)
+        // Dismiss the panel like a menu after a pick (PT-P7-D9): for a human
+        // the next click closes it as a side effect, but nothing ever "clicks
+        // outside" under accessibility driving, and the lingering panel can
+        // cover the very window it opened on small displays.
+        dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NSApp.activate()
             if let window = NSApp.windows.first(
