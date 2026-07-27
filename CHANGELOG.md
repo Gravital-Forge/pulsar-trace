@@ -10,6 +10,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 
 ### Added
 
+- An opt-in, local **MCP server** lets an AI agent (Claude Code, Codex, …) drive PulsarTrace directly: list recordings and speakers, read the transcript/audio file paths, manage speaker identity (rename / merge / split and their inverses, delist, delete and their inverses), and manage recordings (set a title, request a re-refinement), with a self-describing `manual` tool. It is disabled by default and enabled in Settings, binds the loopback interface only (default port `8276`), and requires a bearer token on every request — once running, Settings shows the live status, the loopback endpoint, and a copyable token (agent-agnostic; client-specific setup is in the README), and offers regenerate-token and restart actions. Edits made over MCP drive the same retroactive `final.md` rewrite as the in-app editor and are refused while a recording is in progress; the surface never changes settings, controls capture, or transits transcript/audio content (agents read it from the returned file paths).
 - The Recordings pane is now a master–detail split: the transcript of the selected recording — including the one being recorded right now, streaming live — renders directly in the window. Recordings are grouped by day (Today / Yesterday / weekday / date), filterable by title, speaker, or date, renameable (double-click the title or right-click → Rename), and can be moved to the Trash (⌫ or context menu). The split divider position persists across launches.
 - A Record/Stop button in the window toolbar on every pane (with a ticking elapsed timer while recording) and a "Start Recording" call-to-action in the empty recordings list. Pressing it jumps to the live transcript; recordings started from the global hotkey or menubar deliberately do not move your selection.
 - Find-in-transcript: ⌘F (or the Find button) opens the system find bar in any transcript view, including the detached live window.
@@ -20,6 +21,7 @@ There are no tagged releases yet; everything to date is under Unreleased.
 
 ### Changed
 
+- `pulsartrace speakers rename` / `merge` / `delete` now retroactively rewrite the affected past `final.md` transcripts, instead of mutating the speaker library while leaving old transcripts stale. The CLI, the menubar editor, and the MCP server now share one speaker-edit path, so an edit produces identical file and event effects whoever triggers it; a repeatable `--output-folder <path>` flag points the rewrite at recording folders outside the default `~/Documents/PulsarTrace`.
 - Speaker diarization now runs fully in-process on the Apple Neural Engine
   (FluidAudio's CoreML port of pyannote community-1) — the embedded Python
   environment, Hugging Face token, and `python/build-venv.sh` setup step are

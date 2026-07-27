@@ -516,3 +516,81 @@ The product embeds no closed-source dependency.
 
 The transcript files and the event log are public contracts; a breaking change to either bumps the
 major version and ships a migration note.
+
+## Agent control surface
+
+### PT-R115 · Technical — In-app, opt-in MCP server with configurable port
+
+The menubar app hosts an MCP server in its own process, disabled by default and running only while
+enabled in Settings; when enabled it binds `127.0.0.1` on a user-configurable port (default `8276`).
+A port already in use is surfaced in Settings without auto-selecting a different port, so a client's
+saved endpoint never drifts.
+
+### PT-R116 · Constraint — Loopback-only, token-authenticated agent access
+
+The server is reachable only on the local loopback interface and requires a bearer token on every
+request. The token is generated on first enable, stored in an owner-only file, and persists across
+launches; Settings surfaces it as a paste-ready client-configuration snippet, and a manual action
+regenerates it. *Acceptance:* a request without the valid token is rejected; the token file is
+owner-only (0600); regenerating it invalidates the previous token.
+
+### PT-R117 · Functional — Recording query tools return metadata and paths, never content
+
+Tools list recordings — with since / until and live / refined / all filters — and fetch one
+recording's metadata by id, returning identity, start time, duration, language, refinement state, a
+live-in-progress flag, the speakers present, and filesystem paths to the transcript and audio files.
+No query tool returns transcript or audio content.
+
+### PT-R118 · Functional — Speaker query tools
+
+Tools list the live speaker library (each speaker's id, name, appearance count, and last-seen) and
+fetch a single speaker together with the recordings in which it appears.
+
+### PT-R119 · Functional — Speaker-management tools with retroactive rewrite
+
+Thin one-to-one tools rename, merge, split, the inverses unmerge and unsplit, and delete / delist
+with their inverses. Each edit drives the same retroactive rewrite of the affected `final.md` files
+and emits the same paired events as the in-app editor (PT-R90); the live transcript is never
+rewritten. A library mutation requested while a recording is in progress is refused, keeping the
+library read-only during capture (PT-R32). *Acceptance:* an MCP rename rewrites the same `final.md`
+files and emits the same events as a UI rename; a mutation during capture returns a busy error and
+leaves the library unchanged.
+
+### PT-R120 · Functional — Recording-management tools
+
+Tools set a recording's title and request a (re-)refinement of a recording. The refine request
+enqueues a job onto the refinement queue and returns immediately rather than blocking on the pass.
+
+### PT-R121 · Functional — Event query tool
+
+A tool returns recent events, with optional since and type filters, so an agent can confirm the
+effect of an operation and observe recording lifecycle without knowing the event log's on-disk
+layout.
+
+### PT-R122 · Functional — Self-describing discovery and operations manual
+
+Every tool carries a description and an input schema discoverable through the tool list, and a manual
+tool returns a standalone operations manual covering the data model and the semantics and
+reversibility of each operation. The manual describes PulsarTrace on its own terms and names no
+external program, service, or workflow.
+
+### PT-R123 · Technical — Shared speaker-edit orchestration service
+
+The library mutation, the retroactive `final.md` rewrite, and the paired-event emission are one
+reusable engine service. The menubar editor, the MCP server, and the CLI `speakers` command all
+invoke it, replacing the orchestration previously inlined in the menubar view model; the service
+serializes the whole sequence process-wide so concurrent edits cannot interleave a transcript
+rewrite. The CLI thereby gains the retroactive rewrite it previously skipped.
+
+### PT-R124 · Constraint — The agent surface excludes settings, capture control, and content
+
+The MCP surface manages speaker identity and recordings and observes state. It does not change
+settings or model selection, does not start or stop capture, and does not transit audio or transcript
+content; content is reached only by the filesystem paths the query tools return.
+
+### PT-R125 · Functional — Server health, supervision, and manual restart
+
+While enabled, the in-process server is supervised: a listener that fails is rebuilt automatically
+with bounded backoff, and a bind that keeps failing stops and surfaces the error rather than rotating
+to another port. The server answers an unauthenticated loopback health probe reporting its status,
+and Settings shows the live server status and offers a manual restart.

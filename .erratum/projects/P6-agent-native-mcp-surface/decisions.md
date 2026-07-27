@@ -1,0 +1,219 @@
+# PT-P6 · Agent-Native MCP Surface — Decision Log
+
+**Status:** Frozen · **Closed:** 2026-06-29
+
+The reasoning behind the agent-native MCP surface, recorded as each choice was taken. Append-only;
+frozen at project close.
+
+## Decisions
+
+### PT-P6-D1 · The MCP server is hosted in-process by the menubar app
+
+*2026-06-25*
+
+**Decision:** The MCP server runs inside the `pulsartrace-mac` menubar app, started at app launch
+when enabled and stopped on quit, rather than as a standalone CLI subprocess or daemon. Its
+tool-handling core lives in a testable, non-SwiftUI library target; the menubar executable owns its
+lifecycle.
+
+**Because:** the menubar app is already the single long-running owner of the speaker library.
+Hosting the server in that same process means an agent edit and a UI edit are literally the same
+code path over the same `SpeakerLibrary` actor — there is no second writer, no stale in-memory
+cache, no duplicated event pairing, and no race between two processes rewriting the same `final.md`.
+A separate CLI-hosted server would have reintroduced every one of those cross-process hazards. The
+cost — the app must be running for the surface to be reachable — is acceptable and was accepted
+explicitly.
+
+### PT-P6-D2 · Transport is the official MCP Swift SDK over a hand-rolled loopback listener
+
+*2026-06-25*
+
+**Decision:** The protocol layer is the official `modelcontextprotocol/swift-sdk` using its
+`StatelessHTTPServerTransport` (plain `application/json` per request, no SSE). The SDK ships no HTTP
+listener, so the loopback front end is a small hand-rolled `Network.framework` `NWListener` that
+parses HTTP/1.1 and feeds request bodies into the transport. No general HTTP-server dependency
+(FlyingFox, Hummingbird, Vapor) is added.
+
+**Because:** the SDK gives spec-correct JSON-RPC framing, capability negotiation, and the localhost
+origin / bearer-token validators for free, and tracks the current MCP spec — but it is a
+request/response adapter, not a socket. A tool-only server has no server-initiated messages, so the
+stateless, no-SSE transport is sufficient and the simplest correct choice. For the listener, the SDK
+ships none, so the loopback front end is owned directly. `Network.framework`'s `NWListener` is the
+right tool for a single loopback TCP/HTTP endpoint: it yields connection objects and receive
+handlers (no hand-rolled `accept` thread), surfaces bound-state transitions the supervisor reads
+(PT-P6-D10), and stays TLS-ready for the deferred LAN move (PT-P6-D9). This is the project's *first*
+`Network.framework` use — the existing socket code (the capture sockets, the socket source, peer
+authentication) is raw POSIX Unix-domain IPC that does not transfer to a TCP HTTP listener, so it
+informs idiom (owner-only checks, teardown discipline) rather than being reused. Owning one loopback
+POST endpoint plus a `GET /healthz` and a 405 on `GET /mcp` is a contained, testable amount of
+HTTP/1.1 framing, and it avoids stacking a second pre-1.0 dependency on top of the SDK. The SDK is
+dual Apache-2.0 / MIT, satisfying PT-R88 (open-source dependencies only). FlyingFox remains a drop-in
+swap if owning the HTTP framing proves not worth it.
+
+*(Rationale corrected 2026-06-26 during second-round planning: the original text claimed the project
+already owned `Network.framework` code; it does not — the in-repo socket idiom is POSIX. The
+`NWListener` decision stands on its own merits as stated above.)*
+
+### PT-P6-D3 · The server is disabled by default, on a configurable fixed port with no auto-rotation
+
+*2026-06-25*
+
+**Decision:** The server ships disabled and runs only when the user enables it in Settings. When
+enabled it binds `127.0.0.1` on a configurable port whose default is `8276`. A port conflict is
+surfaced in Settings and leaves the server stopped; the app never silently selects a different port.
+
+**Because:** an opt-in default means no listening surface exists on a user's machine unless they ask
+for one — the right privacy posture for a local-only product, and the reason the feature does not
+weaken PT-R87 for users who never turn it on. `8276` is an uncommon high port chosen to avoid the
+usual development, database, and local-model defaults (3000, 5000, 8000, 8080, 8443, 5432, 6379,
+11434, 1234, 27017, …); making it configurable lets a user move it if it still collides.
+Auto-rotating to a free port on conflict was rejected because a moving port desynchronises whatever
+endpoint the agent's client config points at; a stable, explicitly-chosen port keeps that
+configuration valid.
+
+### PT-P6-D4 · Access is gated by a persistent bearer token over loopback only
+
+*2026-06-25*
+
+**Decision:** Every request must present a bearer token in the `Authorization` header. The token is
+generated when the server is first enabled, persisted to an owner-only (0600) file under the
+app-support directory, and reused across launches; Settings surfaces it as a paste-ready
+client-configuration snippet (the server URL plus the `Authorization` header), and a manual action
+regenerates it. The token is validated on every request in addition to the SDK's localhost origin
+check, and the listener binds loopback only. The agent never fetches the token at runtime — the user
+copies it into the agent's MCP client once, and the client sends it automatically thereafter.
+
+**Because:** loopback restricts callers to local processes, but any local process is otherwise able
+to connect — and these tools rewrite the user's transcripts and mutate the speaker library, so
+silent access by an arbitrary local process is not acceptable. A static bearer token is the
+standard, low-friction guard for a local app-hosted MCP server and composes with the SDK's validator
+pipeline. The token is persistent rather than per-launch because an MCP client sends a fixed header
+from its saved configuration — a token that changed on every launch would break that configuration
+at each restart — while an owner-only persisted token already blocks other local processes, and the
+manual regenerate covers the case where the user wants to invalidate it. Storing the token
+owner-only and binding loopback keeps the feature inside the product's existing owner-only /
+local-only posture (PT-R98, PT-R100).
+
+### PT-P6-D5 · No MCP prompts; discovery is self-documenting tools plus a standalone manual
+
+*2026-06-25*
+
+**Decision:** The server exposes no MCP prompt templates. Capability discovery is the native
+`tools/list` surface — each tool richly described — augmented by a `manual` tool that returns an
+operations manual (data model, operation semantics, reversibility) sourced from one versioned
+Markdown file in the repo. The manual and the descriptions describe PulsarTrace on its own terms and
+reference no external program, service, or workflow.
+
+**Because:** MCP prompts are user-initiated, surfaced to a human as slash commands — the wrong shape
+for a surface whose goal is an agent operating autonomously with minimal human supervision. The
+agent should discover the system's capabilities and semantics itself and drive them directly.
+Keeping the manual free of any external integration keeps PulsarTrace a standalone application:
+workflow that spans PulsarTrace and other systems belongs to the connected agent, not baked into the
+product. Shipping the guidance with the server, versioned alongside it, means any connected agent
+gets it with no setup.
+
+### PT-P6-D6 · Speaker tools are thin and one-to-one, with full reversible-operation parity
+
+*2026-06-25*
+
+**Decision:** Each speaker operation maps to its own tool — rename, merge, split, unmerge, unsplit,
+delete, undelete, delist, undelist — rather than a higher-level "identify" tool that picks a
+primitive for the agent. The full inverse set is exposed, not just the forward operations.
+
+**Because:** thin primitives keep policy out of the product — the agent composes whatever
+higher-level behaviour it needs and PulsarTrace stays free of inference or workflow logic. Exposing
+the complete inverse set is the safety net for autonomous editing: an agent (or the user through it)
+can reverse any edit it makes, and every edit already emits an audited event, so an autonomous
+mutation is always both reversible and traceable.
+
+### PT-P6-D7 · The speaker-edit orchestration is extracted into a shared service and adopted by the CLI
+
+*2026-06-25*
+
+**Decision:** The library-edit + retroactive-rewrite + paired-event sequence is lifted out of
+`SpeakerEditorViewModel` into a reusable engine service injected with the library, the event writer,
+and the output-folder roots. The menubar editor, the MCP server, and the CLI `speakers` command all
+call it. The CLI's `speakers rename`/`merge`/etc. consequently gain the retroactive `final.md`
+rewrite they did not perform before.
+
+**Because:** the rewrite orchestration is the mechanism behind PT-R90, and it must produce identical
+file and event effects regardless of who triggers the edit — UI, agent, or CLI. The logic was
+verified to be pure data operations, not UI-coupled, so the lift is clean. Adopting it in the CLI
+removes a pre-existing inconsistency where a CLI rename left past transcripts stale, which
+contradicted the PT-R90 intent; one shared service is the natural place to fix it once.
+
+### PT-P6-D8 · Transcripts and audio are reached by filesystem path, not served over MCP
+
+*2026-06-25*
+
+**Decision:** No tool returns transcript or audio bytes. The query tools return metadata and the
+filesystem paths to `final.md`, `live.md`, and the audio files; the agent reads (and, for a live
+recording, tails) those paths directly. Tool names are explicit about this — the single-recording
+getter is `get_recording_meta`, not `get_recording`.
+
+**Because:** the filesystem is the native, efficient surface for large Markdown and audio, and these
+files are already owner-only local artifacts on a contract-stable layout — there is nothing MCP adds
+by copying their bytes through a tool result. Keeping content off the surface keeps the tools about
+control and metadata, and explicit naming makes the boundary unmistakable: a tool that says `meta`
+cannot be mistaken for one that returns the transcript.
+
+### PT-P6-D9 · LAN / off-device transport is out of scope, behind a transport-agnostic core
+
+*2026-06-25*
+
+**Decision:** Only the loopback transport ships. The tool registry and handlers are written
+independently of the transport, so binding a non-loopback address (with the stronger authentication
+that would require) is a later, isolated addition rather than a rewrite. No LAN binding, and no
+authentication beyond the loopback bearer token, is built in this project.
+
+**Because:** off-device reach is a real departure from the local-only posture and carries its own
+security design (binding policy, stronger auth, abuse limits) that is not worth taking on now.
+Writing the core transport-agnostically costs almost nothing and keeps that option cheap, so the
+project can stay local-only today without foreclosing a future LAN surface.
+
+### PT-P6-D10 · The in-process server is supervised, health-probed, and manually restartable
+
+*2026-06-26*
+
+**Decision:** The server is supervised inside the menubar process. A lightweight watcher observes
+the `NWListener` state and rebuilds a failed listener with bounded backoff, stopping with a surfaced
+error — not rotating ports — when a bind keeps failing. A small unauthenticated `/healthz` GET
+endpoint on the loopback reports status (distinct from the MCP endpoint, which still answers 405 on
+GET), and Settings polls it when opened to show running / down / port-in-use. Settings also offers a
+manual restart. Manual restart is the guaranteed floor; the supervisor and the health surface are
+layered on top of it.
+
+**Because:** the server is a task inside the menubar app, not a separate OS process, so the failure
+to guard against is a listener entering a failed or wedged state, not a process exit — if the app
+process dies there is nothing left in-process to restart it. `Network.framework` surfaces listener
+state, which makes automatic rebuild cheap and precise. An actual loopback `/healthz` probe proves
+the socket is truly accepting and so catches a wedged-but-not-failed listener that introspecting
+internal state would miss, which is why Settings probes rather than reads a flag. A manual restart
+is kept as the guaranteed recovery path even if supervision misses a case, and auto-rotation on
+repeated bind failure is excluded to stay consistent with PT-P6-D3 (a stable, explicitly chosen
+port).
+
+### PT-P6-D11 · The surface targets local-process MCP clients; VM-sandboxed and cloud agents are out of scope
+
+*2026-06-26*
+
+**Decision:** The loopback-plus-static-bearer surface targets MCP clients that run as a local
+process on the same machine and send a configured `Authorization` header. This was verified against
+Claude Code
+(`claude mcp add --transport http <name> http://127.0.0.1:<port>/mcp --header "Authorization: Bearer <token>"`)
+and the Codex CLI (`[mcp_servers.<name>]` with `url` plus
+`http_headers = { Authorization = "Bearer <token>" }` or `bearer_token_env_var`), both of which
+reach the loopback endpoint directly over plain HTTP. Agents that run in a sandboxed VM or in the
+cloud — Claude Cowork, Claude Code on the web, and claude.ai connectors — are out of scope for this
+project.
+
+**Because:** the design rests on two properties of the client: it originates the HTTP request from
+the user's own machine, so the host's `127.0.0.1` is reachable, and it can carry a static bearer
+token in a custom header. Local CLI and IDE agents have both, and verification confirmed Claude Code
+and Codex do exactly this — so the two agents the surface is built for work as specified. A
+VM-sandboxed agent fails the first property, because the VM's loopback is not the host's; Cowork
+additionally fails the second, because its connector-registry MCP model brokers authentication
+through OAuth and exposes no field for a static header; a fully cloud-hosted agent fails the first
+property structurally. Reaching any of these would take more than the deferred LAN transport — a
+host-reachable address and a different authentication model — so they are left out of scope rather
+than allowed to shape this project's loopback design.

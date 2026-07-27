@@ -47,6 +47,11 @@ public struct AppPaths: Sendable {
         applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
     }
 
+    /// The owner-only file holding the MCP server's bearer token (PT-R116).
+    public var mcpTokenURL: URL {
+        applicationSupport.appendingPathComponent("mcp-token", isDirectory: false)
+    }
+
     /// Directory for per-session Unix domain sockets. Lives under
     /// `$TMPDIR/PulsarTrace/` rather than `applicationSupport` because
     /// `sockaddr_un.sun_path` is hard-capped at 104 bytes on Darwin

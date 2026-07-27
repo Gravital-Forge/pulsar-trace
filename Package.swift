@@ -22,6 +22,9 @@ let package = Package(
         // release notes open.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.2"),
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", exact: "1.0.0"),
+        // Official MCP Swift SDK (PT-P6-D2). Pinned exact: pre-1.0, minor
+        // bumps carry breaking changes (the HTTP-server transports are recent).
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),
     ],
     targets: [
         // Core library: the engine, all AudioFrameSources, transcription
@@ -73,6 +76,23 @@ let package = Package(
             name: "PulsarTraceMenuBar",
             dependencies: ["PulsarTraceEngine", "PulsarTraceCapture"]
         ),
+        // The MCP server core (PT-P6-D1): tool registry + JSON-RPC handlers
+        // behind a hand-rolled loopback HTTP front end feeding the SDK's
+        // StatelessHTTPServerTransport. No SwiftUI — the menubar executable
+        // owns the lifecycle.
+        .target(
+            name: "PulsarTraceMCP",
+            dependencies: [
+                .product(name: "MCP", package: "swift-sdk"),
+                "PulsarTraceEngine",
+                // The read surface (PT-P6-R3) projects `RecordingEntry` DTOs;
+                // the live adapter (E5) reads the menubar's scanner + view model.
+                "PulsarTraceMenuBar",
+            ],
+            // The self-describing operations manual (PT-P6-R8, PT-P6-D5),
+            // bundled as a versioned resource the `manual` tool returns.
+            resources: [.copy("Resources/manual.md")]
+        ),
         // The thin SwiftUI executable — `MenuBarExtra` + `Settings`
         // scenes bound to `PulsarTraceMenuBar`'s ViewModels. No logic, no
         // unit tests; exercised only by manual smoke test (PT-P2-D9).
@@ -83,7 +103,7 @@ let package = Package(
         // engine objects.
         .executableTarget(
             name: "pulsartrace-mac",
-            dependencies: ["PulsarTraceMenuBar", "PulsarTraceEngine"]
+            dependencies: ["PulsarTraceMenuBar", "PulsarTraceEngine", "PulsarTraceMCP"]
         ),
         // Layer 1: unit tests — pure logic, <5s, no devices.
         .testTarget(
@@ -119,6 +139,12 @@ let package = Package(
         .testTarget(
             name: "MenuBarTests",
             dependencies: ["PulsarTraceMenuBar"]
+        ),
+        // MCP server tests — auth, the loopback listener, and the SDK
+        // round-trip, against temp folders and ephemeral loopback ports.
+        .testTarget(
+            name: "MCPTests",
+            dependencies: ["PulsarTraceMCP"]
         ),
     ]
 )

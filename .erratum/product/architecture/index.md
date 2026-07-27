@@ -52,7 +52,8 @@ merge by timestamp, reconcile speakers, and write the final transcript atomicall
 sidecar. Owns recording-folder input dispatch and the atomic write-with-backup process. Offline
 decoding runs per voice-activity region (escaping silence-repetition and preserving cross-turn
 order) with a phrase-plus-confidence hallucination gate. An in-process refiner shares this path with
-the menubar, and a retroactive rewriter re-renders affected final transcripts after a speaker edit.
+the menubar, and a retroactive rewriter re-renders affected final transcripts after a speaker edit,
+now driven through the shared Speaker Edit Service (PT-C23).
 
 *Interactions:* drives the Transcription and Diarization engines and the Speaker Library; writes the
 Transcript Output; emits refinement, file, and speaker-rewrite events to the Events Log.
@@ -69,8 +70,10 @@ the line without becoming a person. Centroids live in the unified WeSpeaker embe
 thresholds calibrated to it; a schema migration archives and resets a database carrying centroids
 from a prior, incompatible embedding space.
 
-*Interactions:* read and written by the Refinement Pipeline; managed by the CLI and the Menubar
-editor; edits drive the retroactive rewriter.
+*Interactions:* read and written by the Refinement Pipeline; managed by the CLI, the Menubar editor,
+and the MCP server, all through the shared Speaker Edit Service (PT-C23); edits drive the retroactive
+rewriter. The menubar app owns one shared library instance used by both the editor and the
+in-process MCP server, so an agent edit and a UI edit are the same writer.
 
 *Satisfies:* PT-R22, PT-R23, PT-R28, PT-R30, PT-R32a, PT-R32b, PT-R49, PT-R83, PT-R105, PT-R113
 
@@ -106,13 +109,15 @@ the engine/capture boundary.
 
 ### PT-C9 · Command-Line Interface
 
-The `pulsartrace` tool: `refine` (run the refinement pass), `speakers` (manage the library),
+The `pulsartrace` tool: `refine` (run the refinement pass), `speakers` (manage the library — its
+mutating subcommands route through the shared Speaker Edit Service, gaining the retroactive transcript
+rewrite, with a repeatable `--output-folder` to resolve the roots a non-menubar caller scans),
 `record` (run a full session via the engine orchestrator), `doctor` (environment checks and a
 tone-based capture self-test), `events tail` (stream the event log), and `install-cli` (symlink with
 consent).
 
-*Interactions:* drives the Refinement Pipeline, the Speaker Library, and the record orchestrator;
-spawns the Capture Daemon and engine for `record`.
+*Interactions:* drives the Refinement Pipeline, the Speaker Library through the shared Speaker Edit
+Service (PT-C23), and the record orchestrator; spawns the Capture Daemon and engine for `record`.
 
 *Satisfies:* PT-R47, PT-R48, PT-R49, PT-R50, PT-R51, PT-R68, PT-R86
 
@@ -197,10 +202,14 @@ recording control with a passive global hotkey (recorded directly in settings), 
 the speaker-library editor, and a master–detail main window that lists recordings (scanned from
 metadata sidecars, renameable, searchable) beside an in-window transcript detail rendering the
 selected — including a live — transcript through one styled renderer. Posts a system notification on
-refinement completion or failure, and exposes accessibility labels on its controls.
+refinement completion or failure, and exposes accessibility labels on its controls. It owns the
+single shared Speaker Library instance, delegates speaker edits to the Speaker Edit Service (PT-C23),
+and hosts the opt-in in-process MCP Server (PT-C22) via an `MCPController` — with a Settings section
+for the toggle, port, live `/healthz` status, copyable connection snippet, and manual restart.
 
 *Interactions:* drives recording and the in-process refiner (PT-C4); reads the live transcript;
-edits the Speaker Library (PT-C5); surfaces the Refinement Job Queue (PT-C17).
+edits the Speaker Library (PT-C5) through the Speaker Edit Service (PT-C23); surfaces the Refinement
+Job Queue (PT-C17); hosts the MCP Server (PT-C22).
 
 *Satisfies:* PT-R31, PT-R40, PT-R41, PT-R42, PT-R43, PT-R44, PT-R45, PT-R103, PT-R104, PT-R106,
 PT-R114
@@ -273,3 +282,42 @@ centroids across a digest change.
 the model-download event to the Events Log (PT-C6). Replaces the retired Model Store (PT-C10).
 
 *Satisfies:* PT-R108, PT-R109
+
+### PT-C22 · MCP Server
+
+The opt-in, loopback-only agent control surface: the `PulsarTraceMCP` library — a tool registry and
+JSON-RPC handlers over the official MCP Swift SDK's stateless HTTP transport, behind a hand-rolled
+`Network.framework` `NWListener` loopback HTTP/1.1 front end with a bounded request body and idle
+timeout — plus the `MCPController` that owns its lifecycle in the menubar process. Disabled by
+default; binds `127.0.0.1` on a configurable port (default `8276`); every request carries a
+persistent owner-only bearer token validated, with a constant-time compare, ahead of the transport.
+Exposes an unauthenticated `/healthz` and rebuilds a failed listener with bounded backoff, surfacing
+a persistent bind failure rather than rotating ports. Hosts a 17-tool surface — recording and
+speaker queries, the nine thin speaker-management tools (refused during capture), recording
+title-set and refine-request, an event query, and a self-describing operations manual — that returns
+identity, state, and filesystem paths only, never transcript or audio bytes, and that cannot change
+settings, model selection, or capture.
+
+*Interactions:* hosted by the Menubar Application (PT-C16) over the single shared Speaker Library
+(PT-C5) that the menubar editor also uses; drives speaker edits through the Speaker Edit Service
+(PT-C23); reads the recordings scan, the Speaker Library, and the Events Log (PT-C6); enqueues
+refines onto the Refinement Job Queue (PT-C17). The tool-handling core is transport-agnostic, so a
+future LAN transport is an isolated addition rather than a rewrite.
+
+*Satisfies:* PT-R115, PT-R116, PT-R117, PT-R118, PT-R119, PT-R120, PT-R121, PT-R122, PT-R124, PT-R125
+
+### PT-C23 · Speaker Edit Service
+
+The reusable engine actor that orchestrates a speaker edit end to end: mutate the Speaker Library
+with its event suppressed, run the retroactive `final.md` rewriter over the affected appearances,
+then emit the `speaker_*` cause event before its `final_md_rewritten` effects. The menubar editor,
+the MCP server, and the CLI all invoke it, so an edit produces identical file and event effects
+regardless of who triggered it; a process-wide non-reentrant lock serializes the whole
+mutate→rewrite→emit sequence so concurrent edits cannot lose a transcript rewrite. Owns the shared
+speaker-name validation rule, the unchanged-name no-op, and the microphone-speaker delist refusal.
+
+*Interactions:* invoked by the Menubar Application (PT-C16), the MCP Server (PT-C22), and the
+Command-Line Interface (PT-C9); mutates the Speaker Library (PT-C5) and drives the Refinement
+Pipeline's retroactive rewriter (PT-C4); emits to the Events Log (PT-C6).
+
+*Satisfies:* PT-R123

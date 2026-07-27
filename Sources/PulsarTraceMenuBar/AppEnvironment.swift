@@ -35,6 +35,14 @@ public final class AppEnvironment {
     /// editor — so the events-log public contract holds in the shipped app.
     public let events: EventWriter
 
+    /// The single shared `SpeakerLibrary` writer (PT-P6-D1). Opened during
+    /// `bootstrap()` and shared by BOTH the menubar speaker editor and the MCP
+    /// server — two actors over the one SQLite file would hold separate caches
+    /// and drift, so there is exactly one in-process writer. `nil` until
+    /// bootstrap opens it (or if the open fails). Read through
+    /// `sharedSpeakerLibrary()`, which awaits bootstrap.
+    public private(set) var speakerLibrary: SpeakerLibrary?
+
     /// The standard app paths — events directory, speaker library, sockets.
     private let paths: AppPaths
 
@@ -143,6 +151,14 @@ public final class AppEnvironment {
         // `LoggingTests.bootstrapIsIdempotent`.
         _ = await LogSystem.bootstrap(paths: paths)
 
+        // Open the single shared speaker library (PT-P6-D1) so the menubar
+        // editor and the MCP server both write through one instance. Opened
+        // with `events: events` exactly as the editor's own open used to be, so
+        // its event behaviour is unchanged. A failure leaves it `nil`; the
+        // editor surfaces an error state and the MCP server declines to start.
+        self.speakerLibrary = try? await SpeakerLibrary(
+            databaseURL: paths.speakersDatabaseURL, events: events)
+
         // Mirror the live path's language allow-list into refinement
         // (R-streaming-lang). Without this, refinement decoded each region
         // with unrestricted auto-detect, so a quiet/ambiguous stretch in a
@@ -187,6 +203,15 @@ public final class AppEnvironment {
         // Open the handle last — a pre-bootstrap enqueue that resumes here
         // must see the fully wired queue + polling VM.
         queueHandle.install(q)
+    }
+
+    /// Await the single shared speaker library (PT-P6-D1), waiting for bootstrap
+    /// to finish opening it. Returns `nil` only if the open failed. Both the
+    /// menubar editor and the MCP controller resolve the library through this so
+    /// they never race ahead of bootstrap or open a second writer.
+    public func sharedSpeakerLibrary() async -> SpeakerLibrary? {
+        await bootstrapTask?.value
+        return speakerLibrary
     }
 
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).

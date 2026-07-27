@@ -21,6 +21,7 @@ Part of the Gravital Forge product family (sibling to OrbitNote).
 | Real microphone / system-audio capture (`pulsartrace-capture`) | ✅ Working |
 | Headless CLI — `pulsartrace record`, `doctor`, `events tail`, `install-cli` | ✅ Working |
 | Menubar app — record, settings, speaker editor, live transcript preview, global hotkey, notifications | ✅ Working (unsigned dev build) |
+| Agent control surface — opt-in loopback **MCP server** (manage speakers & recordings, query state) | ✅ Working (unsigned dev build) |
 | Signed/notarized DMG, first-run permissions wizard | ⏳ Planned (Epic 10) |
 
 PulsarTrace is a complete **command-line tool** today: record a meeting with `pulsartrace record`, or feed it an existing WAV with `pulsartrace refine`. A **menubar app** (`pulsartrace-mac`) drives the same flow without a terminal — it runs today as an unsigned dev build. A signed/notarized DMG and a first-run permissions wizard are the remaining milestone — see [Roadmap](#roadmap). The entire AI pipeline is built and tested against an audio-source abstraction, so most of it builds and runs without touching audio hardware.
@@ -34,7 +35,7 @@ Every dominant meeting-transcription tool (Otter, Fireflies, Granola, Fathom, Zo
 - **Strictly local.** Your audio never leaves the machine. No telemetry, no analytics, no account, no auto-update pings. The only network calls are first-launch model downloads from Hugging Face.
 - **Speaker labels that persist.** Diarization separates who said what, and a speaker library learns recurring voices — so by someone's third meeting they're auto-labeled by name.
 - **Two-pass design.** A fast *live* pass writes `live.md` while the meeting happens; an offline *refinement* pass re-runs at full quality afterward and produces `final.md`, the source of truth.
-- **Files as the API.** No in-app chatbot. PulsarTrace writes clean Markdown and JSONL; you point your own agent at it. The integration is the product.
+- **Files as the API.** No in-app chatbot. PulsarTrace writes clean Markdown and JSONL; you point your own agent at it. The integration is the product. An opt-in local **MCP server** lets your agent also *drive* PulsarTrace — managing speaker identity and recordings — while still reading content straight from the files.
 
 ---
 
@@ -206,6 +207,32 @@ The intended workflow: keep your agent pointed at the transcript files.
 - **Across calls** — an agent watching `events/*.jsonl` sees `final_md_written`, `speaker_renamed`, etc. and can keep its own index in sync. Speaker identity is keyed on the stable `spk_…` ID, so a rename never breaks references.
 
 No plugin, no API key, no SDK — just files your tools already know how to read.
+
+### Drive PulsarTrace from your agent (MCP)
+
+Reading the files needs no setup. To let an agent also *drive* PulsarTrace — rename / merge / split speakers (and undo any of it), set a recording's title, request a re-refinement, and query recordings, speakers, and events — the menubar app can expose an opt-in **MCP server**. It is off by default, binds the local loopback interface only, and requires a bearer token on every request.
+
+1. In the menubar app, open **Settings → MCP Server** and toggle it on. It binds `127.0.0.1:8276` (the port is configurable) and, once running, shows the endpoint plus a **Copy token** button (and **Regenerate** / **Restart** actions).
+2. Register it with your agent's MCP client, using the endpoint and token from Settings:
+
+   **Claude Code:**
+
+   ```bash
+   claude mcp add --transport http pulsartrace http://127.0.0.1:8276/mcp \
+     --header "Authorization: Bearer <token>"
+   ```
+
+   **Codex CLI** (`~/.codex/config.toml`):
+
+   ```toml
+   [mcp_servers.pulsartrace]
+   url = "http://127.0.0.1:8276/mcp"
+   http_headers = { Authorization = "Bearer <token>" }
+   ```
+
+3. Have your agent call the **`manual`** tool first — it returns a standalone operations manual describing the data model and every tool's semantics and reversibility.
+
+The surface returns metadata and filesystem paths only — never transcript or audio bytes, which the agent reads from the paths it returns — and it cannot change settings or start/stop capture. Speaker edits made over MCP rewrite past `final.md` transcripts exactly as the in-app editor does, and are refused while a recording is in progress. The token persists across launches and can be regenerated any time from Settings. The agent must run on the same machine — a VM-sandboxed or cloud-hosted agent cannot reach the loopback endpoint.
 
 ---
 

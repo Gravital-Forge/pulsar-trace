@@ -19,6 +19,12 @@ struct PulsarTraceMacApp: App {
     /// this target (PT-P2-D9); `AppEnvironment` itself is AppKit-free.
     @State private var hotkey: HotkeyController
 
+    /// Owns the opt-in MCP server lifecycle (PT-R115). Lives here in the
+    /// composition root — the only target allowed to import both
+    /// `PulsarTraceMenuBar` and `PulsarTraceMCP` — and reconciles the server
+    /// against `settings.mcpServerEnabled` / `mcpServerPort`.
+    @State private var mcpController: MCPController
+
     init() {
         // No Dock icon, no app-switcher entry — PulsarTrace lives in the
         // menubar (PT-P2-D9). Set in code; there is no `.app` bundle yet.
@@ -37,6 +43,11 @@ struct PulsarTraceMacApp: App {
             settings: environment.settings, recording: environment.recording)
         _environment = State(initialValue: environment)
         _hotkey = State(initialValue: hotkey)
+        // PT-R115: the controller reads the (default-off) toggle and only
+        // starts the server when the user enables it in Settings. It takes the
+        // whole environment so it can host the toolset over the single shared
+        // SpeakerLibrary (PT-P6-D1).
+        _mcpController = State(initialValue: MCPController(environment: environment))
     }
 
     var body: some Scene {
@@ -99,12 +110,19 @@ struct PulsarTraceMacApp: App {
                 .environment(environment.scanner)
                 .environment(environment.navigation)
                 .environment(environment.queueVM)
+                // The speaker editor reads the shared SpeakerLibrary off the
+                // environment (PT-P6-D1) — the single writer the MCP server uses.
+                .environment(environment)
                 // Recordings master-detail split (§4): the pane list model,
                 // the transcript detail model, and the live watcher the
                 // detail binds to for the in-progress recording.
                 .environment(environment.paneModel)
                 .environment(environment.detailModel)
                 .environment(environment.liveWatcher)
+                // The MCP Settings section (PT-R115, PT-R125) reads the
+                // controller from the environment; the Settings pane lives in
+                // this window.
+                .environment(mcpController)
                 // Parallel to the MenuBarExtra onChange: the recorder lives
                 // in this window's Settings pane, and the popover content
                 // may never have been mounted when the combo changes here.
