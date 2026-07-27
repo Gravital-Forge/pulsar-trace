@@ -1,5 +1,7 @@
 # PulsarTrace
 
+![ci](https://github.com/Gravital-Forge/pulsar-trace/actions/workflows/ci.yml/badge.svg)
+
 **Local-only meeting transcription with speaker labels. Plug your AI agent into the file. Open source.**
 
 PulsarTrace turns a meeting recording into a clean, speaker-labeled Markdown transcript — and it never sends your audio anywhere. Transcription (on the Apple Neural Engine — Parakeet live, WhisperKit refine) and speaker diarization (pyannote community-1 on CoreML) run entirely on your Mac. The output is plain Markdown and JSONL on disk, designed to be read by your AI agent of choice (Claude Code, Cursor, opencode, …) during or after the call.
