@@ -25,7 +25,10 @@
         "com.apple.cmio.*",
         "com.apple.coremedia.*",
         "com.apple.tccd",
-        "com.apple.tccd.system"
+        "com.apple.tccd.system",
+        "com.apple.trustd",
+        "com.apple.trustd.agent",
+        "com.apple.SecurityServer"
       ]
     }
   },
@@ -44,7 +47,10 @@
       "Bash(PULSARTRACE_DEVICE_TESTS=1 swift test *)",
       "Bash(.build/debug/pulsartrace refine *)",
       "Bash(.build/release/pulsartrace refine *)",
-      "Bash(python/pulsartrace-ai/.venv/bin/pytest *)"
+      "Bash(python/pulsartrace-ai/.venv/bin/pytest *)",
+      "Bash(scripts/run-ui-tests.sh)",
+      "Bash(scripts/run-ui-tests.sh *)",
+      "mcp__pulsartrace__*"
     ]
   },
   "hooks": {
