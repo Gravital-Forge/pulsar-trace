@@ -1,0 +1,64 @@
+# Hosted-CI verification (PT-P7-R6, PT-P7-D4): audio-independent tiers only.
+# Real-audio capture never gates here — see scripts/e2e-audio-smoke.sh (dev host)
+# and the non-gating probe job for the facts that could change that.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Swift version
+        run: swift --version
+      - name: Build
+        run: swift build
+      # One bare invocation per hermetic filter — never the broad
+      # PipelineTests run (cross-suite fd races; CLAUDE.md).
+      - name: Unit tests
+        run: swift test --filter UnitTests
+      - name: IPC suites
+        run: swift test --filter IPC
+      - name: Record orchestrator
+        run: swift test --filter RecordOrchestrator
+      - name: Live runner
+        run: swift test --filter LiveRunner
+      - name: Speaker suites
+        run: swift test --filter Speaker
+      - name: Source suites
+        run: swift test --filter Source
+      - name: Lifecycle
+        run: swift test --filter Lifecycle
+      - name: Final markdown rewriter
+        run: swift test --filter FinalMarkdownRewriter
+      - name: Menubar suites
+        run: swift test --filter MenuBarTests
+
+  ui-floor:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: UI suite (floor — no models)
+        run: >-
+          scripts/run-ui-tests.sh
+          -skip-testing:PulsarTraceUITests/RecordFlowTests
+      - name: Upload result bundle
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-floor-xcresult
+          path: .build/ui-test-results
+          if-no-files-found: ignore
