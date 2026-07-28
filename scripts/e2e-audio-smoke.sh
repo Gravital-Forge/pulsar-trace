@@ -35,6 +35,10 @@ echo "Using mic [$MIC_INDEX]: $MIC_LINE"
 # basename, so keep it short.
 STAMP=$(date +%Y%m%d-%H%M%S)
 export PULSARTRACE_HOME="${TMPDIR:-/tmp}/pt-audio-smoke-home-$STAMP"
+# PULSARTRACE_HOME re-roots the model cache too — share the host's warm cache
+# read-only (PT-P7-R1/R9; same as run-ui-tests.sh), or the engine spends the
+# recording window downloading models into the throwaway home.
+export PULSARTRACE_MODELS_DIR="${PULSARTRACE_MODELS_DIR:-$HOME/Library/Caches/PulsarTrace/models}"
 OUT="${TMPDIR:-/tmp}/pt-smoke-$STAMP"
 mkdir -p "$PULSARTRACE_HOME" "$OUT"
 
