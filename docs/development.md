@@ -19,6 +19,21 @@ The capture tests exercise the real audio path and are opt-in:
   cleanly when BlackHole or the permissions are absent).
 - Audio loopback smoke check: `scripts/audio-loopback-check.sh`.
 
+## App-level real-audio smoke
+
+```
+scripts/e2e-audio-smoke.sh
+```
+
+Plays a committed voice sample through BlackHole into the real capture daemon and asserts the
+refined transcript against the sample's reference — the one end-to-end path fixture-mode UI tests
+cannot prove. Needs the same setup as the device tests (BlackHole 2ch, Microphone permission for
+the terminal) plus `brew install switchaudio-osx`. State is isolated to a temp home; the default
+output device is restored on exit.
+
+`audio-loopback-check.sh` remains the narrower environment diagnostic (does audio route through
+this host's loopback at all); the smoke is the product test on top of it.
+
 ## Build & test
 
 See `CLAUDE.md` for the full build/test invocation and the Bash-sandbox rules (notably:
