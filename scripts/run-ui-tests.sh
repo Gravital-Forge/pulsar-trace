@@ -28,6 +28,16 @@ log=".build/ui-test-results/$timestamp.log"
 # password when the "XCTest is trying to Enable UI Automation" dialog appears.
 echo "note: after a screen lock, macOS may require the automation-mode password — unattended runs fail in ~60 s if unanswered; run scripts/start-ui-session.sh after locking to (re)authorize." >&2
 
+# A near-full disk reproducibly stalls the macOS automation session: the
+# watchdog kills one random test mid-run — no assertion failure, no crash
+# report, just "Restarting after unexpected exit" (observed 2026-07-04 and
+# 2026-07-28). The suite's own result bundles are a main consumer; front the
+# condition here instead of letting it surface as a mystery kill.
+free_gib=$(df -g . | awk 'NR==2 {print $4}')
+if [ "$free_gib" -lt 15 ]; then
+  echo "warning: only ${free_gib} GiB free on this volume — below ~15 GiB the automation session stalls and random tests die mid-run; prune old runs under .build/ui-test-results/ (keep the latest) before trusting results." >&2
+fi
+
 # Hand the real host model cache to the XCUITest runner. The runner process has
 # a containerized home, so an in-test `~` derivation resolves to the xctrunner
 # container, not the warm cache — xcodebuild surfaces TEST_RUNNER_X as X inside
@@ -53,6 +63,17 @@ if [ "$status" -ne 0 ] && grep -q 'Timed out while enabling automation mode' "$l
   echo "════════════════════════════════════════════════════════════════════════" >&2
   echo " Automation authorization missing — run scripts/start-ui-session.sh," >&2
   echo " enter the password, then retry" >&2
+  echo "════════════════════════════════════════════════════════════════════════" >&2
+fi
+
+if [ "$status" -ne 0 ] && [ "$free_gib" -lt 15 ] \
+  && grep -q 'Restarting after unexpected exit' "$log"; then
+  echo "" >&2
+  echo "════════════════════════════════════════════════════════════════════════" >&2
+  echo " A test died with no assertion failure and this volume has only" >&2
+  echo " ${free_gib} GiB free — the known low-disk automation-session stall." >&2
+  echo " Free disk space (old .build/ui-test-results/ runs are a main" >&2
+  echo " consumer), then retry." >&2
   echo "════════════════════════════════════════════════════════════════════════" >&2
 fi
 
