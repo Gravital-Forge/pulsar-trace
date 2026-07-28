@@ -17,7 +17,9 @@
         "files.pythonhosted.org",
         "*.huggingface.co",
         "*.hf.co",
-        "*.xethub.hf.co"
+        "*.xethub.hf.co",
+        "*.actions.githubusercontent.com",
+        "*.blob.core.windows.net"
       ],
       "allowMachLookup": [
         "com.apple.audio.*",
