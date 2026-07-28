@@ -7,6 +7,9 @@ Items marked *(automated: …)* are covered by the UI end-to-end suites — a gr
 `scripts/run-ui-tests.sh` run stands in for walking them manually. Everything unmarked is still a
 by-hand check.
 
+Unmarked UI items can also be walked by an AI agent — see
+[docs/agent-verification.md](agent-verification.md).
+
 > Status: Epic 1 creates this file. Items are added as the relevant epics land their user-facing
 > surfaces. v0.1 (offline CLI) needs only the CLI items; the capture/UI items apply from v1.0.
 
@@ -88,8 +91,7 @@ the global hotkey, audio playback.
 - [ ] Speaker merge: the confirmation states how many recordings will be rewritten; after
   confirming, the merged speaker is soft-deleted, past `final.md` files update; the undo toast
   (auto-dismisses after ~8 s) restores both the library and the transcripts. *(automated:
-  PulsarTraceUITests/SpeakerFlowTests — rewrite, undo round-trip; auto-dismiss timing stays
-  manual)*
+  PulsarTraceUITests/SpeakerFlowTests — rewrite, undo round-trip; auto-dismiss timing stays manual)*
 - [ ] "Don't recognize this speaker": the confirmation states the rewrite count; affected `final.md`
   lines become "Unrecognized"; undoable for 30 days.
 - [ ] Speaker delete remains one-click — no confirmation, an undo toast.
