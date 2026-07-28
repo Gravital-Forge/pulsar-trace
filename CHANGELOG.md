@@ -56,6 +56,8 @@ There are no tagged releases yet; everything to date is under Unreleased.
 - The green check on a refined recording's row no longer vanishes the moment you select the row (gone until the next app restart): it was modeled as a transient "just refined" notification dismissed by selection. It is now a steady status badge — green check means refined, orange clock means not yet refined.
 - Near-silent recordings no longer crash diarization: a speaker whose voice sample is too sparse to fingerprint keeps its spans and label, and refinement completes — previously the whole job failed (`diarizeCrashed`) on every retry. The same fix stops live diarization from discarding such windows mid-recording.
 - The recordings list no longer shows a phantom "Unrecognized" speaker. `Unrecognized` is the per-line fallback for speech that overlaps no diarized turn — it labels the line so no text is lost, but it is not a person, so it no longer earns a speaker pill or a row in `metadata.json`'s `speakers` array. (Existing recordings drop the stale pill on their next refine.)
+- Merging two speakers now shows the same undo toast the other destructive speaker edits already had, and a failed rename / merge / delete / delist keeps its error visible instead of reporting success.
+- The menubar dropdown closes itself when Recordings, Speakers, or Settings is opened from it, instead of lingering in front of the window it just opened.
 
 ### Security
 
