@@ -569,8 +569,8 @@ layout.
 
 ### PT-R122 · Functional — Self-describing discovery and operations manual
 
-Every tool carries a description and an input schema discoverable through the tool list, and a manual
-tool returns a standalone operations manual covering the data model and the semantics and
+Every tool carries a description and an input schema discoverable through the tool list, and a
+manual tool returns a standalone operations manual covering the data model and the semantics and
 reversibility of each operation. The manual describes PulsarTrace on its own terms and names no
 external program, service, or workflow.
 
@@ -585,12 +585,98 @@ rewrite. The CLI thereby gains the retroactive rewrite it previously skipped.
 ### PT-R124 · Constraint — The agent surface excludes settings, capture control, and content
 
 The MCP surface manages speaker identity and recordings and observes state. It does not change
-settings or model selection, does not start or stop capture, and does not transit audio or transcript
-content; content is reached only by the filesystem paths the query tools return.
+settings or model selection, does not start or stop capture, and does not transit audio or
+transcript content; content is reached only by the filesystem paths the query tools return.
 
 ### PT-R125 · Functional — Server health, supervision, and manual restart
 
 While enabled, the in-process server is supervised: a listener that fails is rebuilt automatically
-with bounded backoff, and a bind that keeps failing stops and surfaces the error rather than rotating
-to another port. The server answers an unauthenticated loopback health probe reporting its status,
-and Settings shows the live server status and offers a manual restart.
+with bounded backoff, and a bind that keeps failing stops and surfaces the error rather than
+rotating to another port. The server answers an unauthenticated loopback health probe reporting its
+status, and Settings shows the live server status and offers a manual restart.
+
+### PT-R126 · Technical — Environment-driven isolated app state
+
+The menubar app honors environment overrides that redirect all mutable state to caller-supplied
+locations: `PULSARTRACE_HOME` re-roots every application path (application support with events,
+speaker library, and MCP token; logs; caches) and the default output folder root, and
+`PULSARTRACE_DEFAULTS_SUITE` substitutes the `UserDefaults` suite that backs settings. A separate
+`PULSARTRACE_MODELS_DIR` points the model store at an existing cache so isolated runs need not
+re-download model bundles. Engine subprocesses a test-launched app spawns inherit the same
+isolation; an empty variable is treated as unset. With none of the variables set, behavior is
+byte-identical to an unoverridden launch.
+
+### PT-R127 · Technical — App-reachable fixture capture mode
+
+With `PULSARTRACE_MIC_FIXTURE` (and optionally `PULSARTRACE_SYSTEM_FIXTURE`) set to fixture WAVs, a
+recording started from the app UI runs the full production flow — record orchestrator, engine
+subprocess in live mode, `live.md` streaming, stop, refinement, `final.md`, paired events — with the
+engine consuming the fixture WAVs in realtime pacing through its existing fixture source, and no
+capture daemon spawned. The mode requires no microphone or screen-recording permission and triggers
+no TCC prompt; one operational log line records that a recording ran from fixtures. With the
+variables unset, the device capture path is unchanged.
+
+### PT-R128 · Technical — Stable accessibility identifiers on every driven surface
+
+Every UI element the end-to-end suite drives carries a stable `accessibilityIdentifier` under one
+documented naming convention (the `A11yID` registry): the menubar panel and its controls, the main
+window's sidebar and its Recordings / Speakers / Settings panes with their interactive controls, the
+live-transcript window, and the confirmation sheets and undo toasts in the speaker flows. Tests
+locate elements by identifier only — display text and localization changes never break element
+lookup.
+
+### PT-R129 · Functional — Deterministic UI end-to-end suite
+
+An XCUITest suite drives the real app bundle end to end, runnable locally with one command. Its
+floor — the gate every run must clear — is breadth over every idle-reachable surface: the app
+launches against an isolated, pre-seeded home and the suite opens the menubar panel and each
+main-window pane, verifying the seeded data renders. On that floor sit the deep flows: record → stop
+→ refine over fixture capture asserting on `live.md` growth, `final.md` content, the recording-only
+live-transcript window, and the paired events; settings persistence across an app relaunch; and
+speaker rename, merge, and undo against seeded state, asserting the retroactive `final.md` rewrite.
+Checklist items the suite covers are marked in `docs/release-smoke-test.md`.
+
+### PT-R130 · Technical — Generated wrapper project hosts the UI suite
+
+The UI suite is hosted by an Xcode project generated on demand from a committed XcodeGen spec; the
+generated `.xcodeproj` stays gitignored, SwiftPM remains the sole build system for every shipped
+product, and the wrapper exists only to compile the menubar app into a testable bundle and host the
+UI-test target. One committed script regenerates the project and runs the suite.
+
+### PT-R131 · Functional — Continuous integration on hosted macOS runners
+
+A GitHub Actions workflow runs on hosted Apple-silicon macOS runners on pull requests, pushes to
+`main`, and manual dispatch: it builds the package, runs the deterministic audio-independent test
+filters, and runs the UI end-to-end suite in fixture capture mode, with the record flow in a
+dedicated lane that caches model bundles across runs. The runner toolchain is pinned to the
+development host's Xcode so compiler drift fails loudly. No gating step depends on audio hardware,
+virtual audio drivers, or capture permissions; a separate non-gating probe job records the runner's
+audio and Neural Engine reality for future tiering decisions. On UI-suite failure the workflow
+uploads the result bundles and seed diagnostics.
+
+### PT-R132 · Functional — Standalone app-level real-audio smoke script
+
+A standalone script drives one real-capture end-to-end run on a configured dev host: it selects
+BlackHole as the input device, plays a committed voice sample into it, records through the shipped
+record path, and asserts the refined transcript against the sample's committed reference, with all
+state isolated to temp roots and the previous default output device restored on every exit path. The
+pre-existing `scripts/audio-loopback-check.sh` environment diagnostic is preserved unchanged. The
+script is a documented dev-host tool, not a CI gate.
+
+### PT-R133 · Functional — Agent-driven verification runbook
+
+A documented, repeatable runbook lets an AI agent verify the built app the way a human smoke-tester
+does: drive the real UI through the accessibility layer, walk the unmarked UI items of the smoke
+checklist, and cross-check every action against ground truth — transcript artifacts, the events log,
+and the MCP surface — producing a written per-item pass/fail report. The runbook states its
+isolation preconditions (isolated home, daily instance quit) and is an advisory pre-release aid,
+never a merge gate.
+
+### PT-R134 · Constraint — End-to-end runs never touch daily state
+
+No automated end-to-end tier — UI suite, CI job, audio smoke, agent runbook — reads or mutates the
+real user's app state: settings suite, speaker library, events log, MCP token or port, documents
+output, or global hotkey registration. Test instances run from isolated roots with the MCP server
+disabled and no hotkey configured unless a scenario explicitly seeds otherwise onto its own isolated
+state. The only permitted sharing is the read-only model cache, explicitly opted into via
+`PULSARTRACE_MODELS_DIR`.

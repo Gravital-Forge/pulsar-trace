@@ -1,6 +1,6 @@
 # PT-P7 · Automated End-to-End Verification — Decision Log
 
-**Status:** Open
+**Status:** Frozen · **Closed:** 2026-07-28
 
 The reasoning behind the end-to-end verification strategy, recorded as each choice was taken.
 Append-only.

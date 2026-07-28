@@ -37,7 +37,7 @@ struct SettingsView: View {
                         Text(device.name).tag(String?.some(device.uniqueID))
                     }
                 }
-                // PT-P7-R3: Settings controls — each a first-class AX element
+                // PT-R128: Settings controls — each a first-class AX element
                 // (Picker/Toggle/TextField/Button), so no container promotion.
                 .accessibilityIdentifier(A11yID.Settings.micPicker)
                 Toggle("Capture system audio", isOn: $settings.systemAudioEnabled)
@@ -78,7 +78,7 @@ struct SettingsView: View {
                         }
                     }
                     .buttonStyle(.bordered)
-                    // PT-P7-R3: the languages picker button opens the popover;
+                    // PT-R128: the languages picker button opens the popover;
                     // this is the driven control for the language flow.
                     .accessibilityIdentifier(A11yID.Settings.languageSection)
                     .popover(isPresented: $languagePopoverOpen,

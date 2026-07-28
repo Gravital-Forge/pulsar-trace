@@ -1,12 +1,12 @@
 import Foundation
 import PulsarTraceEngine
 
-/// Drives a fixture-capture session (PT-P7-R2): spawns only
+/// Drives a fixture-capture session (PT-R127): spawns only
 /// `pulsartrace-engine` — no capture daemon, no `ready` handshake — and
 /// conforms to `RecordingOrchestrating` so `RecordingViewModel` treats a
 /// fixture session exactly like a device session. The engine exits on its
 /// own at fixture EOF; the view model turns that into a clean stop.
-// PT-P7-R2
+// PT-R127
 public actor EngineOnlyOrchestrator: RecordingOrchestrating {
 
     private let engineBinary: URL

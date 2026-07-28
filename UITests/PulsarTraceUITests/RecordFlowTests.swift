@@ -7,8 +7,8 @@ import PulsarTraceEngine
 /// `final.md`, over the committed paired fixture WAVs, asserting the artifacts
 /// and the causal event order. Needs the live + refine models, shared read-only
 /// from the host cache via `PULSARTRACE_MODELS_DIR` (PT-P7-D3).
-// PT-P7-R4
-// PT-P7-R2
+// PT-R129
+// PT-R127
 final class RecordFlowTests: XCTestCase {
 
     private var seed: SeededHome!
@@ -26,12 +26,12 @@ final class RecordFlowTests: XCTestCase {
     override func setUp() async throws {
         continueAfterFailure = false
         seed = try await SeededHome.make()
-        // Model-cache preflight (PT-P7-R4): the paired run borrows the host's
+        // Model-cache preflight (PT-R129): the paired run borrows the host's
         // already-warm live + refine models (PT-P7-D3). An empty cache would
         // otherwise burn the full 300 s final.md budget on an unhelpful
         // timeout, so gate explicitly per the project's test posture.
         //
-        // Resolving the cache path is the trap (PT-P7-R9): this test runs in the
+        // Resolving the cache path is the trap (PT-R134): this test runs in the
         // xctrunner process, whose `homeDirectoryForCurrentUser` is the runner's
         // sandbox CONTAINER, not the real user home — so a `~`-derived path
         // points at an empty container cache. Prefer the path handed in by
@@ -60,13 +60,13 @@ final class RecordFlowTests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment.merge(
             seed.launchEnvironment, uniquingKeysWith: { _, new in new })
-        // Paired fixture capture (PT-P7-R2): a UI-started recording runs the
+        // Paired fixture capture (PT-R127): a UI-started recording runs the
         // real orchestrator + engine over these WAVs and self-exits at EOF.
         app.launchEnvironment["PULSARTRACE_SYSTEM_FIXTURE"] =
             Self.pairedDir.appendingPathComponent("system.wav").path
         app.launchEnvironment["PULSARTRACE_MIC_FIXTURE"] =
             Self.pairedDir.appendingPathComponent("mic.wav").path
-        // Explicit read-only model share (PT-P7-D3, PT-P7-R9) — the isolated
+        // Explicit read-only model share (PT-P7-D3, PT-R134) — the isolated
         // home borrows the host's already-warm live + refine models
         // (preflighted above).
         app.launchEnvironment["PULSARTRACE_MODELS_DIR"] = modelsDir.path
@@ -76,7 +76,7 @@ final class RecordFlowTests: XCTestCase {
     override func tearDown() {
         // On failure, copy the seed home's logs/events/artifacts out BEFORE the
         // seed is purged — the throwaway home is otherwise deleted with the
-        // only evidence of an intermittent wedge (PT-P7-R4). Done before the
+        // only evidence of an intermittent wedge (PT-R129). Done before the
         // app is terminated so a hung main thread's state is captured as-is.
         if (testRun?.totalFailureCount ?? 0) > 0, let seed {
             let dir = preserveSeedDiagnostics(seed, label: "RecordFlow")

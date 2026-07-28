@@ -3,7 +3,7 @@ import Foundation
 import PulsarTraceEngine
 @testable import PulsarTraceMenuBar
 
-/// Fixture-capture start/stop semantics (PT-P7-R2).
+/// Fixture-capture start/stop semantics (PT-R127).
 @MainActor
 @Suite("RecordingViewModel fixture mode")
 struct RecordingFixtureModeTests {
@@ -72,7 +72,7 @@ struct RecordingFixtureModeTests {
                 planBox.value = plan
                 return StubOrchestrator()
             },
-            // A denied preflight must NOT block a fixture start (PT-P7-R2).
+            // A denied preflight must NOT block a fixture start (PT-R127).
             preflight: PermissionPreflight(
                 microphone: { false }, screenRecording: { false }),
             overrides: overrides)
@@ -110,7 +110,7 @@ struct RecordingFixtureModeTests {
         for _ in 0..<50 where vm.status != .idle {
             try await Task.sleep(for: .milliseconds(100))
         }
-        #expect(vm.status == .idle)          // never .crashed (PT-P7-R2)
+        #expect(vm.status == .idle)          // never .crashed (PT-R127)
         #expect(refinedBox.value != nil)
     }
 

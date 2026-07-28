@@ -18,7 +18,7 @@ struct RecordToolbarButton: View {
 
     var body: some View {
         control
-            // PT-P7-R3: one identifier across every visual state
+            // PT-R128: one identifier across every visual state
             // (Record / Starting… / Stop / disabled), deliberately distinct
             // from the panel's `recordToggle` so a query never matches across
             // surfaces when the panel and window are both open.

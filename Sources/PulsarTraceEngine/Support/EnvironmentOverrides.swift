@@ -1,6 +1,6 @@
 import Foundation
 
-/// The end-to-end test overrides (PT-P7-R1, PT-P7-R2).
+/// The end-to-end test overrides (PT-R126, PT-R127).
 ///
 /// E2E harnesses launch the app with these variables to redirect all mutable
 /// state into an isolated root and to run recordings from committed fixture
@@ -12,7 +12,7 @@ import Foundation
 /// clears a variable it does not want to override. Path values must be
 /// absolute: a relative path resolves against the launching process's
 /// working directory, which is `/` for a Finder- or launchd-launched app.
-// PT-P7-R1
+// PT-R126
 public struct EnvironmentOverrides: Sendable, Equatable {
     /// `PULSARTRACE_HOME` — re-roots every `AppPaths` location and the
     /// default output folder root.
@@ -23,9 +23,9 @@ public struct EnvironmentOverrides: Sendable, Equatable {
     /// cache (typically the real one, shared read-only) so an isolated run
     /// skips the multi-GB model download.
     public let modelsDirectory: URL?
-    /// `PULSARTRACE_SYSTEM_FIXTURE` — system-stream fixture WAV (PT-P7-R2).
+    /// `PULSARTRACE_SYSTEM_FIXTURE` — system-stream fixture WAV (PT-R127).
     public let systemFixture: URL?
-    /// `PULSARTRACE_MIC_FIXTURE` — mic-stream fixture WAV (PT-P7-R2).
+    /// `PULSARTRACE_MIC_FIXTURE` — mic-stream fixture WAV (PT-R127).
     public let micFixture: URL?
 
     public init(environment: [String: String]) {

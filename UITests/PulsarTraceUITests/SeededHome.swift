@@ -1,9 +1,9 @@
-// PT-P7-R4
+// PT-R129
 import Foundation
 import PulsarTraceEngine
 
 /// Builds the isolated, pre-seeded home the UI suites launch against
-/// (PT-P7-R4; pre-seeded speaker state per PT-P7-D6). Seeding goes through
+/// (PT-R129; pre-seeded speaker state per PT-P7-D6). Seeding goes through
 /// the real `SpeakerLibrary` and the real file formats so the app reads
 /// exactly what refinement would have written — no hand-rolled SQLite, no
 /// schema drift.
@@ -16,7 +16,7 @@ struct SeededHome {
     /// The two seeded recording folder basenames, oldest first.
     static let recordingFolders = ["2026-06-01-090000", "2026-06-02-100000"]
 
-    /// The `PULSARTRACE_HOME` / `PULSARTRACE_DEFAULTS_SUITE` pair (PT-P7-R1).
+    /// The `PULSARTRACE_HOME` / `PULSARTRACE_DEFAULTS_SUITE` pair (PT-R126).
     /// Callers merge fixtures or `PULSARTRACE_MODELS_DIR` on top.
     var launchEnvironment: [String: String] {
         ["PULSARTRACE_HOME": home.path,
@@ -46,14 +46,14 @@ struct SeededHome {
             try FileManager.default.createDirectory(
                 at: outputRoot, withIntermediateDirectories: true)
 
-            // Settings: safe defaults per PT-P7-R9 — output folder inside the home,
+            // Settings: safe defaults per PT-R134 — output folder inside the home,
             // system audio on, no hotkey, MCP off.
             let defaults = UserDefaults(suiteName: suite)!
-            defaults.set(outputRoot.path, forKey: "outputFolderPath")     // PT-P7-R9
-            defaults.set(true, forKey: "systemAudioEnabled")              // PT-P7-R9
-            defaults.set(false, forKey: "mcpServerEnabled")               // PT-P7-R9
+            defaults.set(outputRoot.path, forKey: "outputFolderPath")     // PT-R134
+            defaults.set(true, forKey: "systemAudioEnabled")              // PT-R134
+            defaults.set(false, forKey: "mcpServerEnabled")               // PT-R134
             // No `globalHotkey` key is written — an absent key loads as `nil`
-            // (PT-P7-R9: the seeded suite carries no record-toggle hotkey).
+            // (PT-R134: the seeded suite carries no record-toggle hotkey).
 
             // Speaker library — the same paths the app resolves under this home.
             let paths = AppPaths(home: home)

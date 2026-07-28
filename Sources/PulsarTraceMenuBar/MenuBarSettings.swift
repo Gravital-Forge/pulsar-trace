@@ -49,11 +49,11 @@ public final class MenuBarSettings {
 
     /// Default output folder when the user has never chosen one:
     /// `~/Documents/PulsarTrace`, or `<home>/Documents/PulsarTrace` under the
-    /// E2E home override (PT-P7-R1). Derived at read time and **never
+    /// E2E home override (PT-R126). Derived at read time and **never
     /// persisted** — clearing `outputFolderPath` re-defaults on the next read.
     /// `nil` only in the theoretical case where the Documents directory cannot
     /// be resolved.
-    // PT-P7-R1
+    // PT-R126
     public static func defaultOutputFolderURL(
         overrides: EnvironmentOverrides
     ) -> URL? {
@@ -181,7 +181,7 @@ public final class MenuBarSettings {
     }
 
     /// Load settings from `defaults` (default: the production suite, or the
-    /// `PULSARTRACE_DEFAULTS_SUITE` override — PT-P7-R1).
+    /// `PULSARTRACE_DEFAULTS_SUITE` override — PT-R126).
     ///
     /// - Parameters:
     ///   - defaults: injectable store — tests pass a temp suite.
@@ -190,7 +190,7 @@ public final class MenuBarSettings {
         defaults: UserDefaults? = nil,
         overrides: EnvironmentOverrides = .current
     ) {
-        // PT-P7-R1: an explicit store wins; then the override suite; then the
+        // PT-R126: an explicit store wins; then the override suite; then the
         // production suite.
         let store = defaults
             ?? UserDefaults(suiteName:

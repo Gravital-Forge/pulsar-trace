@@ -76,7 +76,7 @@ struct PulsarTraceMacApp: App {
             MenuBarLabel(
                 status: environment.recording.status,
                 isRefining: environment.queueVM.running != nil)
-                // PT-P7-R3: the status item, the E2E suite's entry point.
+                // PT-R128: the status item, the E2E suite's entry point.
                 .accessibilityIdentifier(A11yID.statusItem)
         }
         .menuBarExtraStyle(.window)

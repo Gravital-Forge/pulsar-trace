@@ -2,7 +2,7 @@ import XCTest
 import PulsarTraceMenuBar
 import PulsarTraceEngine
 
-/// The speaker-editor flow (PT-P7-R4; smoke-checklist "speaker rename retroactive
+/// The speaker-editor flow (PT-R129; smoke-checklist "speaker rename retroactive
 /// rewrite") driven through the real Speakers pane against the pre-seeded state
 /// (PT-P7-D6). Renaming a speaker mutates the library AND retroactively rewrites
 /// every past `final.md` that named them (PT-P1-D16), leaving a backup sibling
@@ -20,7 +20,7 @@ import PulsarTraceEngine
 /// PT-P7-E3-T4 will extend this same file with a merge + undo-toast round-trip —
 /// hence `setUp`/`tearDown` and the `openSpeakers()` helper are factored so a
 /// second test method reuses them.
-// PT-P7-R4
+// PT-R129
 final class SpeakerFlowTests: XCTestCase {
 
     private var seed: SeededHome!
@@ -39,7 +39,7 @@ final class SpeakerFlowTests: XCTestCase {
         // On failure, copy the seed home's final.md/.bak/events/logs out BEFORE
         // the seed is purged — this suite's failure modes (a rewrite that didn't
         // land, a missing backup, an out-of-order event log) are diagnosable
-        // only from that throwaway state (PT-P7-R4). Done before the app is
+        // only from that throwaway state (PT-R129). Done before the app is
         // terminated so a hung main thread's state is captured as-is.
         if (testRun?.totalFailureCount ?? 0) > 0, let seed {
             let dir = preserveSeedDiagnostics(seed, label: "SpeakerFlow")
@@ -60,7 +60,7 @@ final class SpeakerFlowTests: XCTestCase {
 
         // Locate Alice by her stable seed-time id — the row identifier keys on
         // `spk_<ulid>`, which the rename leaves unchanged, so we never look the
-        // row up by (mutating) display name (PT-P7-R3).
+        // row up by (mutating) display name (PT-R128).
         let aliceId = try XCTUnwrap(seed.speakerIds["Alice"], "Alice not seeded")
         let row = app.descendants(matching: .any)[A11yID.Speakers.row(aliceId)]
         XCTAssertTrue(row.waitForExistence(timeout: 10),
@@ -75,7 +75,7 @@ final class SpeakerFlowTests: XCTestCase {
         // so `row.doubleClick()` lands on the table, the gesture never fires, and
         // no rename field appears. The context menu is deterministic: right-click
         // the row, then click "Rename", located by its identifier
-        // (`A11yID.Speakers.renameButton`, PT-P7-R3) — this is also the first
+        // (`A11yID.Speakers.renameButton`, PT-R128) — this is also the first
         // proof that a SwiftUI `.contextMenu` Button's `.accessibilityIdentifier`
         // propagates to the AX menu item, which is how the merge flow (T4) will
         // locate `mergeButton`/`mergeTarget`.

@@ -129,3 +129,12 @@ project requirement), the epic that implemented it, and its current status.
 | PT-R123 | PT-P6-R9  | PT-P6-E1       | Active     | —          | —             |
 | PT-R124 | PT-P6-R10 | PT-P6-E2       | Active     | —          | —             |
 | PT-R125 | PT-P6-R11 | PT-P6-E2       | Active     | —          | —             |
+| PT-R126 | PT-P7-R1  | PT-P7-E1       | Active     | —          | —             |
+| PT-R127 | PT-P7-R2  | PT-P7-E1       | Active     | —          | —             |
+| PT-R128 | PT-P7-R3  | PT-P7-E2       | Active     | —          | —             |
+| PT-R129 | PT-P7-R4  | PT-P7-E3       | Active     | —          | —             |
+| PT-R130 | PT-P7-R5  | PT-P7-E2       | Active     | —          | —             |
+| PT-R131 | PT-P7-R6  | PT-P7-E4       | Active     | —          | —             |
+| PT-R132 | PT-P7-R7  | PT-P7-E5       | Active     | —          | —             |
+| PT-R133 | PT-P7-R8  | PT-P7-E6       | Active     | —          | —             |
+| PT-R134 | PT-P7-R9  | PT-P7-E2       | Active     | —          | —             |

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Generate the UI-test wrapper project and run the XCUITest suite (PT-P7-R5).
+# Generate the UI-test wrapper project and run the XCUITest suite (PT-R130).
 # Extra arguments pass through to xcodebuild, e.g.:
 #   scripts/run-ui-tests.sh -only-testing:PulsarTraceUITests/FloorTests
 set -euo pipefail
@@ -18,7 +18,7 @@ swift build
 xcodegen generate
 
 mkdir -p .build/ui-test-results
-# Share one timestamp between the xcresult bundle and the per-run log (PT-P7-R4).
+# Share one timestamp between the xcresult bundle and the per-run log (PT-R129).
 timestamp="$(date +%Y%m%d-%H%M%S)"
 log=".build/ui-test-results/$timestamp.log"
 
@@ -32,9 +32,9 @@ echo "note: after a screen lock, macOS may require the automation-mode password 
 # a containerized home, so an in-test `~` derivation resolves to the xctrunner
 # container, not the warm cache — xcodebuild surfaces TEST_RUNNER_X as X inside
 # the runner, and this script runs unsandboxed in the real user session so its
-# $HOME is correct. Respect an already-set override (PT-P7-R9).
+# $HOME is correct. Respect an already-set override (PT-R134).
 #
-# Stream xcodebuild while capturing combined output to the log (PT-P7-R4).
+# Stream xcodebuild while capturing combined output to the log (PT-R129).
 # pipefail off so the pipeline's status is tee's (0) and does not trip errexit;
 # PIPESTATUS[0] carries xcodebuild's real exit code, which we propagate.
 set +o pipefail

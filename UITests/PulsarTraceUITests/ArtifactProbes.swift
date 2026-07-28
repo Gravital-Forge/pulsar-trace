@@ -1,4 +1,4 @@
-// PT-P7-R4
+// PT-R129
 import XCTest
 import PulsarTraceEngine
 
@@ -85,13 +85,13 @@ extension XCTestCase {
 /// point of failure rather than cascading into misleading later assertions.
 struct PollTimeout: Error { let message: String }
 
-// MARK: - Failure-time evidence preservation (PT-P7-R4)
+// MARK: - Failure-time evidence preservation (PT-R129)
 
 extension XCTestCase {
 
     /// Copy the seed home's diagnosable state out to a repo-local directory
     /// BEFORE the seed is purged in `tearDown`, so an intermittent UI-flow
-    /// failure leaves behind the artifacts needed to root-cause it (PT-P7-R4).
+    /// failure leaves behind the artifacts needed to root-cause it (PT-R129).
     ///
     /// The seed home is a throwaway `$TMPDIR/pt-ui-seed-<uuid>` that `tearDown`
     /// deletes — which is why a flake that only reproduces on the CI/desktop

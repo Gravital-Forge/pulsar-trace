@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Environment-driven re-rooting of the path choke points (PT-P7-R1).
+/// Environment-driven re-rooting of the path choke points (PT-R126).
 @Suite("AppPaths overrides")
 struct AppPathsOverrideTests {
 

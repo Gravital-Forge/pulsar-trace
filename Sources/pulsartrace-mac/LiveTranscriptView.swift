@@ -32,7 +32,7 @@ struct LiveTranscriptView: View {
                 : "No recording in progress.",
             autoScroll: autoScroll,
             findActivator: find)
-        // PT-P7-R3: the transcript renderer (its NSScrollView) is the list.
+        // PT-R128: the transcript renderer (its NSScrollView) is the list.
         .accessibilityIdentifier(A11yID.LiveTranscript.list)
         .frame(minWidth: 360, minHeight: 320)
         // Same launch-quiet rule as the main window (see

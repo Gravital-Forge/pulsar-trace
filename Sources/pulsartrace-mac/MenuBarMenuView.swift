@@ -26,7 +26,7 @@ struct MenuBarMenuView: View {
                 .lineLimit(2)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                // PT-P7-R3: the always-present status/progress line — the
+                // PT-R128: the always-present status/progress line — the
                 // E2E suite reads recording + refine progress off this label.
                 .accessibilityIdentifier(A11yID.MenuBar.progressLabel)
 
@@ -82,7 +82,7 @@ struct MenuBarMenuView: View {
         // below it slide smoothly instead of snapping when a refinement
         // starts or finishes while the panel is open.
         .animation(.default, value: runningProgress != nil)
-        // PT-P7-R3: the panel's root container — the E2E suite scopes every
+        // PT-R128: the panel's root container — the E2E suite scopes every
         // menubar query to this identifier. A bare VStack isn't an AX element
         // on macOS, so promote it to a container element (children: .contain)
         // for the identifier to surface in the AX tree.
@@ -96,7 +96,7 @@ struct MenuBarMenuView: View {
         switch recording.status {
         case .idle:
             // One identifier (`recordToggle`) across Start/Starting/Stop so
-            // the record control is locatable in every state (PT-P7-R3).
+            // the record control is locatable in every state (PT-R128).
             menuButton(
                 "Start Recording", identifier: A11yID.MenuBar.recordToggle,
                 hint: hotkeyHint
@@ -142,7 +142,7 @@ struct MenuBarMenuView: View {
     ///
     /// `hint` renders trailing secondary text (the global-hotkey glyphs on
     /// Start/Stop); `shortcut` registers a local keyboard shortcut for the
-    /// row (⌘Q on Quit). `identifier` is the row's stable a11y id (PT-P7-R3)
+    /// row (⌘Q on Quit). `identifier` is the row's stable a11y id (PT-R128)
     /// — required so a newly added row must mint a constant in `A11yID`
     /// before it can be driven by the end-to-end suite.
     private func menuButton(
@@ -167,7 +167,7 @@ struct MenuBarMenuView: View {
         .buttonStyle(MenuRowButtonStyle())
         .keyboardShortcut(shortcut)
         .disabled(!enabled)
-        .accessibilityIdentifier(identifier)  // PT-P7-R3
+        .accessibilityIdentifier(identifier)  // PT-R128
     }
 
     /// The configured global hotkey as glyphs (e.g. ⇧⌘R) for the Start/Stop

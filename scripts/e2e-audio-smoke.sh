@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# App-level real-audio smoke (PT-P7-R7): play a committed voice sample through
+# App-level real-audio smoke (PT-R132): play a committed voice sample through
 # BlackHole into the shipped record path (capture daemon → engine live pass →
 # refinement) and check the refined transcript against the sample's reference.
 #
@@ -28,7 +28,7 @@ MIC_LINE=$("$CLI" record --list-mics | grep -i blackhole | head -1 || true)
 MIC_INDEX=$(printf '%s\n' "$MIC_LINE" | sed 's/[^0-9]*\([0-9][0-9]*\).*/\1/')
 echo "Using mic [$MIC_INDEX]: $MIC_LINE"
 
-# --- isolated state (PT-P7-R9) ------------------------------------------
+# --- isolated state (PT-R134) ------------------------------------------
 # The capture daemon's socket embeds OUT's basename ($TMPDIR/PulsarTrace/
 # rec_<name>-mic.sock) and sockaddr_un.sun_path caps at 104 bytes on Darwin
 # — under the standard /var/folders TMPDIR that leaves ~33 chars for the
@@ -36,7 +36,7 @@ echo "Using mic [$MIC_INDEX]: $MIC_LINE"
 STAMP=$(date +%Y%m%d-%H%M%S)
 export PULSARTRACE_HOME="${TMPDIR:-/tmp}/pt-audio-smoke-home-$STAMP"
 # PULSARTRACE_HOME re-roots the model cache too — share the host's warm cache
-# read-only (PT-P7-R1/R9; same as run-ui-tests.sh), or the engine spends the
+# read-only (PT-R126/PT-R134; same as run-ui-tests.sh), or the engine spends the
 # recording window downloading models into the throwaway home.
 export PULSARTRACE_MODELS_DIR="${PULSARTRACE_MODELS_DIR:-$HOME/Library/Caches/PulsarTrace/models}"
 OUT="${TMPDIR:-/tmp}/pt-smoke-$STAMP"

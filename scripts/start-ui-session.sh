@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Start a dev UI-automation session (PT-P7-R4): front the macOS Automation-Mode
+# Start a dev UI-automation session (PT-R129): front the macOS Automation-Mode
 # authorization prompt at a chosen moment by running the 15-second launch smoke,
 # then print one unambiguous verdict about whether automation is now authorized.
 #
@@ -25,7 +25,7 @@ ts() { date "+%Y-%m-%d %H:%M:%S"; }
 say() { echo "[$(ts)] $*"; }
 
 say "=================================================================="
-say "PulsarTrace — start UI-automation session (PT-P7-R4)"
+say "PulsarTrace — start UI-automation session (PT-R129)"
 say "=================================================================="
 say "About to request macOS Automation-Mode authorization by running the"
 say "15-second UI launch smoke (LaunchSmokeTests)."

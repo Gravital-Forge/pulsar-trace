@@ -9,7 +9,7 @@ public struct AppPaths: Sendable {
     /// Base directory; the real app uses the user's home directory.
     public let home: URL
 
-    /// Optional model-store override (`PULSARTRACE_MODELS_DIR`, PT-P7-R1) so
+    /// Optional model-store override (`PULSARTRACE_MODELS_DIR`, PT-R126) so
     /// an isolated E2E home can still share the already-downloaded models.
     public let modelsOverride: URL?
 
@@ -19,11 +19,11 @@ public struct AppPaths: Sendable {
     }
 
     /// The real application paths — the user's home unless the E2E override
-    /// re-roots them (PT-P7-R1).
+    /// re-roots them (PT-R126).
     public static var standard: AppPaths { standard(overrides: .current) }
 
     /// Overrides-aware resolver; tests inject a synthetic environment.
-    // PT-P7-R1
+    // PT-R126
     public static func standard(overrides: EnvironmentOverrides) -> AppPaths {
         AppPaths(
             home: overrides.home
@@ -42,7 +42,7 @@ public struct AppPaths: Sendable {
     }
 
     /// Model cache root: `~/Library/Caches/PulsarTrace/models/` (PT-P1-D10),
-    /// or the `PULSARTRACE_MODELS_DIR` override verbatim (PT-P7-R1). The CoreML
+    /// or the `PULSARTRACE_MODELS_DIR` override verbatim (PT-R126). The CoreML
     /// bundles (Parakeet `parakeet-tdt-0.6b-v3-coreml/`, WhisperKit
     /// `whisperkit/`) live in SDK-managed subdirectories beneath it (PT-P5-D2).
     public var modelsCacheDirectory: URL {

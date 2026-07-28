@@ -1,4 +1,4 @@
-# UI-test wrapper project (PT-P7-R5). Generated output (PulsarTraceUIHarness.xcodeproj)
+# UI-test wrapper project (PT-R130). Generated output (PulsarTraceUIHarness.xcodeproj)
 # is gitignored — regenerate with `xcodegen generate` or scripts/run-ui-tests.sh.
 # SwiftPM remains the only build system for shipped products; this project exists
 # solely to compile the menubar app into a testable bundle and host XCUITest.

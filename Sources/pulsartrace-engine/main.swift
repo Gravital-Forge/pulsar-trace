@@ -103,7 +103,7 @@ struct EngineMain {
             // Realtime mode so the live pass runs at wall-clock pace (PT-R10).
             source = FixturePlaybackSource(
                 file: URL(fileURLWithPath: path), realtime: true)
-            // PT-P7-R2 — one operational marker that this live session runs
+            // PT-R127 — one operational marker that this live session runs
             // from fixture capture; no paths (Hard Invariant #7).
             Logger(label: LogSubsystem.engine)
                 .notice("live session running from fixture capture")

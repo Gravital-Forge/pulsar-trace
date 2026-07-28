@@ -1,9 +1,9 @@
 import XCTest
 import PulsarTraceMenuBar
 
-/// The PT-P7-R4 floor: every idle-reachable surface opens and renders the
+/// The PT-R129 floor: every idle-reachable surface opens and renders the
 /// seeded state — menubar panel, Recordings, Speakers, Settings; the run never
-/// touches daily state (PT-P7-R9). The live-transcript window (recording-only
+/// touches daily state (PT-R134). The live-transcript window (recording-only
 /// affordance) is asserted by the PT-P7-E3 record flow instead.
 ///
 /// Every surface is reached through the menubar status-item panel (the app's
@@ -14,7 +14,7 @@ import PulsarTraceMenuBar
 /// session), the item exists in the accessibility tree but is not hittable;
 /// `openPanel()` then `throw`s `XCTSkip` with the observed frame so the run is
 /// explicitly gated rather than red (see the guard for the exact condition).
-// PT-P7-R4
+// PT-R129
 final class FloorTests: XCTestCase {
 
     private var seed: SeededHome!
@@ -22,7 +22,7 @@ final class FloorTests: XCTestCase {
     /// Real daily-state paths captured before launch → mtime.
     private var dailyState: [String: Date] = [:]
 
-    /// Real daily-state paths the run must not touch (PT-P7-R9). The two
+    /// Real daily-state paths the run must not touch (PT-R134). The two
     /// directories are asserted unchanged; the production settings plist is
     /// advisory (a daily instance can rewrite it independently — see tearDown).
     private var realStatePaths: [String] {
@@ -65,9 +65,9 @@ final class FloorTests: XCTestCase {
         // (the OS reclaims the tmp tree but not the plist). Removing the
         // isolated home cannot affect the real-path mtimes below.
         seed?.tearDown()
-        // PT-P7-R9: the run must not have touched any real daily-state path.
+        // PT-R134: the run must not have touched any real daily-state path.
         // The app-under-test re-roots all of AppPaths + the settings suite via
-        // PULSARTRACE_HOME / PULSARTRACE_DEFAULTS_SUITE (PT-P7-R1), so it never
+        // PULSARTRACE_HOME / PULSARTRACE_DEFAULTS_SUITE (PT-R126), so it never
         // writes to any of these. The two directories are asserted unchanged;
         // the production plist is advisory because a concurrent daily instance
         // (not the test) can rewrite it.
@@ -76,7 +76,7 @@ final class FloorTests: XCTestCase {
                 .attributesOfItem(atPath: path))?[.modificationDate] as? Date
             if path == productionPlistPath {
                 if before != after {
-                    print("PT-P7-R9 note: production plist mtime changed during "
+                    print("PT-R134 note: production plist mtime changed during "
                         + "the run (\(path)). The app-under-test writes only to "
                         + "the isolated override suite; this indicates a "
                         + "concurrent daily instance, not the test.")
@@ -99,7 +99,7 @@ final class FloorTests: XCTestCase {
 
     func testMenubarPanelShowsRecordControl() throws {
         try openPanel(app)
-        // PT-P7-R4: the always-present record control renders in the panel.
+        // PT-R129: the always-present record control renders in the panel.
         XCTAssertTrue(app.buttons[A11yID.MenuBar.recordToggle]
             .waitForExistence(timeout: 5),
             "record toggle not rendered in the menubar panel")
@@ -112,13 +112,13 @@ final class FloorTests: XCTestCase {
 
     func testRecordingsPaneRendersSeededRecordings() throws {
         try openMainWindow(app, section: A11yID.MenuBar.openRecordings)
-        // The sidebar itself renders (PT-P7-R4): all three section entries.
+        // The sidebar itself renders (PT-R129): all three section entries.
         for id in [A11yID.Sidebar.recordings, A11yID.Sidebar.speakers,
                    A11yID.Sidebar.settings] {
             XCTAssertTrue(app.descendants(matching: .any)[id]
                 .waitForExistence(timeout: 10), "sidebar entry missing: \(id)")
         }
-        // Content-bearing (PT-P7-R4): every seeded recording folder renders as
+        // Content-bearing (PT-R129): every seeded recording folder renders as
         // a row keyed on its on-disk basename.
         for folder in SeededHome.recordingFolders {
             XCTAssertTrue(
@@ -130,7 +130,7 @@ final class FloorTests: XCTestCase {
 
     func testSpeakersPaneRendersSeededLibrary() throws {
         try openMainWindow(app, section: A11yID.MenuBar.openSpeakers)
-        // Content-bearing (PT-P7-R4): each seeded speaker renders as a row
+        // Content-bearing (PT-R129): each seeded speaker renders as a row
         // (keyed on the stable id) that shows the speaker's name.
         for (name, id) in seed.speakerIds {
             let row = app.descendants(matching: .any)[A11yID.Speakers.row(id)]
@@ -149,7 +149,7 @@ final class FloorTests: XCTestCase {
             XCTAssertTrue(app.descendants(matching: .any)[id]
                 .waitForExistence(timeout: 10), "missing control: \(id)")
         }
-        // Content-bearing (PT-P7-R4): the field shows the seeded output folder.
+        // Content-bearing (PT-R129): the field shows the seeded output folder.
         let field = app.descendants(matching: .any)[A11yID.Settings.outputFolderField]
         XCTAssertTrue(field.waitForExistence(timeout: 10),
                       "output folder field not rendered")

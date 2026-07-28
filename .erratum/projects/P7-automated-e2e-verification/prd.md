@@ -1,6 +1,7 @@
 # PT-P7 · Automated End-to-End Verification — Project PRD
 
-**Status:** Open · **Opened:** 2026-07-01
+**Status:** Frozen · **Opened:** 2026-07-01 · **Closed:** 2026-07-28 (close-out reconciled:
+PT-R126–PT-R134 minted, PT-C24 minted)
 
 ## Scope
 

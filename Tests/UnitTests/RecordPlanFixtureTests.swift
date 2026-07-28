@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// Fixture-mode argv derivation (PT-P7-R2).
+/// Fixture-mode argv derivation (PT-R127).
 @Suite("RecordPlan fixtures")
 struct RecordPlanFixtureTests {
 

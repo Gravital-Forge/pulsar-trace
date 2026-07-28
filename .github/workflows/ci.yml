@@ -1,4 +1,4 @@
-# Hosted-CI verification (PT-P7-R6, PT-P7-D4): audio-independent tiers only.
+# Hosted-CI verification (PT-R131, PT-P7-D4): audio-independent tiers only.
 # Real-audio capture never gates here — see scripts/e2e-audio-smoke.sh (dev host)
 # and the non-gating probe job for the facts that could change that.
 name: ci

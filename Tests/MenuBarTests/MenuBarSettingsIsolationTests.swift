@@ -3,7 +3,7 @@ import Foundation
 import PulsarTraceEngine
 @testable import PulsarTraceMenuBar
 
-/// Settings-side isolation (PT-P7-R1, PT-P7-R9).
+/// Settings-side isolation (PT-R126, PT-R134).
 @MainActor
 @Suite("MenuBarSettings isolation")
 struct MenuBarSettingsIsolationTests {
@@ -32,8 +32,8 @@ struct MenuBarSettingsIsolationTests {
         }
         let settings = MenuBarSettings(overrides: EnvironmentOverrides(
             environment: ["PULSARTRACE_DEFAULTS_SUITE": suite]))
-        #expect(settings.globalHotkey == nil)      // PT-P7-R9
-        #expect(settings.mcpServerEnabled == false) // PT-P7-R9
+        #expect(settings.globalHotkey == nil)      // PT-R134
+        #expect(settings.mcpServerEnabled == false) // PT-R134
     }
 
     @Test("default output folder follows the home override")

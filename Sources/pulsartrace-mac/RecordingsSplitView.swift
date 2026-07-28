@@ -183,7 +183,7 @@ private struct RecordingsListPane: View {
                     ForEach(group.rows) { row in
                         rowView(row)
                             .tag(row.id)
-                            // PT-P7-R3: keyed on the on-disk folder basename —
+                            // PT-R128: keyed on the on-disk folder basename —
                             // stable across renames, never the display title.
                             .accessibilityIdentifier(
                                 A11yID.Recordings.row(row.entry.folderURL.lastPathComponent))

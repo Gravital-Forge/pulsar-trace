@@ -3,7 +3,7 @@ import Foundation
 import PulsarTraceEngine
 @testable import PulsarTraceMenuBar
 
-/// The fixture-mode session driver (PT-P7-R2).
+/// The fixture-mode session driver (PT-R127).
 @Suite("EngineOnlyOrchestrator", .serialized)
 struct EngineOnlyOrchestratorTests {
 

@@ -171,7 +171,7 @@ struct SpeakerEditorView: View {
                         // so a tombstone can't take the visual selection.
                         speakerRow(speaker, viewModel: viewModel)
                             .tag(speaker.id)
-                            // PT-P7-R3: keyed on the stable spk_<ulid>, never
+                            // PT-R128: keyed on the stable spk_<ulid>, never
                             // the (renamable) speaker name. During inline-rename
                             // the row collapses to just the `TextField`, and this
                             // outer identifier would otherwise SHADOW that
@@ -354,7 +354,7 @@ struct SpeakerEditorView: View {
                 .padding(10)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
                 .padding(12)
-                // PT-P7-R3: the toast is a plain HStack in a safe-area inset —
+                // PT-R128: the toast is a plain HStack in a safe-area inset —
                 // a bare stack is not an AX element on macOS, so promote it to a
                 // container (children: .contain) BEFORE the identifier so tests
                 // can scope into it for the Undo button.
@@ -408,7 +408,7 @@ struct SpeakerEditorView: View {
             if renameTarget == speaker.id {
                 TextField("Name", text: $renameText)
                     .textFieldStyle(.roundedBorder)
-                    // PT-P7-R3: the inline rename field (TextField is a
+                    // PT-R128: the inline rename field (TextField is a
                     // first-class AX element — no promotion).
                     .accessibilityIdentifier(A11yID.Speakers.renameField)
                     .focused($focusedRenameID, equals: speaker.id)
@@ -465,7 +465,7 @@ struct SpeakerEditorView: View {
                         renameText = speaker.name
                         renameTarget = speaker.id
                     }
-                    // PT-P7-R3: identifier-located, not by title.
+                    // PT-R128: identifier-located, not by title.
                     .accessibilityIdentifier(A11yID.Speakers.renameButton)
                     // Merge/Split moved here from the toolbar (QA round 3):
                     // ⌘-click arming was undiscoverable, and the operand
@@ -492,7 +492,7 @@ struct SpeakerEditorView: View {
                                             count: count)
                                     }
                                 }
-                                // PT-P7-R3: per-target, keyed on the folded-in
+                                // PT-R128: per-target, keyed on the folded-in
                                 // speaker's id so the merge flow picks it by id.
                                 .accessibilityIdentifier(
                                     A11yID.Speakers.mergeTarget(other.id))

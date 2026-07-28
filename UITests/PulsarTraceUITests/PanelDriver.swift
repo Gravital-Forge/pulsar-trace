@@ -1,4 +1,4 @@
-// PT-P7-R4
+// PT-R129
 import XCTest
 import PulsarTraceMenuBar
 
@@ -32,7 +32,7 @@ extension XCTestCase {
             topEdge.hover()
             usleep(300_000)
         }
-        // PT-P7-R4 gate: the panel is the only entry point to every surface, so
+        // PT-R129 gate: the panel is the only entry point to every surface, so
         // when the item can't be placed on-screen the whole floor is
         // unreachable. Skip (not fail) with the observed frame — re-running on
         // an interactive session with the menu bar visible and room for the

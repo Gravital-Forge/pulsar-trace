@@ -27,7 +27,7 @@ public struct RecordPlan: Sendable, Equatable {
     /// argv for `pulsartrace-engine` (excludes the binary itself).
     public let engineArguments: [String]
 
-    /// Fixture WAVs standing in for the two capture streams (PT-P7-R2).
+    /// Fixture WAVs standing in for the two capture streams (PT-R127).
     ///
     /// Engine semantics: the primary `--source fixture` stream is the
     /// *system* stream (diarized); `--mic-fixture` pairs the `You` stream.
@@ -72,7 +72,7 @@ public struct RecordPlan: Sendable, Equatable {
     ///     Parakeet (which has no language-ID head); otherwise → auto. The
     ///     refine pass reproduces the old pin / detect-among semantics over the
     ///     allow list (tasks 13/14). Empty (the default) → auto.
-    ///   - fixtures: when non-nil (PT-P7-R2), the plan replaces both device
+    ///   - fixtures: when non-nil (PT-R127), the plan replaces both device
     ///     streams with committed fixture WAVs and empties `captureArguments`;
     ///     the orchestrator factory
     ///     (`RecordingViewModel.defaultOrchestratorFactory`) skips the capture
@@ -99,7 +99,7 @@ public struct RecordPlan: Sendable, Equatable {
         ]
         var captureArgs: [String] = []
         if let fixtures {
-            // PT-P7-R2: no capture daemon; the engine reads the committed
+            // PT-R127: no capture daemon; the engine reads the committed
             // fixture WAVs through its existing realtime fixture source.
             engineArgs += ["--source", "fixture", fixtures.primary.path]
             if fixtures.system != nil, let mic = fixtures.mic {

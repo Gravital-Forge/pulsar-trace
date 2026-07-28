@@ -130,10 +130,10 @@ public final class RecordingViewModel {
     /// is `.live` (asks the OS); tests inject canned outcomes.
     private let preflight: PermissionPreflight
 
-    /// E2E overrides (PT-P7-R1/R2); `.current` in production.
+    /// E2E overrides (PT-R126/PT-R127); `.current` in production.
     private let overrides: EnvironmentOverrides
     /// Whether the in-flight session runs from fixtures — engine self-exit
-    /// is then a natural end, not a crash (PT-P7-R2).
+    /// is then a natural end, not a crash (PT-R127).
     private var currentSessionIsFixture = false
 
     /// The orchestrator for the in-flight session, if any.
@@ -166,7 +166,7 @@ public final class RecordingViewModel {
     ///     subprocess wiring. Default `.live` asks the OS (and shows the TCC
     ///     prompts up front); tests inject canned outcomes so the suite never
     ///     touches real permissions.
-    ///   - overrides: the E2E environment overrides (PT-P7-R1/R2). Default
+    ///   - overrides: the E2E environment overrides (PT-R126/PT-R127). Default
     ///     `.current`; fixtures set here route the start through the
     ///     fixture-capture path (no preflight, engine-only orchestrator).
     public init(
@@ -218,7 +218,7 @@ public final class RecordingViewModel {
             return
         }
 
-        // PT-P7-R2: fixture capture needs no devices and no TCC — skip the
+        // PT-R127: fixture capture needs no devices and no TCC — skip the
         // permission preflight entirely. A denied grant must not block a
         // fixture start.
         let fixtures = RecordPlan.Fixtures.from(overrides)
@@ -361,7 +361,7 @@ public final class RecordingViewModel {
         orchestrator = nil
         // The live pass is dead — stop advertising its `live.md` (FIX 1).
         liveMarkdownURL = nil
-        // PT-P7-R2: a fixture session ends when the engine finishes the WAVs —
+        // PT-R127: a fixture session ends when the engine finishes the WAVs —
         // finalize exactly like a user stop, never as a crash.
         if currentSessionIsFixture {
             await finalizeCleanStop(recordingId: id)
@@ -423,7 +423,7 @@ public final class RecordingViewModel {
     nonisolated static let defaultOrchestratorFactory:
         @Sendable (RecordPlan, @escaping @Sendable (String) -> URL) -> RecordingOrchestrating
     = { plan, resolve in
-        // PT-P7-R2: an empty capture argv marks a fixture plan — the engine
+        // PT-R127: an empty capture argv marks a fixture plan — the engine
         // reads the committed WAVs itself, so no capture daemon is spawned.
         // This is the documented home of the empty-`captureArguments` ⇒
         // engine-only convention (RecordPlan.make sets it; T4 review note).

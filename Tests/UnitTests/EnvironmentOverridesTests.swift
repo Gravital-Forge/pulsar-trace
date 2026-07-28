@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PulsarTraceEngine
 
-/// The end-to-end override variables (PT-P7-R1, PT-P7-R2).
+/// The end-to-end override variables (PT-R126, PT-R127).
 @Suite("EnvironmentOverrides")
 struct EnvironmentOverridesTests {
 

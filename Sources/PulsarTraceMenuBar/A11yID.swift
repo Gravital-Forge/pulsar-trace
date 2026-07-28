@@ -1,4 +1,4 @@
-/// Accessibility identifiers for UI end-to-end tests (PT-P7-R3).
+/// Accessibility identifiers for UI end-to-end tests (PT-R128).
 ///
 /// Convention: `pt.<surface>.<element>`, camelCase element names. Dynamic
 /// rows append a **stable id** via the `row(_:)` helpers — a recording's
@@ -7,7 +7,7 @@
 /// `.accessibilityIdentifier(…)`; tests locate elements ONLY through these
 /// constants. This file is the single home of the convention — add new
 /// identifiers here first, then attach them.
-// PT-P7-R3
+// PT-R128
 public enum A11yID {
     /// The menu-bar status item (the `MenuBarExtra` label).
     public static let statusItem = "pt.statusItem"

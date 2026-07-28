@@ -1,8 +1,8 @@
-// PT-P7-R5
+// PT-R130
 import XCTest
 import PulsarTraceMenuBar
 
-/// Harness proof (PT-P7-R5): the wrapper app launches on an isolated home
+/// Harness proof (PT-R130): the wrapper app launches on an isolated home
 /// and surfaces its status item. Isolation only — no seeded state yet.
 final class LaunchSmokeTests: XCTestCase {
 
@@ -14,13 +14,13 @@ final class LaunchSmokeTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
 
         let app = XCUIApplication()
-        app.launchEnvironment["PULSARTRACE_HOME"] = home.path            // PT-P7-R1
+        app.launchEnvironment["PULSARTRACE_HOME"] = home.path            // PT-R126
         app.launchEnvironment["PULSARTRACE_DEFAULTS_SUITE"] =
             "com.gravitalforge.PulsarTrace.uitest.\(UUID().uuidString)"
         app.launch()
         defer { app.terminate() }
 
-        // The MenuBarExtra label carries A11yID.statusItem (PT-P7-R3) —
+        // The MenuBarExtra label carries A11yID.statusItem (PT-R128) —
         // empirically proven to surface on `app.statusItems` directly, so no
         // firstMatch fallback (an id regression must fail, not degrade).
         XCTAssertTrue(app.statusItems[A11yID.statusItem]

@@ -2,13 +2,13 @@ import XCTest
 import PulsarTraceMenuBar
 
 /// Settings persist across an app relaunch on the same isolated suite
-/// (PT-P7-R4; smoke-checklist "Settings persistence"). Changes a setting
+/// (PT-R129; smoke-checklist "Settings persistence"). Changes a setting
 /// through the real Settings pane, terminates the app, relaunches on the same
 /// `SeededHome`, and reads the value back through the UI — proving the write
 /// reached the override defaults suite and reloads on the next launch. The run
 /// stays entirely on the seeded suite; it never touches the production suite
-/// (PT-P7-R9), since `PULSARTRACE_DEFAULTS_SUITE` re-roots every read/write.
-// PT-P7-R4
+/// (PT-R134), since `PULSARTRACE_DEFAULTS_SUITE` re-roots every read/write.
+// PT-R129
 final class SettingsPersistenceTests: XCTestCase {
 
     private var seed: SeededHome!
