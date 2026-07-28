@@ -29,9 +29,13 @@ MIC_INDEX=$(printf '%s\n' "$MIC_LINE" | sed 's/[^0-9]*\([0-9][0-9]*\).*/\1/')
 echo "Using mic [$MIC_INDEX]: $MIC_LINE"
 
 # --- isolated state (PT-P7-R9) ------------------------------------------
+# The capture daemon's socket embeds OUT's basename ($TMPDIR/PulsarTrace/
+# rec_<name>-mic.sock) and sockaddr_un.sun_path caps at 104 bytes on Darwin
+# — under the standard /var/folders TMPDIR that leaves ~33 chars for the
+# basename, so keep it short.
 STAMP=$(date +%Y%m%d-%H%M%S)
 export PULSARTRACE_HOME="${TMPDIR:-/tmp}/pt-audio-smoke-home-$STAMP"
-OUT="${TMPDIR:-/tmp}/pt-audio-smoke-out-$STAMP"
+OUT="${TMPDIR:-/tmp}/pt-smoke-$STAMP"
 mkdir -p "$PULSARTRACE_HOME" "$OUT"
 
 # --- route default output to BlackHole, restore on ANY exit --------------
