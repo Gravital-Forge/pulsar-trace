@@ -1,0 +1,56 @@
+import Foundation
+
+/// The end-to-end test overrides (PT-R126, PT-R127).
+///
+/// E2E harnesses launch the app with these variables to redirect all mutable
+/// state into an isolated root and to run recordings from committed fixture
+/// WAVs instead of device capture. With no variables set every consumer
+/// behaves exactly as before. All consumers read the one `current` value;
+/// tests construct their own with an injected dictionary.
+///
+/// An empty value is treated as unset — this is how a harness explicitly
+/// clears a variable it does not want to override. Path values must be
+/// absolute: a relative path resolves against the launching process's
+/// working directory, which is `/` for a Finder- or launchd-launched app.
+// PT-R126
+public struct EnvironmentOverrides: Sendable, Equatable {
+    /// `PULSARTRACE_HOME` — re-roots every `AppPaths` location and the
+    /// default output folder root.
+    public let home: URL?
+    /// `PULSARTRACE_DEFAULTS_SUITE` — substitutes the settings suite.
+    public let defaultsSuite: String?
+    /// `PULSARTRACE_MODELS_DIR` — points the model store at an existing
+    /// cache (typically the real one, shared read-only) so an isolated run
+    /// skips the multi-GB model download.
+    public let modelsDirectory: URL?
+    /// `PULSARTRACE_SYSTEM_FIXTURE` — system-stream fixture WAV (PT-R127).
+    public let systemFixture: URL?
+    /// `PULSARTRACE_MIC_FIXTURE` — mic-stream fixture WAV (PT-R127).
+    public let micFixture: URL?
+
+    public init(environment: [String: String]) {
+        func value(_ key: String) -> String? {
+            guard let raw = environment[key], !raw.isEmpty else { return nil }
+            return raw
+        }
+        func url(_ key: String, isDirectory: Bool) -> URL? {
+            value(key).map {
+                URL(fileURLWithPath: $0, isDirectory: isDirectory)
+            }
+        }
+        self.home = url("PULSARTRACE_HOME", isDirectory: true)
+        self.defaultsSuite = value("PULSARTRACE_DEFAULTS_SUITE")
+        self.modelsDirectory = url("PULSARTRACE_MODELS_DIR", isDirectory: true)
+        self.systemFixture = url("PULSARTRACE_SYSTEM_FIXTURE", isDirectory: false)
+        self.micFixture = url("PULSARTRACE_MIC_FIXTURE", isDirectory: false)
+    }
+
+    /// Fixture capture mode is active when at least one fixture is set.
+    public var fixtureCaptureActive: Bool {
+        systemFixture != nil || micFixture != nil
+    }
+
+    /// The process environment's overrides, resolved once per process.
+    public static let current = EnvironmentOverrides(
+        environment: ProcessInfo.processInfo.environment)
+}

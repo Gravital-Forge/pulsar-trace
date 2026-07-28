@@ -57,6 +57,21 @@ struct MainWindowView: View {
         List(AppSection.allCases, selection: sidebarSelection) { section in
             Label(section.title, systemImage: section.systemImage)
                 .tag(section)
+                // PT-R128: identifier per sidebar entry. A `Label` carries
+                // text, so it is a first-class AX element — no container
+                // promotion needed.
+                .accessibilityIdentifier(Self.sidebarID(section))
+        }
+    }
+
+    /// Stable identifier for a sidebar entry (PT-R128) — keyed on the section
+    /// case, never the localized title, so the suite's lookup survives a title
+    /// or localization change.
+    private static func sidebarID(_ section: AppSection) -> String {
+        switch section {
+        case .recordings: return A11yID.Sidebar.recordings
+        case .speakers:   return A11yID.Sidebar.speakers
+        case .settings:   return A11yID.Sidebar.settings
         }
     }
 

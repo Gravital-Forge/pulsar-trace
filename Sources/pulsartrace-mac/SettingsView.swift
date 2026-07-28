@@ -37,7 +37,11 @@ struct SettingsView: View {
                         Text(device.name).tag(String?.some(device.uniqueID))
                     }
                 }
+                // PT-R128: Settings controls — each a first-class AX element
+                // (Picker/Toggle/TextField/Button), so no container promotion.
+                .accessibilityIdentifier(A11yID.Settings.micPicker)
                 Toggle("Capture system audio", isOn: $settings.systemAudioEnabled)
+                    .accessibilityIdentifier(A11yID.Settings.systemAudioToggle)
             }
 
             Section("Transcription") {
@@ -47,6 +51,7 @@ struct SettingsView: View {
                         Text(name).tag(name)
                     }
                 }
+                .accessibilityIdentifier(A11yID.Settings.refineModelPicker)
                 Text("Runs on the Neural Engine — recording never competes "
                     + "with Meet or screen-share for the GPU. large-v3-turbo "
                     + "is the fast default (~626 MB download on first use); "
@@ -73,6 +78,9 @@ struct SettingsView: View {
                         }
                     }
                     .buttonStyle(.bordered)
+                    // PT-R128: the languages picker button opens the popover;
+                    // this is the driven control for the language flow.
+                    .accessibilityIdentifier(A11yID.Settings.languageSection)
                     .popover(isPresented: $languagePopoverOpen,
                              arrowEdge: .top) {
                         languagePopoverContent
@@ -97,7 +105,9 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .accessibilityIdentifier(A11yID.Settings.outputFolderField)
                         Button("Choose…") { chooseOutputFolder() }
+                            .accessibilityIdentifier(A11yID.Settings.chooseFolderButton)
                     }
                 }
             }
@@ -107,6 +117,7 @@ struct SettingsView: View {
                     Text("Global record shortcut")
                     Spacer()
                     HotkeyRecorderField(combo: $settings.globalHotkey)
+                        .accessibilityIdentifier(A11yID.Settings.hotkeyRecorder)
                     Button("Clear") { settings.globalHotkey = nil }
                         .disabled(settings.globalHotkey == nil)
                 }
@@ -123,10 +134,12 @@ struct SettingsView: View {
             // restart actions (PT-R116).
             Section("MCP Server (agent control surface)") {
                 Toggle("Enable MCP server", isOn: $settings.mcpServerEnabled)
+                    .accessibilityIdentifier(A11yID.Settings.mcpToggle)
                 LabeledContent("Port") {
                     TextField("8276", value: $settings.mcpServerPort,
                               format: .number.grouping(.never))
                         .frame(width: 80)
+                        .accessibilityIdentifier(A11yID.Settings.mcpPortField)
                 }
                 LabeledContent("Status") {
                     Text(statusText(mcpStatus)).foregroundStyle(.secondary)

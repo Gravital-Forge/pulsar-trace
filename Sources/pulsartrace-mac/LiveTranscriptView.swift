@@ -32,10 +32,18 @@ struct LiveTranscriptView: View {
                 : "No recording in progress.",
             autoScroll: autoScroll,
             findActivator: find)
+        // PT-R128: the transcript renderer (its NSScrollView) is the list.
+        .accessibilityIdentifier(A11yID.LiveTranscript.list)
         .frame(minWidth: 360, minHeight: 320)
         // Same launch-quiet rule as the main window (see
         // `WindowRestorationOptOut`): never re-presented by restoration.
         .background(WindowRestorationOptOut())
+        // The window root the suite scopes into. This wrapper is a plain view,
+        // not an AX element on its own — promote it to a container
+        // (children: .contain) BEFORE the identifier so the list stays a
+        // scopeable descendant regardless of the OS window title.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(A11yID.LiveTranscript.window)
         .navigationTitle("Live Transcript")
         .toolbar {
             // Conditionally PRESENT, not a conditionally-empty item: an empty

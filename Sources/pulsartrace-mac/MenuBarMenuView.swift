@@ -16,6 +16,7 @@ struct MenuBarMenuView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(MenuBarSettings.self) private var settings
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -25,6 +26,9 @@ struct MenuBarMenuView: View {
                 .lineLimit(2)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
+                // PT-R128: the always-present status/progress line — the
+                // E2E suite reads recording + refine progress off this label.
+                .accessibilityIdentifier(A11yID.MenuBar.progressLabel)
 
             // A determinate bar under the status line while a refinement is
             // running — same data the "Refining N% · Stage" text reads, just
@@ -52,14 +56,23 @@ struct MenuBarMenuView: View {
 
             menuDivider
 
-            menuButton("Recordings…") { open(WindowID.main, section: .recordings) }
-            menuButton("Speakers…") { open(WindowID.main, section: .speakers) }
-            menuButton("Settings…") { open(WindowID.main, section: .settings) }
+            menuButton(
+                "Recordings…", identifier: A11yID.MenuBar.openRecordings
+            ) { open(WindowID.main, section: .recordings) }
+            menuButton(
+                "Speakers…", identifier: A11yID.MenuBar.openSpeakers
+            ) { open(WindowID.main, section: .speakers) }
+            menuButton(
+                "Settings…", identifier: A11yID.MenuBar.openSettings
+            ) { open(WindowID.main, section: .settings) }
 
             menuDivider
 
             // ⌘Q works while the panel is open (the panel is the key window).
-            menuButton("Quit PulsarTrace", shortcut: KeyboardShortcut("q")) {
+            menuButton(
+                "Quit PulsarTrace", identifier: A11yID.MenuBar.quit,
+                shortcut: KeyboardShortcut("q")
+            ) {
                 NSApplication.shared.terminate(nil)
             }
         }
@@ -69,6 +82,12 @@ struct MenuBarMenuView: View {
         // below it slide smoothly instead of snapping when a refinement
         // starts or finishes while the panel is open.
         .animation(.default, value: runningProgress != nil)
+        // PT-R128: the panel's root container — the E2E suite scopes every
+        // menubar query to this identifier. A bare VStack isn't an AX element
+        // on macOS, so promote it to a container element (children: .contain)
+        // for the identifier to surface in the AX tree.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(A11yID.MenuBar.panel)
     }
 
     /// Start/stop plus the state-specific actions (live transcript, crash
@@ -76,25 +95,46 @@ struct MenuBarMenuView: View {
     @ViewBuilder private var recordControls: some View {
         switch recording.status {
         case .idle:
-            menuButton("Start Recording", hint: hotkeyHint) {
+            // One identifier (`recordToggle`) across Start/Starting/Stop so
+            // the record control is locatable in every state (PT-R128).
+            menuButton(
+                "Start Recording", identifier: A11yID.MenuBar.recordToggle,
+                hint: hotkeyHint
+            ) {
                 Task { await recording.startRecording() }
             }
         case .launching:
-            menuButton("Starting…", enabled: false) {}
+            menuButton(
+                "Starting…", identifier: A11yID.MenuBar.recordToggle,
+                enabled: false
+            ) {}
         case .recording:
-            menuButton("Stop Recording", hint: hotkeyHint) {
+            menuButton(
+                "Stop Recording", identifier: A11yID.MenuBar.recordToggle,
+                hint: hotkeyHint
+            ) {
                 Task { await recording.stopRecording() }
             }
-            menuButton("Show Live Transcript…") {
+            menuButton(
+                "Show Live Transcript…",
+                identifier: A11yID.MenuBar.openLiveTranscript
+            ) {
                 open(WindowID.liveTranscript)
             }
         case .crashed:
-            menuButton("Recover Transcript") {
+            menuButton(
+                "Recover Transcript",
+                identifier: A11yID.MenuBar.recoverTranscript
+            ) {
                 Task { await recording.recoverFromCrash() }
             }
-            menuButton("Dismiss") { recording.dismissCrash() }
+            menuButton("Dismiss", identifier: A11yID.MenuBar.dismiss) {
+                recording.dismissCrash()
+            }
         case .error:
-            menuButton("Dismiss") { recording.dismissCrash() }
+            menuButton("Dismiss", identifier: A11yID.MenuBar.dismiss) {
+                recording.dismissCrash()
+            }
         }
     }
 
@@ -102,9 +142,12 @@ struct MenuBarMenuView: View {
     ///
     /// `hint` renders trailing secondary text (the global-hotkey glyphs on
     /// Start/Stop); `shortcut` registers a local keyboard shortcut for the
-    /// row (⌘Q on Quit).
+    /// row (⌘Q on Quit). `identifier` is the row's stable a11y id (PT-R128)
+    /// — required so a newly added row must mint a constant in `A11yID`
+    /// before it can be driven by the end-to-end suite.
     private func menuButton(
         _ title: String,
+        identifier: String,
         hint: String? = nil,
         shortcut: KeyboardShortcut? = nil,
         enabled: Bool = true,
@@ -124,6 +167,7 @@ struct MenuBarMenuView: View {
         .buttonStyle(MenuRowButtonStyle())
         .keyboardShortcut(shortcut)
         .disabled(!enabled)
+        .accessibilityIdentifier(identifier)  // PT-R128
     }
 
     /// The configured global hotkey as glyphs (e.g. ⇧⌘R) for the Start/Stop
@@ -214,6 +258,11 @@ struct MenuBarMenuView: View {
     private func open(_ id: String, section: AppSection? = nil) {
         if let section { navigation.section = section }
         openWindow(id: id)
+        // Dismiss the panel like a menu after a pick (PT-P7-D9): for a human
+        // the next click closes it as a side effect, but nothing ever "clicks
+        // outside" under accessibility driving, and the lingering panel can
+        // cover the very window it opened on small displays.
+        dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NSApp.activate()
             if let window = NSApp.windows.first(

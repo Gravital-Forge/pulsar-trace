@@ -7,16 +7,6 @@ framework's requirement / architecture / traceability core. Each entry carries a
 namespace separate from the Erratum ID scheme) so it can be referenced from commits and review
 notes. An entry is removed when the underlying work lands or is promoted into a project.
 
-## KI-1 · No continuous integration
-
-**Status:** Deferred — cost.
-
-There is no CI pipeline: nothing enforces the build, the test suites, or the pre-commit formatting
-hooks on push — every check is run by hand. The suite is macOS-only by nature: transcription and
-diarization run on the Apple Neural Engine (CoreML), so there is no cheaper Linux/container runner
-to fall back to, and hosted macOS runner minutes are expensive. That cost is why it is deferred. The
-gap compounds with KI-2, which constrains which suites could run unattended at all.
-
 ## KI-2 · Cross-suite pipeline test flakiness
 
 **Status:** Deferred.
@@ -39,3 +29,15 @@ are mutable, so the guard keys on a value that can change: renaming the micropho
 name makes it delistable again, and naming a guest `"You"` makes that guest un-delistable. This is
 one ordinary rename away, not an exotic edge case. It manifests in the Speaker Edit Service (PT-C23)
 over the Speaker Library (PT-C5).
+
+## KI-4 · Long output-folder names break the capture socket
+
+**Status:** Accepted — deferred.
+
+The capture daemon's per-session Unix socket embeds the recording output folder's basename verbatim
+(`$TMPDIR/PulsarTrace/rec_<basename>-mic.sock`), and Darwin caps `sockaddr_un.sun_path` at 104 bytes
+— under the standard `/var/folders` temp dir that leaves roughly 33 characters for the basename. A
+`pulsartrace record --output` whose folder basename exceeds it fails at capture start with "socket
+path too long". Surfaced by the real-audio smoke (PT-R132) during PT-P7; the clean fix is deriving
+the socket name from a hash or truncation of the session name rather than the basename. It manifests
+in the Capture Daemon (PT-C15) / record orchestrator boundary.

@@ -5,9 +5,19 @@ import Foundation
 // PT-R123
 public enum OutputFolderRoots {
 
-    /// `~/Documents/PulsarTrace` — the product default output folder.
-    public static var defaultRoot: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    /// `~/Documents/PulsarTrace` — the product default output folder; under a
+    /// `PULSARTRACE_HOME` override, `<home>/Documents/PulsarTrace` (PT-R126).
+    public static var defaultRoot: URL { defaultRoot(overrides: .current) }
+
+    /// Overrides-aware resolver; tests inject a synthetic environment.
+    // PT-R126
+    public static func defaultRoot(overrides: EnvironmentOverrides) -> URL {
+        if let home = overrides.home {
+            return home.appendingPathComponent(
+                "Documents/PulsarTrace", isDirectory: true)
+        }
+        return FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("PulsarTrace", isDirectory: true)
     }
 

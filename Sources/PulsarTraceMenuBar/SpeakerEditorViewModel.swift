@@ -147,12 +147,25 @@ public final class SpeakerEditorViewModel {
     // MARK: - Merge
 
     /// Merge `otherId` into `primaryId` and rewrite the merged speaker's past
-    /// `final.md` files (PT-R44, PT-P1-D16).
+    /// `final.md` files (PT-R44, PT-P1-D16). Offers an undo toast whose action
+    /// reverses the merge (restores the merged-away speaker and its labels).
     public func merge(primaryId: String, otherId: String) async {
-        await withRewrite {
+        // Capture both names before the merge: the merged-away speaker
+        // (`otherId`) is soft-deleted by the merge, so it is no longer in
+        // `liveSpeakers` once `withRewrite` reloads.
+        let otherName = liveSpeakers.first { $0.id == otherId }?.name ?? "speaker"
+        let primaryName = liveSpeakers.first { $0.id == primaryId }?.name ?? "speaker"
+        if await withRewrite({
             _ = try await self.service.merge(
                 primaryId: primaryId, otherId: otherId,
                 outputFolderRoots: self.outputRoots())
+        }) {
+            // PT-R32b: the destructive merge must be recoverable within the
+            // undo window — mirror delete/delist and surface an undo toast.
+            showToast(UndoToast(message: "Merged \(otherName) into \(primaryName)") {
+                [weak self] in
+                await self?.unmerge(primaryId: primaryId, otherId: otherId)
+            })
         }
     }
 
@@ -179,10 +192,9 @@ public final class SpeakerEditorViewModel {
     /// change any label. Offers an undo toast.
     public func delete(speakerId: String) async {
         let name = liveSpeakers.first { $0.id == speakerId }?.name ?? "speaker"
-        await withRewrite {
+        if await withRewrite({
             _ = try await self.service.delete(speakerId: speakerId)
-        }
-        if lastError == nil {
+        }) {
             showToast(UndoToast(message: "Deleted \(name)") { [weak self] in
                 await self?.undelete(speakerId: speakerId)
             })
@@ -221,11 +233,10 @@ public final class SpeakerEditorViewModel {
             return
         }
         let name = target.name
-        await withRewrite {
+        if await withRewrite({
             _ = try await self.service.delist(
                 speakerId: speakerId, outputFolderRoots: self.outputRoots())
-        }
-        if lastError == nil {
+        }) {
             showToast(UndoToast(message: "Stopped recognizing \(name)") {
                 [weak self] in
                 await self?.undelist(speakerId: speakerId)
@@ -346,8 +357,17 @@ public final class SpeakerEditorViewModel {
     }
 
     /// Run a mutating op with the `isRewriting` flag, error capture, and a
-    /// reload afterwards.
-    private func withRewrite(_ body: () async throws -> Void) async {
+    /// reload afterwards. Returns whether the op succeeded.
+    ///
+    /// The verdict is captured BEFORE the trailing `reload()`: `reload()`'s
+    /// success path clears `lastError`, so gating a toast on `lastError == nil`
+    /// after this call would always pass — a failed edit would flip to a
+    /// phantom success and its error would be swallowed. Capturing here lets
+    /// the three destructive ops gate their undo toast on the returned Bool
+    /// (no operation, no toast) and restores a failed op's error past the
+    /// reload so the banner actually shows it.
+    @discardableResult
+    private func withRewrite(_ body: () async throws -> Void) async -> Bool {
         // Reentrancy guard: a confirmation dialog staged before a rewrite
         // began can still confirm mid-flight (dialogs are window-modal, not
         // part of the disabled List's subtree). Two interleaved withRewrite
@@ -355,7 +375,7 @@ public final class SpeakerEditorViewModel {
         // refuse the second op instead.
         guard !isRewriting else {
             lastError = "Another rewrite is still in progress — try again in a moment."
-            return
+            return false
         }
         isRewriting = true
         lastError = nil
@@ -364,7 +384,13 @@ public final class SpeakerEditorViewModel {
         } catch {
             lastError = "\(error)"
         }
+        let succeeded = lastError == nil
+        let operationError = lastError
         isRewriting = false
         await reload()
+        // reload() cleared `lastError` on its own success — put the op's
+        // error back so a failed edit stays visible in the banner.
+        if !succeeded { lastError = operationError }
+        return succeeded
     }
 }

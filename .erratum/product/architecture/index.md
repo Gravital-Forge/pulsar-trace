@@ -71,9 +71,9 @@ thresholds calibrated to it; a schema migration archives and resets a database c
 from a prior, incompatible embedding space.
 
 *Interactions:* read and written by the Refinement Pipeline; managed by the CLI, the Menubar editor,
-and the MCP server, all through the shared Speaker Edit Service (PT-C23); edits drive the retroactive
-rewriter. The menubar app owns one shared library instance used by both the editor and the
-in-process MCP server, so an agent edit and a UI edit are the same writer.
+and the MCP server, all through the shared Speaker Edit Service (PT-C23); edits drive the
+retroactive rewriter. The menubar app owns one shared library instance used by both the editor and
+the in-process MCP server, so an agent edit and a UI edit are the same writer.
 
 *Satisfies:* PT-R22, PT-R23, PT-R28, PT-R30, PT-R32a, PT-R32b, PT-R49, PT-R83, PT-R105, PT-R113
 
@@ -110,11 +110,11 @@ the engine/capture boundary.
 ### PT-C9 · Command-Line Interface
 
 The `pulsartrace` tool: `refine` (run the refinement pass), `speakers` (manage the library — its
-mutating subcommands route through the shared Speaker Edit Service, gaining the retroactive transcript
-rewrite, with a repeatable `--output-folder` to resolve the roots a non-menubar caller scans),
-`record` (run a full session via the engine orchestrator), `doctor` (environment checks and a
-tone-based capture self-test), `events tail` (stream the event log), and `install-cli` (symlink with
-consent).
+mutating subcommands route through the shared Speaker Edit Service, gaining the retroactive
+transcript rewrite, with a repeatable `--output-folder` to resolve the roots a non-menubar caller
+scans), `record` (run a full session via the engine orchestrator), `doctor` (environment checks and
+a tone-based capture self-test), `events tail` (stream the event log), and `install-cli` (symlink
+with consent).
 
 *Interactions:* drives the Refinement Pipeline, the Speaker Library through the shared Speaker Edit
 Service (PT-C23), and the record orchestrator; spawns the Capture Daemon and engine for `record`.
@@ -188,7 +188,9 @@ The `pulsartrace-capture` process — the only permission-gated component. Captu
 (AVFoundation) and system audio (ScreenCaptureKit), resampling and downmixing to the canonical frame
 format at the source, and delivers both over Unix sockets. Owns sleep/wake and device-change
 recovery via in-band pause/resume control frames, per-engine frame-watchdog stall detection with
-backoff restart, and microphone selection / system-audio toggling.
+backoff restart, and microphone selection / system-audio toggling. A fixture-mode recording
+(PT-R127) runs with no capture daemon at all — the engine consumes committed fixture WAVs directly
+through the Audio Source Layer (PT-C1).
 
 *Interactions:* feeds the engine's socket sources over the IPC layer (PT-C8); emits
 recording-lifecycle and permission events (PT-C6).
@@ -202,17 +204,22 @@ recording control with a passive global hotkey (recorded directly in settings), 
 the speaker-library editor, and a master–detail main window that lists recordings (scanned from
 metadata sidecars, renameable, searchable) beside an in-window transcript detail rendering the
 selected — including a live — transcript through one styled renderer. Posts a system notification on
-refinement completion or failure, and exposes accessibility labels on its controls. It owns the
-single shared Speaker Library instance, delegates speaker edits to the Speaker Edit Service (PT-C23),
-and hosts the opt-in in-process MCP Server (PT-C22) via an `MCPController` — with a Settings section
-for the toggle, port, live `/healthz` status, copyable connection snippet, and manual restart.
+refinement completion or failure. Every driven control carries a stable accessibility identifier
+from the `A11yID` registry (PT-R128), and the menubar panel dismisses itself when a navigation row
+opens the main window — nothing "clicks outside" under accessibility driving. Honors the
+environment-driven isolation overrides (PT-R126) and a fixture-capture record plan (PT-R127) that
+runs the full record flow from committed WAVs through an engine-only orchestrator. It owns the
+single shared Speaker Library instance, delegates speaker edits to the Speaker Edit Service
+(PT-C23), and hosts the opt-in in-process MCP Server (PT-C22) via an `MCPController` — with a
+Settings section for the toggle, port, live `/healthz` status, copyable connection snippet, and
+manual restart.
 
 *Interactions:* drives recording and the in-process refiner (PT-C4); reads the live transcript;
 edits the Speaker Library (PT-C5) through the Speaker Edit Service (PT-C23); surfaces the Refinement
 Job Queue (PT-C17); hosts the MCP Server (PT-C22).
 
 *Satisfies:* PT-R31, PT-R40, PT-R41, PT-R42, PT-R43, PT-R44, PT-R45, PT-R103, PT-R104, PT-R106,
-PT-R114
+PT-R114, PT-R126, PT-R127, PT-R128
 
 ### PT-C17 · Refinement Job Queue
 
@@ -304,7 +311,8 @@ settings, model selection, or capture.
 refines onto the Refinement Job Queue (PT-C17). The tool-handling core is transport-agnostic, so a
 future LAN transport is an isolated addition rather than a rewrite.
 
-*Satisfies:* PT-R115, PT-R116, PT-R117, PT-R118, PT-R119, PT-R120, PT-R121, PT-R122, PT-R124, PT-R125
+*Satisfies:* PT-R115, PT-R116, PT-R117, PT-R118, PT-R119, PT-R120, PT-R121, PT-R122, PT-R124,
+PT-R125
 
 ### PT-C23 · Speaker Edit Service
 
@@ -321,3 +329,25 @@ Command-Line Interface (PT-C9); mutates the Speaker Library (PT-C5) and drives t
 Pipeline's retroactive rewriter (PT-C4); emits to the Events Log (PT-C6).
 
 *Satisfies:* PT-R123
+
+### PT-C24 · End-to-End Verification Harness
+
+The verification layer over the shipped app. Owns the committed XcodeGen wrapper spec
+(`project.yml`) that generates a disposable, gitignored Xcode project compiling the menubar sources
+into a testable bundle; the XCUITest suites (`UITests/PulsarTraceUITests` — launch smoke, floor,
+record flow, settings persistence, speaker flows) with their seeded-home and artifact-probe helpers;
+the run scripts (`scripts/run-ui-tests.sh`, `scripts/start-ui-session.sh` for the dev-desktop
+automation-mode ceremony); the hosted-CI workflow (`.github/workflows/ci.yml` — package build plus
+hermetic filters, UI floor, a model-cached record-flow lane, and a non-gating runner-capability
+probe); the real-audio smoke (`scripts/e2e-audio-smoke.sh`); and the agent verification runbook
+(`docs/agent-verification.md`). Tests address the UI exclusively through the `A11yID` identifier
+registry, which lives in the `PulsarTraceMenuBar` library so views attach identifiers at definition.
+Every tier runs against isolated roots (PT-R134), sharing only the read-only model cache by explicit
+opt-in.
+
+*Interactions:* drives the Menubar Application (PT-C16) through its isolation and fixture seams
+(PT-R126, PT-R127) and the Audio Source Layer's fixture path (PT-C1); the audio smoke drives the
+Command-Line Interface (PT-C9) and the Capture Daemon (PT-C15); the runbook cross-checks through the
+Transcript Output (PT-C11), the Events Log (PT-C6), and the MCP Server (PT-C22).
+
+*Satisfies:* PT-R128, PT-R129, PT-R130, PT-R131, PT-R132, PT-R133, PT-R134

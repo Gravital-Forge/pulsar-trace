@@ -5,6 +5,9 @@
 *.xcodeproj
 .swiftpm/
 
+# Generated UI-test wrapper Info.plist (XcodeGen writes this; PT-P7-R5)
+UITests/App-Info.plist
+
 # Developer audio preflight artifacts (scripts/audio-loopback-check.sh)
 .preflight/
 
@@ -17,3 +20,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Local-only material, never committed
+.local/

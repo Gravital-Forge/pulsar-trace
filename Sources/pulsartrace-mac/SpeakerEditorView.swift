@@ -171,6 +171,20 @@ struct SpeakerEditorView: View {
                         // so a tombstone can't take the visual selection.
                         speakerRow(speaker, viewModel: viewModel)
                             .tag(speaker.id)
+                            // PT-R128: keyed on the stable spk_<ulid>, never
+                            // the (renamable) speaker name. During inline-rename
+                            // the row collapses to just the `TextField`, and this
+                            // outer identifier would otherwise SHADOW that
+                            // field's own `renameField` id (SwiftUI applies the
+                            // outermost `.accessibilityIdentifier` to the single
+                            // leaf AX element the row becomes, so the field
+                            // surfaced under the row id). Expose `renameField`
+                            // while the row is being renamed and the stable row
+                            // id otherwise — identifier-only, no behavior change.
+                            .accessibilityIdentifier(
+                                renameTarget == speaker.id
+                                    ? A11yID.Speakers.renameField
+                                    : A11yID.Speakers.row(speaker.id))
                     }
                 }
                 if !viewModel.deletedSpeakers.isEmpty {
@@ -211,6 +225,9 @@ struct SpeakerEditorView: View {
                     }
                 }
             }
+            // A SwiftUI List is already an AX element (an outline/table) — the
+            // identifier alone surfaces it; no `children: .contain` promotion.
+            .accessibilityIdentifier(A11yID.Speakers.list)
             // A rewrite fans out over every affected final.md on disk — the
             // list is disabled while one is in flight so edits cannot stack
             // (the toolbar shows the paired busy indicator). Applied before
@@ -273,6 +290,7 @@ struct SpeakerEditorView: View {
                     }
                     pendingMerge = nil
                 }
+                .accessibilityIdentifier(A11yID.Speakers.mergeConfirm)
             } message: {
                 let count = pendingMerge?.count ?? 0
                 Text("“\(pendingMerge?.otherName ?? "")” is folded into "
@@ -331,10 +349,17 @@ struct SpeakerEditorView: View {
                             viewModel.dismissToast()
                         }
                     }
+                    .accessibilityIdentifier(A11yID.Speakers.undoButton)
                 }
                 .padding(10)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
                 .padding(12)
+                // PT-R128: the toast is a plain HStack in a safe-area inset —
+                // a bare stack is not an AX element on macOS, so promote it to a
+                // container (children: .contain) BEFORE the identifier so tests
+                // can scope into it for the Undo button.
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier(A11yID.Speakers.undoToast)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -383,6 +408,9 @@ struct SpeakerEditorView: View {
             if renameTarget == speaker.id {
                 TextField("Name", text: $renameText)
                     .textFieldStyle(.roundedBorder)
+                    // PT-R128: the inline rename field (TextField is a
+                    // first-class AX element — no promotion).
+                    .accessibilityIdentifier(A11yID.Speakers.renameField)
                     .focused($focusedRenameID, equals: speaker.id)
                     .onAppear {
                         focusedRenameID = speaker.id
@@ -437,6 +465,8 @@ struct SpeakerEditorView: View {
                         renameText = speaker.name
                         renameTarget = speaker.id
                     }
+                    // PT-R128: identifier-located, not by title.
+                    .accessibilityIdentifier(A11yID.Speakers.renameButton)
                     // Merge/Split moved here from the toolbar (QA round 3):
                     // ⌘-click arming was undiscoverable, and the operand
                     // pickers were redundant once two speakers were already
@@ -462,8 +492,13 @@ struct SpeakerEditorView: View {
                                             count: count)
                                     }
                                 }
+                                // PT-R128: per-target, keyed on the folded-in
+                                // speaker's id so the merge flow picks it by id.
+                                .accessibilityIdentifier(
+                                    A11yID.Speakers.mergeTarget(other.id))
                             }
                         }
+                        .accessibilityIdentifier(A11yID.Speakers.mergeButton)
                     }
                     Button("Split…") {
                         splitNewName = ""
@@ -500,6 +535,7 @@ struct SpeakerEditorView: View {
                     Button("Delete", role: .destructive) {
                         Task { await viewModel.delete(speakerId: speaker.id) }
                     }
+                    .accessibilityIdentifier(A11yID.Speakers.deleteButton)
                 }
             }
         }

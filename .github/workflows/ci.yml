@@ -1,0 +1,135 @@
+# Hosted-CI verification (PT-R131, PT-P7-D4): audio-independent tiers only.
+# Real-audio capture never gates here — see scripts/e2e-audio-smoke.sh (dev host)
+# and the non-gating probe job for the facts that could change that.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Pin the toolchain to the dev host's (Xcode 26.6 / Swift 6.3.3): the macos-26
+# image's default. An image update that drops it fails loudly here rather than
+# silently building with a different compiler (macos-15's default Swift 6.1
+# rejects code the project's Swift 6.3 accepts).
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain versions
+        run: swift --version && xcodebuild -version
+      - name: Build
+        run: swift build
+      # One bare invocation per hermetic filter — never the broad
+      # PipelineTests run (cross-suite fd races; CLAUDE.md).
+      - name: Unit tests
+        run: swift test --filter UnitTests
+      - name: IPC suites
+        run: swift test --filter IPC
+      - name: Record orchestrator
+        run: swift test --filter RecordOrchestrator
+      - name: Live runner
+        run: swift test --filter LiveRunner
+      - name: Speaker suites
+        run: swift test --filter Speaker
+      - name: Source suites
+        run: swift test --filter Source
+      - name: Lifecycle
+        run: swift test --filter Lifecycle
+      - name: Final markdown rewriter
+        run: swift test --filter FinalMarkdownRewriter
+      - name: Menubar suites
+        run: swift test --filter MenuBarTests
+
+  ui-floor:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: UI suite (floor — no models)
+        run: >-
+          scripts/run-ui-tests.sh
+          -skip-testing:PulsarTraceUITests/RecordFlowTests
+      - name: Upload result bundle
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-floor-xcresult
+          path: |
+            .build/ui-test-results
+            .build/ui-test-diagnostics
+          if-no-files-found: ignore
+
+  ui-flows:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Restore model cache
+        id: models
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/PulsarTrace/models
+          # Bump the suffix when the pinned model set changes
+          # (FluidAudio/WhisperKit versions in Package.swift).
+          key: pt-models-${{ runner.os }}-v1
+      - name: Prime models (cold cache only)
+        if: steps.models.outputs.cache-hit != 'true'
+        run: |
+          swift test --filter Parakeet
+          swift test --filter WhisperKitRefine
+      - name: Record flow (fixture capture; CPU/GPU fallback — no ANE in VM)
+        run: >-
+          scripts/run-ui-tests.sh
+          -only-testing:PulsarTraceUITests/RecordFlowTests
+      - name: Upload result bundle
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-flows-xcresult
+          path: |
+            .build/ui-test-results
+            .build/ui-test-diagnostics
+          if-no-files-found: ignore
+
+  # Fact-gathering only (PT-P7-D4): what does this VM actually support?
+  # Never gates — promotion of any audio tier to CI is a project decision
+  # made on this job's recorded output, not folklore.
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Audio devices (stock image)
+        run: system_profiler SPAudioDataType || true
+      - name: SIP status
+        run: csrutil status || true
+      - name: Install BlackHole and restart coreaudiod
+        run: |
+          brew install --cask blackhole-2ch || exit 0
+          sudo killall coreaudiod || true
+          sleep 5
+      - name: Audio devices (after BlackHole)
+        run: system_profiler SPAudioDataType || true
+      - name: CoreML compute devices (ANE present?)
+        run: |
+          cat > /tmp/probe.swift <<'SWIFT'
+          import CoreML
+          print(MLComputeDevice.allComputeDevices)
+          SWIFT
+          swift /tmp/probe.swift || true

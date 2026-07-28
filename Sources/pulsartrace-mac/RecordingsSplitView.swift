@@ -183,11 +183,18 @@ private struct RecordingsListPane: View {
                     ForEach(group.rows) { row in
                         rowView(row)
                             .tag(row.id)
+                            // PT-R128: keyed on the on-disk folder basename —
+                            // stable across renames, never the display title.
+                            .accessibilityIdentifier(
+                                A11yID.Recordings.row(row.entry.folderURL.lastPathComponent))
                             .contextMenu { contextMenu(row) }
                     }
                 }
             }
         }
+        // A SwiftUI List is already an AX element (an outline/table), so the
+        // identifier alone surfaces it — no `children: .contain` promotion.
+        .accessibilityIdentifier(A11yID.Recordings.list)
         .onDeleteCommand {
             guard let id = navigation.selectedRecordingID else { return }
             Task { await paneModel.moveToTrash(recordingId: id) }
