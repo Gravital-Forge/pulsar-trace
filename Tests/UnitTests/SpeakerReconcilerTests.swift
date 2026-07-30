@@ -137,6 +137,19 @@ struct SpeakerReconcilerTests {
         #expect(outcome.nameByRawLabel["SPEAKER_00"] == "Unknown #3")
     }
 
+    @Test("excludingSpeakers skips the excluded cluster entirely")
+    func exclusionSkips() async throws {
+        let (lib, dir) = try await library()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outcome = try await SpeakerReconciler(library: lib).reconcile(
+            diarization: diarization(embeddings: [
+                "SPEAKER_00": axisVector(0), "SPEAKER_01": axisVector(9)]),
+            recordingId: "rec_a", recordingFolderName: "a",
+            excludingSpeakers: ["SPEAKER_00"])
+        #expect(outcome.nameByRawLabel["SPEAKER_00"] == nil)
+        #expect(outcome.newCount == 1)
+    }
+
     @Test("reconcile: a cross-revision cluster never matches — becomes new")
     func reconcileCrossRevisionIsNew() async throws {
         let (lib, dir) = try await library()

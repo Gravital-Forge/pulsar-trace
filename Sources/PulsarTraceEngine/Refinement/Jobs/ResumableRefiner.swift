@@ -94,6 +94,21 @@ public actor ResumableRefiner {
             try await advance(&progress, to: .diarizing, folder: folder)
             let diarization = try await runDiarization(folder: folder, progress: &progress)
 
+            // PT-P8-R1: mic diarization — per-recording opt-in via options.json.
+            // Runs as its own checkpointed stage; the result is persisted to
+            // `mic-diarization.json` and threaded into the merge (T2/T3).
+            var micDiarization: DiarizationResult?
+            let recordingOptions = RecordingOptions.read(from: job.folderURL)
+            if recordingOptions.diarizeMic, let micStream = folder.micStream {
+                try await advance(&progress, to: .diarizingMic, folder: folder)
+                micDiarization = try await runMicDiarization(
+                    micWav: micStream.url, folder: folder, progress: &progress)
+                if let micDiarization {
+                    try? MicDiarizationSidecar.write(
+                        micDiarization, to: folder.directory)
+                }
+            }
+
             try await advance(&progress, to: .transcribingMic, folder: folder)
             if folder.micStream != nil {
                 try await transcribeMicStream(folder: folder, progress: &progress)
@@ -103,7 +118,9 @@ public actor ResumableRefiner {
             try await advance(&progress, to: .writingFinal, folder: folder)
             try await advance(&progress, to: .writingMetadata, folder: folder)
             let assembled = try await mergeAndWrite(
-                folder: folder, progress: progress, diarization: diarization, job: job)
+                folder: folder, progress: progress, diarization: diarization,
+                micDiarization: micDiarization, recordingOptions: recordingOptions,
+                job: job)
 
             let wallSeconds = Date().timeIntervalSince(startedAt)
             _ = try? await events?.append(RefinementCompletedEvent(
@@ -329,6 +346,25 @@ public actor ResumableRefiner {
         }
     }
 
+    /// PT-P8-R1 — diarize the mic WAV (stamp on). Same D-Q7 cancel-retry
+    /// posture as `runDiarization`: a pause cancels the in-flight run and the
+    /// loop re-runs when the gate reopens; other errors propagate.
+    private func runMicDiarization(
+        micWav: URL,
+        folder: RecordingFolder,
+        progress: inout RefinementProgress
+    ) async throws -> DiarizationResult? {
+        while true {
+            await pauseGate.waitOpen()
+            do {
+                return try await diarize(micWav)
+            } catch let e as Diarizer.DiarizeError {
+                if case .cancelled = e { continue }
+                throw e
+            }
+        }
+    }
+
     // MARK: - Final assembly
 
     @discardableResult
@@ -336,6 +372,8 @@ public actor ResumableRefiner {
         folder: RecordingFolder,
         progress: RefinementProgress,
         diarization: DiarizationResult?,
+        micDiarization: DiarizationResult?,
+        recordingOptions: RecordingOptions,
         job: RefinementJob
     ) async throws -> TranscriptAssembly.AssembleResult {
         let system = progress.systemSegments.map {
@@ -353,8 +391,8 @@ public actor ResumableRefiner {
         let folderName = folder.directory.lastPathComponent
         let recordingStart = RecordingFolderTimestamp.parse(folderName) ?? Date()
 
-        // PT-P8-R3 (a): passive owner-profile learning — ordinary recordings only.
-        let recordingOptions = RecordingOptions.read(from: folder.directory)
+        // PT-P8-R3 (a): passive owner-profile learning — ordinary recordings
+        // only. `recordingOptions` is read once per pass in `run` and passed in.
         if !recordingOptions.diarizeMic,
            let micStream = folder.micStream,
            let ownerProfile {
@@ -368,11 +406,27 @@ public actor ResumableRefiner {
                 logger: logger)
         }
 
+        // PT-P8-R4/R5: attribute the mic clusters when the stamp was on (a mic
+        // diarization exists). Owner → `You`, guests through the shared library.
+        var micAttribution: MicChannelAttribution.Outcome?
+        if let micDiarization {
+            micAttribution = try await MicChannelAttribution.attribute(
+                micDiarization: micDiarization,
+                ownerProfile: ownerProfile,
+                library: library,
+                recordingId: folder.recordingId,
+                recordingFolderName: folder.directory.lastPathComponent,
+                events: events,
+                logger: logger)
+        }
+
         return try await TranscriptAssembly.assembleAndWrite(
             folder: folder,
             systemSegments: system,
             micSegments: mic,
             diarization: diarization,
+            micDiarization: micDiarization,
+            micAttribution: micAttribution,
             language: progress.language ?? "unknown",
             whisperModelName: job.modelName,
             whisperModelSHA256: job.modelSHA256,

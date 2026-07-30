@@ -14,7 +14,8 @@ import Logging
 /// - a cluster with no match becomes a **new** library speaker with an
 ///   `Unknown #N` placeholder name (`speaker_created`).
 ///
-/// The mic stream ("You") is never in the library — it is never passed here.
+/// PT-P8-R5: mic-channel guest clusters reconcile here too; the owner cluster
+/// is excluded via `excludingSpeakers` and is never in the library.
 public struct SpeakerReconciler: Sendable {
 
     /// The reconciliation result for one recording.
@@ -50,12 +51,16 @@ public struct SpeakerReconciler: Sendable {
     ///   - recordingId: the recording's stable id (`rec_<short>`).
     ///   - recordingFolderName: the recording folder basename (for the
     ///     retroactive `final.md` rewrite).
+    ///   - excludingSpeakers: raw labels to skip entirely (PT-P8-R5) — the
+    ///     mic-channel owner cluster is attributed to `You` and must never be
+    ///     enrolled in the library.
     /// - Returns: the per-label name/id mapping the pipeline renders into
     ///   `final.md` and `metadata.json`.
     public func reconcile(
         diarization: DiarizationResult,
         recordingId: String,
-        recordingFolderName: String
+        recordingFolderName: String,
+        excludingSpeakers: Set<String> = []
     ) async throws -> Outcome {
         let revision = diarization.modelRevision
         let embeddingByLabel = Dictionary(
@@ -70,6 +75,9 @@ public struct SpeakerReconciler: Sendable {
         // Deterministic order: process raw labels sorted, so `Unknown #N`
         // numbering is stable across runs.
         for rawLabel in diarization.speakers.sorted() {
+            // PT-P8-R5: the owner cluster (attributed to `You`) is excluded —
+            // it must never be enrolled in the shared library.
+            if excludingSpeakers.contains(rawLabel) { continue }
             guard let embedding = embeddingByLabel[rawLabel] else {
                 // No embedding for this cluster — keep pyannote's display
                 // label; it cannot be reconciled. Should not happen with a

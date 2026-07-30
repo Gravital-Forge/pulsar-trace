@@ -74,7 +74,7 @@ struct DiarizationE2ETests {
         // proves the in-process actor reaches the engine and returns a
         // well-formed result.
         let diarizer = Diarizer(configuration: .init())
-        let result = try await diarizer.diarizeSystemStream(
+        let result = try await diarizer.diarizeStream(
             wavPath: fixtureURL("two-speakers-alternating"))
         #expect(result.speakers.count == 2)
         #expect(result.modelRevision.count == 64)

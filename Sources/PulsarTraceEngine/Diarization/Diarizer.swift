@@ -7,10 +7,10 @@ import Logging
 /// - FluidAudio's offline pipeline (pyannote community-1 ported to CoreML —
 ///   `DiarizerEngine`) replaces the captive Python subprocess (PT-P1-D9, retired).
 ///   No venv, no HF token, no IPC: the WAV is handed to CoreML directly.
-/// - **PT-R17**: the entry point only ever receives the *system-stream* WAV. The
-///   mic stream is never diarized — "You" is always "You". This is structural:
-///   `Diarizer` has a single `diarizeSystemStream(wavPath:)` method and no
-///   other diarization surface.
+/// - **PT-P8-R1** (was PT-R17): the entry point is stream-agnostic —
+///   `diarizeStream(wavPath:)` accepts either the system-stream WAV or, when a
+///   recording opts in (`options.json`), the mic-stream WAV. The old system-only
+///   constraint is removed; the mic stream is diarized on demand.
 /// - **Cancellation** (queue pause, D-Q7): `cancel()` cancels the in-flight
 ///   `Task`; FluidAudio's pipeline checks `Task.checkCancellation()` between
 ///   chunks, so compute genuinely stops. The caller sees `.cancelled`, retries
@@ -109,8 +109,10 @@ public actor Diarizer {
         inflight?.cancel()
     }
 
-    /// Diarize the **system-stream** WAV of a recording (PT-R17).
-    public func diarizeSystemStream(wavPath: URL) async throws -> DiarizationResult {
+    /// Diarize a recording stream's WAV. Stream-agnostic — PT-P8-R1 removed the
+    /// system-only constraint (was PT-R17): the caller passes either the system
+    /// or (when the recording opts in) the mic WAV.
+    public func diarizeStream(wavPath: URL) async throws -> DiarizationResult {
         guard FileManager.default.fileExists(atPath: wavPath.path) else {
             throw DiarizeError.wavNotFound(wavPath.path)
         }

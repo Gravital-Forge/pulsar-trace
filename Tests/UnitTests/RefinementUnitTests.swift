@@ -163,7 +163,8 @@ struct RefinementUnitTests {
         let json = try metadata.encoded()
         let obj = try JSONSerialization.jsonObject(with: json) as! [String: Any]
 
-        #expect(obj["schema_version"] as? Int == 2)
+        #expect(obj["schema_version"] as? Int == 3)   // PT-P8-R10 (was v2)
+        #expect(obj["mic_diarized"] as? Bool == false) // absent-defaulted output
         #expect(obj["recording_id"] as? String == "rec_demo")
         #expect(obj["recording_start"] as? String == "2026-04-30T14:30:00Z")
         #expect(obj["refined_at"] as? String == "2026-04-30T15:00:00Z")

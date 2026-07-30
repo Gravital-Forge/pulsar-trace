@@ -31,6 +31,7 @@ public struct RefinementPipeline: Sendable {
         case transcribingSystem = "transcribing system audio"
         case transcribingMic = "transcribing microphone audio"
         case diarizing = "diarizing speakers"
+        case diarizingMic = "diarizing microphone speakers"
         case merging = "merging transcript and speakers"
         case writingFinal = "writing final.md"
         case writingMetadata = "writing metadata.json"
@@ -252,6 +253,11 @@ public struct RefinementPipeline: Sendable {
         progress: ProgressReporter?
     ) async throws -> Output {
 
+        // PT-P8-R2 — the per-recording input stamp, read once for this pass and
+        // reused by the mic-diarization stage (below) and the passive-learning
+        // hook (Stage 4). Absent/malformed ⇒ all-defaults (mode off).
+        let recordingOptions = RecordingOptions.read(from: folder.directory)
+
         // --- Stage 2: transcribe the system stream --------------------------
         progress?(.transcribingSystem)
         let systemTranscription = try await transcribe(
@@ -273,7 +279,7 @@ public struct RefinementPipeline: Sendable {
                 diarization = precomputedDiarization
             } else {
                 do {
-                    diarization = try await diarizer.diarizeSystemStream(
+                    diarization = try await diarizer.diarizeStream(
                         wavPath: folder.systemStream.url)
                 } catch {
                     throw RefineError.diarization(error)
@@ -281,6 +287,26 @@ public struct RefinementPipeline: Sendable {
             }
         } else {
             logger.notice("no speech in system stream — skipping diarization")
+        }
+
+        // --- Stage 3a: mic diarization (per-recording opt-in) ---------------
+        // PT-P8-R1: when the stamp is on and a mic stream exists, diarize the
+        // mic WAV as its own stage and persist it to `mic-diarization.json`
+        // (E5's owner-reassignment edits read the sidecar rather than
+        // re-diarizing). The merge (T2/T3) attributes its clusters.
+        var micDiarization: DiarizationResult?
+        if recordingOptions.diarizeMic, let micStream = folder.micStream {
+            progress?(.diarizingMic)
+            do {
+                micDiarization = try await diarizer.diarizeStream(
+                    wavPath: micStream.url)
+            } catch {
+                throw RefineError.diarization(error)
+            }
+            if let micDiarization {
+                try? MicDiarizationSidecar.write(
+                    micDiarization, to: folder.directory)
+            }
         }
 
         // --- Stage 3b: reconcile clusters against the speaker library -------
@@ -312,16 +338,33 @@ public struct RefinementPipeline: Sendable {
                 options: options)
         }
 
+        // PT-P8-R4/R5: attribute the mic clusters — at most one `You` (owner
+        // profile), the rest through the shared library. Only when the mic
+        // stream was diarized (stamp on); nil otherwise so the merge keeps the
+        // single-`You` shape.
+        var micAttribution: MicChannelAttribution.Outcome?
+        if let micDiarization {
+            micAttribution = try await MicChannelAttribution.attribute(
+                micDiarization: micDiarization,
+                ownerProfile: ownerProfile,
+                library: library,
+                recordingId: folder.recordingId,
+                recordingFolderName: folder.directory.lastPathComponent,
+                events: events,
+                logger: logger)
+        }
+
         progress?(.merging)
         let merged = mergeStreams(
             system: systemTranscription,
             diarization: diarization,
             reconciliation: reconciliation,
             mic: micTranscription,
+            micDiarization: micDiarization,
+            micAttribution: micAttribution,
             recordingStart: recordingStart)
 
         // PT-P8-R3 (a): passive owner-profile learning — ordinary recordings only.
-        let recordingOptions = RecordingOptions.read(from: folder.directory)
         if !recordingOptions.diarizeMic,
            let micStream = folder.micStream,
            let ownerProfile {
@@ -330,7 +373,7 @@ public struct RefinementPipeline: Sendable {
                 dedupedMicSegments: TranscriptAssembly.dedupedMicSegments(
                     micTranscription?.segments ?? [],
                     against: systemTranscription.segments),
-                diarize: { try await diarizer.diarizeSystemStream(wavPath: $0) },
+                diarize: { try await diarizer.diarizeStream(wavPath: $0) },
                 store: ownerProfile,
                 events: events,
                 logger: logger)
@@ -386,8 +429,8 @@ public struct RefinementPipeline: Sendable {
             micTranscription?.audioDuration.seconds ?? 0.0)
         let metadata = buildMetadata(
             folder: folder,
-            speakers: merged.speakers,
-            speakerIdByLabel: merged.speakerIdByLabel,
+            merged: merged,
+            micDiarized: micDiarization != nil,
             systemTranscription: systemTranscription,
             diarization: diarization,
             recordingStart: recordingStart,
@@ -502,6 +545,8 @@ public struct RefinementPipeline: Sendable {
         diarization: DiarizationResult?,
         reconciliation: SpeakerReconciler.Outcome?,
         mic: StreamTranscription?,
+        micDiarization: DiarizationResult?,
+        micAttribution: MicChannelAttribution.Outcome?,
         recordingStart: Date
     ) -> TranscriptAssembly.MergedTranscript {
         TranscriptAssembly.mergeStreams(
@@ -509,6 +554,8 @@ public struct RefinementPipeline: Sendable {
             diarization: diarization,
             reconciliation: reconciliation,
             micSegments: mic?.segments,
+            micDiarization: micDiarization,
+            micAttribution: micAttribution,
             recordingStart: recordingStart)
     }
 
@@ -537,8 +584,8 @@ public struct RefinementPipeline: Sendable {
 
     private func buildMetadata(
         folder: RecordingFolder,
-        speakers: [String],
-        speakerIdByLabel: [String: String],
+        merged: TranscriptAssembly.MergedTranscript,
+        micDiarized: Bool,
         systemTranscription: StreamTranscription,
         diarization: DiarizationResult?,
         recordingStart: Date,
@@ -550,8 +597,8 @@ public struct RefinementPipeline: Sendable {
     ) -> RefinementMetadata {
         TranscriptAssembly.buildMetadata(
             folder: folder,
-            speakers: speakers,
-            speakerIdByLabel: speakerIdByLabel,
+            merged: merged,
+            micDiarized: micDiarized,
             language: systemTranscription.language,
             diarization: diarization,
             recordingStart: recordingStart,

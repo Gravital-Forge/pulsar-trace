@@ -36,7 +36,7 @@ struct DiarizerCancelTests {
                     segments: [], speakerDatabase: [:],
                     audioDuration: .zero, modelRevision: "")
             })
-        let run = Task { try await diarizer.diarizeSystemStream(wavPath: wav) }
+        let run = Task { try await diarizer.diarizeStream(wavPath: wav) }
         try await Task.sleep(for: .milliseconds(200))   // let it get in flight
         await diarizer.cancel()
 
@@ -63,14 +63,14 @@ struct DiarizerCancelTests {
                     audioDuration: .zero, modelRevision: "")
             })
         await #expect(throws: Diarizer.DiarizeError.timedOut(seconds: 1)) {
-            try await diarizer.diarizeSystemStream(wavPath: wav)
+            try await diarizer.diarizeStream(wavPath: wav)
         }
     }
 
     @Test func missingWAVThrowsWavNotFound() async throws {
         let diarizer = Diarizer(configuration: .init())
         await #expect(throws: Diarizer.DiarizeError.self) {
-            try await diarizer.diarizeSystemStream(
+            try await diarizer.diarizeStream(
                 wavPath: URL(fileURLWithPath: "/nonexistent/x.wav"))
         }
     }

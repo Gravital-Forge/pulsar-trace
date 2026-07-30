@@ -593,7 +593,7 @@ extension RefinementJobQueue {
                     }
                 },
                 diarize: { wav in
-                    try await diarizer.diarizeSystemStream(wavPath: wav)
+                    try await diarizer.diarizeStream(wavPath: wav)
                 },
                 pauseGate: gate,
                 events: events,

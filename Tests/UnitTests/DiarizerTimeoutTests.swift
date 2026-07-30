@@ -43,7 +43,7 @@ struct DiarizerTimeoutTests {
             })
 
         // Must NOT throw `.timedOut` — the budget expanded to 3 s.
-        let result = try await diarizer.diarizeSystemStream(wavPath: wav)
+        let result = try await diarizer.diarizeStream(wavPath: wav)
         #expect(result.modelRevision == "rev")
     }
 
@@ -68,7 +68,7 @@ struct DiarizerTimeoutTests {
                     audioDuration: .seconds(1), modelRevision: "rev")
             })
 
-        let result = try await diarizer.diarizeSystemStream(wavPath: wav)
+        let result = try await diarizer.diarizeStream(wavPath: wav)
         #expect(result.modelRevision == "rev")
     }
 

@@ -13,9 +13,14 @@ enum TranscriptAssembly {
         let document: TranscriptDocument
         /// Distinct speaker display labels, first-appearance order.
         let speakers: [String]
-        /// Display label → stable library speaker id, for reconciled speakers
-        /// for reconciled speakers. `You` and unreconciled speakers are absent.
+        /// Display label → stable library speaker id, for reconciled speakers.
+        /// `You` and unreconciled speakers are absent.
         let speakerIdByLabel: [String: String]
+        /// PT-P8-R10 — display labels attributed to the mic stream (`You` plus
+        /// any mic-diarized guests). `buildMetadata` marks these rows
+        /// `is_microphone: true`. Without mic diarization this is just `["You"]`
+        /// (or empty when there is no mic stream).
+        let micLabels: Set<String>
     }
 
     /// Static merge variant — takes flat segment arrays so `assembleAndWrite`
@@ -25,6 +30,8 @@ enum TranscriptAssembly {
         diarization: DiarizationResult?,
         reconciliation: SpeakerReconciler.Outcome?,
         micSegments: [TranscriptSegment]?,
+        micDiarization: DiarizationResult? = nil,
+        micAttribution: MicChannelAttribution.Outcome? = nil,
         recordingStart: Date
     ) -> MergedTranscript {
         // System-stream labels: real `Speaker_N` from diarization, or the
@@ -71,11 +78,50 @@ enum TranscriptAssembly {
         }
         // PT-P8-R11: refine-side mic-echo dedup — drop mic segments that
         // duplicate system speech (same MicEchoDedup semantics as the live pass,
-        // PT-C14) before labeling them "You". The system stream is the
-        // authoritative source of remote speech.
+        // PT-C14) before labeling them. The system stream is the authoritative
+        // source of remote speech.
         let dedupedMic = dedupedMicSegments(micSegments ?? [], against: systemSegments)
-        for seg in dedupedMic {
-            rows.append((seg, "You"))   // PT-R17: the mic stream is always "You".
+        // PT-P8-R10 — the set of display labels this mic block emits, so
+        // `buildMetadata` can mark `is_microphone: true` per stream.
+        var micLabels: Set<String> = []
+        if let micDiarization, let micAttribution {
+            // PT-P8-R1: per-cluster mic labels. `DiarizationMerge.speakerLabels`
+            // emits *display* labels (`Speaker_N`, `Speaker_0+Speaker_1`) while
+            // the attribution maps *raw* labels (`SPEAKER_00`) — build the
+            // display→name map via the same round-trip the system path uses.
+            var nameByDisplay: [String: String] = [:]
+            for rawLabel in micDiarization.speakers {
+                let display = micDiarization.displayLabel(for: rawLabel)
+                if let name = micAttribution.nameByRawLabel[rawLabel] {
+                    nameByDisplay[display] = name
+                    if let id = micAttribution.speakerIdByRawLabel[rawLabel] {
+                        speakerIdByLabel[name] = id
+                    }
+                }
+            }
+            let displayLabels = DiarizationMerge.speakerLabels(
+                for: dedupedMic, diarization: micDiarization)
+            let resolved = displayLabels.map { label -> String in
+                label.split(separator: "+")
+                    .map { nameByDisplay[String($0)] ?? String($0) }
+                    .sorted()
+                    .joined(separator: "+")
+            }
+            for (i, seg) in dedupedMic.enumerated() {
+                rows.append((seg, resolved[i]))
+                for component in resolved[i].split(separator: "+").map(String.init) {
+                    // The `Unrecognized` sentinel never earns a speaker row.
+                    if component == DiarizationMerge.unknownSpeaker { continue }
+                    micLabels.insert(component)
+                }
+            }
+        } else {
+            for seg in dedupedMic {
+                // PT-P8-R1: mode-off default — the whole mic stream is "You"
+                // (was PT-R17: the mic stream is always "You").
+                rows.append((seg, "You"))
+                micLabels.insert("You")
+            }
         }
         // Sort by start offset; ties broken by end then label for determinism.
         rows.sort { a, b in
@@ -99,7 +145,8 @@ enum TranscriptAssembly {
                 speakerLabels: ["pulsartrace"],
                 marker: .final)
             return MergedTranscript(
-                document: document, speakers: [], speakerIdByLabel: [:])
+                document: document, speakers: [], speakerIdByLabel: [:],
+                micLabels: [])
         }
 
         let document = TranscriptDocument(
@@ -125,7 +172,8 @@ enum TranscriptAssembly {
         return MergedTranscript(
             document: document,
             speakers: speakers,
-            speakerIdByLabel: speakerIdByLabel)
+            speakerIdByLabel: speakerIdByLabel,
+            micLabels: micLabels)
     }
 
     /// PT-P8-R11 — the mic-side copy of system speech is dropped; the system
@@ -195,11 +243,14 @@ enum TranscriptAssembly {
 
     // MARK: - metadata.json
 
-    /// Static variant so `assembleAndWrite` can call it without a pipeline instance.
+    /// Static variant so `assembleAndWrite` can call it without a pipeline
+    /// instance. Takes the whole `merged` transcript so the per-stream
+    /// `is_microphone` set (`merged.micLabels`, PT-P8-R10) and the
+    /// speaker-id map travel together.
     static func buildMetadata(
         folder: RecordingFolder,
-        speakers: [String],
-        speakerIdByLabel: [String: String],
+        merged: MergedTranscript,
+        micDiarized: Bool,
         language: String,
         diarization: DiarizationResult?,
         recordingStart: Date,
@@ -211,11 +262,13 @@ enum TranscriptAssembly {
     ) -> RefinementMetadata {
         // `metadata.json` records the stable `speaker_id` ↔ name mapping (PT-R83):
         // an agent keys off the id across renames.
-        let speakerEntries = speakers.map { label in
+        // PT-P8-R10: `is_microphone` is per-stream — every label the mic branch
+        // emitted (`You` plus mic-diarized guests), not just `You`.
+        let speakerEntries = merged.speakers.map { label in
             RefinementMetadata.Speaker(
                 label: label,
-                isMicrophone: label == "You",
-                speakerId: speakerIdByLabel[label])
+                isMicrophone: merged.micLabels.contains(label),
+                speakerId: merged.speakerIdByLabel[label])
         }
         let diarizationModel = diarization.map {
             RefinementMetadata.DiarizationModelInfo(
@@ -231,7 +284,8 @@ enum TranscriptAssembly {
             whisperModel: .init(name: whisperModelName, sha256: whisperModelSHA256),
             diarizationModel: diarizationModel,
             language: language,
-            sourceBasename: sourceBasename)
+            sourceBasename: sourceBasename,
+            micDiarized: micDiarized)
     }
 
     // MARK: - assembleAndWrite (entry point for ResumableRefiner)
@@ -264,6 +318,8 @@ enum TranscriptAssembly {
         systemSegments: [TranscriptSegment],
         micSegments: [TranscriptSegment],
         diarization: DiarizationResult?,
+        micDiarization: DiarizationResult? = nil,
+        micAttribution: MicChannelAttribution.Outcome? = nil,
         language: String,
         whisperModelName: String,
         whisperModelSHA256: String,
@@ -289,12 +345,15 @@ enum TranscriptAssembly {
             }
         }
 
-        // 2. Merge system + mic segments; apply diarization + reconciliation.
+        // 2. Merge system + mic segments; apply diarization + reconciliation
+        //    (system) and, when the stamp was on, per-cluster mic attribution.
         let merged = mergeStreams(
             systemSegments: systemSegments,
             diarization: diarization,
             reconciliation: reconciliation,
             micSegments: micSegments.isEmpty ? nil : micSegments,
+            micDiarization: micDiarization,
+            micAttribution: micAttribution,
             recordingStart: recordingStart)
 
         // 3. Write final.md atomically, recording whether a prior final.md
@@ -331,8 +390,8 @@ enum TranscriptAssembly {
         // 6. Write metadata.json.
         let metadata = buildMetadata(
             folder: folder,
-            speakers: merged.speakers,
-            speakerIdByLabel: merged.speakerIdByLabel,
+            merged: merged,
+            micDiarized: micDiarization != nil,
             language: language,
             diarization: diarization,
             recordingStart: recordingStart,

@@ -387,7 +387,8 @@ public struct FinalMarkdownRewriter: Sendable {
                 whisperModel: metadata.whisperModel,
                 diarizationModel: metadata.diarizationModel,
                 language: metadata.language,
-                sourceBasename: metadata.sourceBasename)
+                sourceBasename: metadata.sourceBasename,
+                micDiarized: metadata.micDiarized)
             try AtomicFile.write(try updated.encoded(), to: metadataURL)
         } catch {
             logger.notice("final.md drop-rewrite: metadata.json update skipped")
@@ -650,7 +651,8 @@ public struct FinalMarkdownRewriter: Sendable {
                 whisperModel: metadata.whisperModel,
                 diarizationModel: metadata.diarizationModel,
                 language: metadata.language,
-                sourceBasename: metadata.sourceBasename)
+                sourceBasename: metadata.sourceBasename,
+                micDiarized: metadata.micDiarized)
             try AtomicFile.write(try updated.encoded(), to: metadataURL)
         } catch {
             logger.notice("final.md rewrite: metadata.json update skipped")

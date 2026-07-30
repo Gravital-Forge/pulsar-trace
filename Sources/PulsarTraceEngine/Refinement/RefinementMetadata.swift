@@ -15,7 +15,10 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
     /// Current schema version. v2: `pyannote_model` → `diarization_model`
     /// {id, revision} (PT-P5-D3 — diarization moved to the ANE; the pyannote.audio
     /// library version no longer exists).
-    public static let currentSchemaVersion = 2
+    /// v3: `mic_diarized` + per-stream `is_microphone` (PT-P8-R10) — the mic
+    /// stream can now carry several speakers, so `is_microphone` is no longer
+    /// synonymous with the single `You` row.
+    public static let currentSchemaVersion = 3
 
     /// One speaker in the refined transcript.
     public struct Speaker: Codable, Equatable, Sendable {
@@ -24,7 +27,9 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         /// system-stream speakers; `You` for the mic stream. Without a library
         /// `final.md` files carry `Speaker_N`.
         public let label: String
-        /// True for the mic-stream speaker (`You`) — never diarized (PT-R17).
+        /// True for every speaker attributed to the microphone stream
+        /// (PT-P8-R10; may be several — `You` plus mic-diarized guests). Before
+        /// PT-P8-R1 this was synonymous with the single `You` row.
         public let isMicrophone: Bool
         /// Stable library speaker id (`spk_<ulid>`, PT-R83) — present for a
         /// system-stream speaker reconciled against the library,
@@ -96,6 +101,9 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
     public let language: String
     /// Basename of the user-supplied input (never a full path — Invariant #7).
     public let sourceBasename: String
+    /// PT-P8-R10 — true when this recording's mic stream was diarized (the
+    /// per-recording stamp was on). Absent in v2 files ⇒ `false`.
+    public let micDiarized: Bool
 
     public init(
         schemaVersion: Int = RefinementMetadata.currentSchemaVersion,
@@ -107,7 +115,8 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         whisperModel: WhisperModelInfo,
         diarizationModel: DiarizationModelInfo?,
         language: String,
-        sourceBasename: String
+        sourceBasename: String,
+        micDiarized: Bool = false
     ) {
         self.schemaVersion = schemaVersion
         self.recordingId = recordingId
@@ -119,6 +128,26 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         self.diarizationModel = diarizationModel
         self.language = language
         self.sourceBasename = sourceBasename
+        self.micDiarized = micDiarized
+    }
+
+    /// Tolerant decode: `mic_diarized` is absent in v2 files and defaults to
+    /// `false` so an older `metadata.json` still reads (PT-P8-R10).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        self.recordingId = try c.decode(String.self, forKey: .recordingId)
+        self.recordingStart = try c.decode(String.self, forKey: .recordingStart)
+        self.refinedAt = try c.decode(String.self, forKey: .refinedAt)
+        self.durationSeconds = try c.decode(Double.self, forKey: .durationSeconds)
+        self.speakers = try c.decode([Speaker].self, forKey: .speakers)
+        self.whisperModel = try c.decode(WhisperModelInfo.self, forKey: .whisperModel)
+        self.diarizationModel = try c.decodeIfPresent(
+            DiarizationModelInfo.self, forKey: .diarizationModel)
+        self.language = try c.decode(String.self, forKey: .language)
+        self.sourceBasename = try c.decode(String.self, forKey: .sourceBasename)
+        self.micDiarized =
+            try c.decodeIfPresent(Bool.self, forKey: .micDiarized) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -132,6 +161,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         case diarizationModel = "diarization_model"
         case language
         case sourceBasename = "source_basename"
+        case micDiarized = "mic_diarized"
     }
 
     /// Encode to pretty, stable-key-order JSON bytes for the sidecar file.
