@@ -67,6 +67,42 @@ struct RecordingEntryDecodeTests {
         #expect(you.isUnknownPlaceholder == false)
     }
 
+    @Test("RecordingEntry carries the diarize-mic stamp (PT-P8-R8)")
+    func entryCarriesStamp() throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try MenuBarFixtures.makeRecordingFolder(
+            root: root, name: "2026-05-01-090000", recordingId: "rec_a")
+        var options = RecordingOptions.defaults
+        options.diarizeMic = true
+        try options.write(to: folder)
+        let entry = RecordingEntry.decode(folderURL: folder)
+        #expect(entry?.diarizeMicStamp == true)
+    }
+
+    @Test("no sidecar decodes as stamp off (PT-P8-R8)")
+    func entryStampDefaultsOff() throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try MenuBarFixtures.makeRecordingFolder(
+            root: root, name: "2026-05-01-090000", recordingId: "rec_a")
+        #expect(RecordingEntry.decode(folderURL: folder)?.diarizeMicStamp == false)
+    }
+
+    @Test("an unrefined folder carries the diarize-mic stamp too (PT-P8-R8)")
+    func unrefinedEntryCarriesStamp() throws {
+        let root = MenuBarFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = try MenuBarFixtures.makeUnrefinedRecordingFolder(
+            root: root, name: "2026-05-01-090000")
+        var options = RecordingOptions.defaults
+        options.diarizeMic = true
+        try options.write(to: folder)
+        let entry = RecordingEntry.decode(folderURL: folder)
+        #expect(entry?.isRefined == false)
+        #expect(entry?.diarizeMicStamp == true)
+    }
+
     /// `isUnknownPlaceholder` must match exactly the `Unknown #<digits>`
     /// shape `SpeakerReconciler.nextUnknownName()` emits — no spaces, no
     /// trailing letters, at least one digit.

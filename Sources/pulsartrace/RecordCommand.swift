@@ -4,7 +4,7 @@ import PulsarTraceEngine
 
 /// `pulsartrace record [--output PATH] [--duration MIN] [--mic INDEX]
 /// [--no-system-audio] [--refine-model large-v3-turbo|large-v3-whisperkit]
-/// [--list-mics]` — headless recording (PT-R47).
+/// [--diarize-mic] [--list-mics]` — headless recording (PT-R47).
 ///
 /// `record` spawns `pulsartrace-capture` (the TCC-gated daemon, PT-R4) and
 /// `pulsartrace-engine --live`, runs the live pass for `--duration` minutes
@@ -20,6 +20,9 @@ enum RecordCommand {
         let systemAudioEnabled: Bool
         let refineModelName: String
         let listMics: Bool
+        /// PT-P8-R9 — `--diarize-mic` stamps the new recording's `options.json`
+        /// and launches the engine with the mic-diarization flag. Default off.
+        let diarizeMic: Bool
     }
 
     /// Run `pulsartrace record`. Returns the process exit code.
@@ -82,6 +85,18 @@ enum RecordCommand {
             return 1
         }
 
+        // PT-P8-R2/PT-P8-R12: stamp the recording at start; refines follow the
+        // stamp. Written right after the folder exists and before the engine
+        // spawns, so a refine can never see the folder without its sidecar.
+        var recordingOptions = RecordingOptions.defaults
+        recordingOptions.diarizeMic = options.diarizeMic
+        do {
+            try recordingOptions.write(to: outputFolder)
+        } catch {
+            err("record: cannot write options.json in \(outputFolder.path) — \(error)")
+            return 1
+        }
+
         // --- locate the sibling daemon binaries ----------------------------
         guard let binDir = binaryDirectory() else {
             err("record: could not locate the pulsartrace-capture / "
@@ -93,7 +108,8 @@ enum RecordCommand {
             outputFolder: outputFolder,
             paths: .standard,
             micDeviceID: micDeviceID,
-            systemAudioEnabled: options.systemAudioEnabled)
+            systemAudioEnabled: options.systemAudioEnabled,
+            diarizeMic: options.diarizeMic)
 
         // --- run the capture + live-engine session -------------------------
         let orchestrator = RecordOrchestrator(configuration: .init(
@@ -233,6 +249,7 @@ enum RecordCommand {
         var systemAudioEnabled = true
         var refineModelName = WhisperKitModelCatalog.defaultModel.name
         var listMics = false
+        var diarizeMic = false
 
         var i = 0
         while i < args.count {
@@ -266,6 +283,9 @@ enum RecordCommand {
             case "--list-mics":
                 listMics = true
                 i += 1
+            case "--diarize-mic":
+                diarizeMic = true
+                i += 1
             default:
                 throw ArgError.unexpectedArgument(arg)
             }
@@ -276,7 +296,8 @@ enum RecordCommand {
             micIndex: micIndex,
             systemAudioEnabled: systemAudioEnabled,
             refineModelName: refineModelName,
-            listMics: listMics)
+            listMics: listMics,
+            diarizeMic: diarizeMic)
     }
 
     /// Interpret `--output PATH` as the recording-folder directory. A trailing
@@ -293,7 +314,8 @@ enum RecordCommand {
     static let usage =
         "usage: pulsartrace record [--output PATH] [--duration MIN] "
         + "[--mic INDEX] [--no-system-audio] "
-        + "[--refine-model large-v3-turbo|large-v3-whisperkit] [--list-mics]"
+        + "[--refine-model large-v3-turbo|large-v3-whisperkit] "
+        + "[--diarize-mic] [--list-mics]"
 
     private static func out(_ s: String) {
         FileHandle.standardOutput.write(Data((s + "\n").utf8))

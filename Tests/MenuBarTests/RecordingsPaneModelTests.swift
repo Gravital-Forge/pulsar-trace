@@ -299,6 +299,33 @@ struct RecordingsPaneModelTests {
         #expect(RecordingTitleStore.read(folderURL: folder) == nil)
     }
 
+    // MARK: Per-recording mic-diarization stamp (PT-P8-R8)
+
+    @Test("setDiarizeMic writes the options.json sidecar; toggling off reverts it")
+    func setDiarizeMicRoundTrip() async throws {
+        let folder = MenuBarFixtures.tempDir()
+        let e = Self.entry(id: "rec_a", start: Self.date(daysAgo: 0), folder: folder)
+        let model = Self.makeModel(entries: [e])
+
+        #expect(RecordingOptions.read(from: folder).diarizeMic == false)
+        await model.setDiarizeMic(recordingId: "rec_a", enabled: true)
+        #expect(RecordingOptions.read(from: folder).diarizeMic == true)
+
+        await model.setDiarizeMic(recordingId: "rec_a", enabled: false)
+        #expect(RecordingOptions.read(from: folder).diarizeMic == false)
+    }
+
+    @Test("setDiarizeMic is a no-op for a live recording (engine ignores the sidecar mid-recording)")
+    func setDiarizeMicSkipsLiveRow() async throws {
+        let model = Self.makeModel(
+            entries: [], status: .recording(id: "rec_live", startedAt: Self.now))
+        // The live row's folder is the recording view model's in-progress
+        // folder; it has no sidecar. A no-op leaves nothing to assert beyond
+        // not crashing and not throwing an action error.
+        await model.setDiarizeMic(recordingId: "rec_live", enabled: true)
+        #expect(model.lastActionError == nil)
+    }
+
     // MARK: Move to Trash (§4.1)
 
     @Test("moveToTrash recycles the folder and the selection falls back to newest")

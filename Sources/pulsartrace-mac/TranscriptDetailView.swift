@@ -87,6 +87,7 @@ struct TranscriptDetailView: View {
             if !row.entry.speakers.isEmpty {
                 SpeakerPillsView(speakers: row.entry.speakers)
             }
+            diarizeMicControl(row)
             ownerReassignmentControls(row)
         }
         .padding(12)
@@ -95,6 +96,36 @@ struct TranscriptDetailView: View {
         // recording-agnostic (recording ids are passed per action, and the
         // sidecar gate reads the shown folder on each render).
         .task(id: detailModel.shown?.id) { await buildOwnerVM() }
+    }
+
+    // MARK: Per-recording mic-diarization stamp (PT-P8-R8)
+
+    /// The per-recording "Diarize microphone" checkbox. Reflects the recording's
+    /// `options.json` stamp (`diarizeMicStamp`); toggling writes the sidecar and
+    /// rescans so the row/detail pick up the change. The post-hoc flow is
+    /// checkbox → Refine (the Refine affordance is unchanged). Disabled for a
+    /// live recording — the engine never re-reads the sidecar mid-recording.
+    @ViewBuilder
+    private func diarizeMicControl(_ row: RecordingRow) -> some View {
+        Toggle("Diarize microphone", isOn: Binding(
+            get: { row.entry.diarizeMicStamp },
+            set: { newValue in
+                // Mirror the rename flow's write-then-refresh, owned by the
+                // pane model (which holds the scanner). Without an environment
+                // (previews) there is nothing to refresh; do nothing.
+                guard let environment else { return }
+                Task {
+                    await environment.paneModel.setDiarizeMic(
+                        recordingId: row.entry.id, enabled: newValue)
+                }
+            }))
+            .toggleStyle(.checkbox)
+            .disabled(row.isLive)
+            .font(.caption)
+            .accessibilityIdentifier(A11yID.Recordings.diarizeMicCheckbox)
+            .help("Applies on the next refine. Tick, then click Refine, to "
+                + "split in-person speakers on your microphone — untick and "
+                + "refine to undo.")
     }
 
     // MARK: Owner reassignment ("This is me" / "Not me", PT-P8-R6)

@@ -49,6 +49,14 @@ edits are refused while a recording is in progress — the library is read-only 
 - `request_refine` — enqueue a (re-)refinement; it runs in the background and returns immediately.
   Watch `recent_events` for `refinement_started` / `final_md_rewritten` / `refinement_completed`.
 
+**Mic diarization (in-person meetings).** Each recording carries a `diarize_mic` stamp
+(`options.json`). Stamp on ⇒ refine splits microphone speech into `You` (matched against the owner's
+voice profile) plus named/`Unknown #N` guests; stamp off ⇒ all microphone speech is `You`. Set the
+stamp via `request_refine`'s optional `diarize_mic` argument, then refine; re-refine with it off to
+revert. Recording metadata (`list_recordings` / `get_recording_meta`) reports `diarize_mic_stamp`
+(the input stamp the next refine will honor) and, per refine, `mic_diarized` (what the current
+`final.md` reflects).
+
 ## Discovery
 
 - Every tool is self-describing: the tool list carries each tool's name, description, and input

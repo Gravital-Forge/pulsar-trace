@@ -114,6 +114,10 @@ let package = Package(
             name: "UnitTests",
             dependencies: [
                 "PulsarTraceEngine",
+                // PT-P8-E6: the CLI `record`/`refine` flag parsers live in the
+                // `pulsartrace` executable; the parse tests `@testable import`
+                // it. SwiftPM supports testing an `@main` executable target.
+                "pulsartrace",
                 .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
             ],
             // Recorded snapshots are read by swift-snapshot-testing directly

@@ -47,6 +47,8 @@ public enum A11yID {
         public static func row(_ folderName: String) -> String {
             "pt.recordings.row.\(folderName)"
         }
+        /// PT-P8-R8 — the detail pane's per-recording mic-diarization checkbox.
+        public static let diarizeMicCheckbox = "pt.recordings.detail.diarizeMicCheckbox"
     }
 
     /// Speakers pane (`SpeakerEditorView`).
@@ -91,6 +93,8 @@ public enum A11yID {
         public static let outputFolderField = "pt.settings.outputFolderField"
         public static let chooseFolderButton = "pt.settings.chooseFolderButton"
         public static let systemAudioToggle = "pt.settings.systemAudioToggle"
+        /// PT-P8-R12 — the sticky mic-diarization mode toggle.
+        public static let diarizeMicToggle = "pt.settings.diarizeMicToggle"
         public static let hotkeyRecorder = "pt.settings.hotkeyRecorder"
         public static let languageSection = "pt.settings.languageSection"
         public static let mcpToggle = "pt.settings.mcpToggle"

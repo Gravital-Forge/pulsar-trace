@@ -43,6 +43,22 @@ struct RecordingOptionsTests {
         #expect(RecordingOptions.read(from: dir) == .defaults)
     }
 
+    @Test("the stamp is per-recording: another folder's stamp is untouched by later writes (PT-P8-R12)")
+    func stampsAreIndependent() throws {
+        let a = tempDir()
+        let b = tempDir()
+        defer {
+            try? FileManager.default.removeItem(at: a)
+            try? FileManager.default.removeItem(at: b)
+        }
+        var on = RecordingOptions.defaults
+        on.diarizeMic = true
+        try on.write(to: a)
+        try RecordingOptions.defaults.write(to: b)   // later recording, toggle now off
+        #expect(RecordingOptions.read(from: a).diarizeMic == true)
+        #expect(RecordingOptions.read(from: b).diarizeMic == false)
+    }
+
     @Test("unknown keys are ignored")
     func unknownKeys() throws {
         let dir = tempDir()

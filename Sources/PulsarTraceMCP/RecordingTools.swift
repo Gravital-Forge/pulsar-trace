@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PulsarTraceEngine
 import PulsarTraceMenuBar
 
 /// The recording-management surface (PT-R120): set a title, request a refine.
@@ -45,10 +46,17 @@ public enum RecordingTools {
         MCPTool(
             name: "request_refine",
             description: "Enqueue a (re-)refinement of a recording and return immediately. The refine "
-                + "runs in the background; observe progress via recent_events.",
+                + "runs in the background; observe progress via recent_events. "
+                + "Pass the optional `diarize_mic` (boolean) to set the recording's mic-diarization "
+                + "stamp before enqueueing — the tick-then-refine flow: true splits microphone speech "
+                + "into You + guests, false collapses all microphone speech to You. Omit it to keep "
+                + "the recording's existing stamp.",
             inputSchema: .object([
                 "type": .string("object"),
-                "properties": .object(["id": .object(["type": .string("string")])]),
+                "properties": .object([
+                    "id": .object(["type": .string("string")]),
+                    "diarize_mic": .object(["type": .string("boolean")]),
+                ]),
                 "required": .array([.string("id")]),
             ])
         ) { args in
@@ -57,6 +65,13 @@ public enum RecordingTools {
             }
             guard let entry = await recordings.snapshot().first(where: { $0.id == id }) else {
                 return ReadTools.errorResult("No recording with id \(id).")
+            }
+            // PT-P8-R9: when present, persist the stamp before enqueue so the
+            // background refine — and every subsequent one — agrees with it.
+            if let diarizeMic = args?["diarize_mic"]?.boolValue {
+                var options = RecordingOptions.read(from: entry.folderURL)
+                options.diarizeMic = diarizeMic
+                try? options.write(to: entry.folderURL)
             }
             do {
                 try await refine.requestRefine(folderURL: entry.folderURL, recordingId: entry.id)
