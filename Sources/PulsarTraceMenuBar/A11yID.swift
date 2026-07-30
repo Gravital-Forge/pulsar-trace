@@ -47,7 +47,7 @@ public enum A11yID {
         public static func row(_ folderName: String) -> String {
             "pt.recordings.row.\(folderName)"
         }
-        /// PT-P8-R8 — the detail pane's per-recording mic-diarization checkbox.
+        /// PT-R142 — the detail pane's per-recording mic-diarization checkbox.
         public static let diarizeMicCheckbox = "pt.recordings.detail.diarizeMicCheckbox"
     }
 
@@ -76,7 +76,7 @@ public enum A11yID {
         public static let undoButton = "pt.speakers.undoButton"
     }
 
-    /// Speaker editor owner-reassignment actions (PT-P8-R6). Kept under a
+    /// Speaker editor owner-reassignment actions (PT-R140). Kept under a
     /// dedicated `speakerEditor` surface per the task's convention
     /// (`pt.speakerEditor.thisIsMe` / `pt.speakerEditor.notMe`).
     public enum SpeakerEditor {
@@ -93,7 +93,7 @@ public enum A11yID {
         public static let outputFolderField = "pt.settings.outputFolderField"
         public static let chooseFolderButton = "pt.settings.chooseFolderButton"
         public static let systemAudioToggle = "pt.settings.systemAudioToggle"
-        /// PT-P8-R12 — the sticky mic-diarization mode toggle.
+        /// PT-R146 — the sticky mic-diarization mode toggle.
         public static let diarizeMicToggle = "pt.settings.diarizeMicToggle"
         public static let hotkeyRecorder = "pt.settings.hotkeyRecorder"
         public static let languageSection = "pt.settings.languageSection"

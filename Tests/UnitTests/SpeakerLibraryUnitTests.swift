@@ -75,9 +75,9 @@ struct SpeakerLibraryUnitTests {
         }
     }
 
-    // MARK: - Reserved owner label (PT-P8-R7, closes KI-3)
+    // MARK: - Reserved owner label (PT-R141, closes KI-3)
 
-    @Test("the transcript label You is reserved — create and rename reject it (PT-P8-R7)")
+    @Test("the transcript label You is reserved — create and rename reject it (PT-R141)")
     func youIsReserved() async throws {
         let (library, dir) = try await makeLibrary()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -94,7 +94,7 @@ struct SpeakerLibraryUnitTests {
         }
     }
 
-    // MARK: - Appearance removal (PT-P8-R6 — designateOwner de-attribution)
+    // MARK: - Appearance removal (PT-R140 — designateOwner de-attribution)
 
     @Test("removeAppearance deletes one appearance row and decrements the count")
     func removeAppearanceDropsRow() async throws {

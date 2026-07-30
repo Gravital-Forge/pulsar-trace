@@ -14,7 +14,7 @@ import Logging
 /// - a cluster with no match becomes a **new** library speaker with an
 ///   `Unknown #N` placeholder name (`speaker_created`).
 ///
-/// PT-P8-R5: mic-channel guest clusters reconcile here too; the owner cluster
+/// PT-R139: mic-channel guest clusters reconcile here too; the owner cluster
 /// is excluded via `excludingSpeakers` and is never in the library.
 public struct SpeakerReconciler: Sendable {
 
@@ -51,7 +51,7 @@ public struct SpeakerReconciler: Sendable {
     ///   - recordingId: the recording's stable id (`rec_<short>`).
     ///   - recordingFolderName: the recording folder basename (for the
     ///     retroactive `final.md` rewrite).
-    ///   - excludingSpeakers: raw labels to skip entirely (PT-P8-R5) — the
+    ///   - excludingSpeakers: raw labels to skip entirely (PT-R139) — the
     ///     mic-channel owner cluster is attributed to `You` and must never be
     ///     enrolled in the library.
     /// - Returns: the per-label name/id mapping the pipeline renders into
@@ -75,7 +75,7 @@ public struct SpeakerReconciler: Sendable {
         // Deterministic order: process raw labels sorted, so `Unknown #N`
         // numbering is stable across runs.
         for rawLabel in diarization.speakers.sorted() {
-            // PT-P8-R5: the owner cluster (attributed to `You`) is excluded —
+            // PT-R139: the owner cluster (attributed to `You`) is excluded —
             // it must never be enrolled in the shared library.
             if excludingSpeakers.contains(rawLabel) { continue }
             guard let embedding = embeddingByLabel[rawLabel] else {
@@ -129,7 +129,7 @@ public struct SpeakerReconciler: Sendable {
     /// recoverable window, SW2) is what makes a placeholder number genuinely
     /// never reused, even after a speaker has been hard-aged-out or delisted.
     ///
-    /// `internal static` (PT-P8-R6): `SpeakerEditService.demoteOwner` mints an
+    /// `internal static` (PT-R140): `SpeakerEditService.demoteOwner` mints an
     /// `Unknown #N` for the demoted owner and must share this one numbering
     /// scan — never duplicate it, or two mints could collide on a number.
     static func nextUnknownName(in library: SpeakerLibrary) async throws -> String {

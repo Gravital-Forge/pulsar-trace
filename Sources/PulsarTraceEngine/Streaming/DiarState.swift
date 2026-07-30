@@ -12,7 +12,7 @@ actor DiarState {
     /// Diagnostic: total spans accumulated so far (the `live trace diar` log).
     func count() -> Int { spans.count }
 
-    /// All accumulated spans (PT-P8-R13 — the mic label resolver needs the
+    /// All accumulated spans (PT-R147 — the mic label resolver needs the
     /// dominant span's *embedding*, not just its key, for the owner match).
     func allSpans() -> [LiveSpeakerSpan] { spans }
 

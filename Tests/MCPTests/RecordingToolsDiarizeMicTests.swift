@@ -5,11 +5,11 @@ import PulsarTraceEngine
 import PulsarTraceMenuBar
 @testable import PulsarTraceMCP
 
-/// PT-P8-R9 / PT-P8-R10 — the MCP mic-diarization surface: `request_refine`'s
+/// PT-R143 / PT-R144 — the MCP mic-diarization surface: `request_refine`'s
 /// optional `diarize_mic` argument writes the `options.json` stamp before
 /// enqueueing, and the recording DTO reports `diarize_mic_stamp` (input) and
 /// `mic_diarized` (last refine's output).
-@Suite("RecordingTools diarize-mic (PT-P8-R9, PT-P8-R10)")
+@Suite("RecordingTools diarize-mic (PT-R143, PT-R144)")
 struct RecordingToolsDiarizeMicTests {
 
     struct Fake: RecordingsProviding {

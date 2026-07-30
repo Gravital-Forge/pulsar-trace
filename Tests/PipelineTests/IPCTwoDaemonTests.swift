@@ -80,7 +80,7 @@ struct IPCTwoDaemonTests {
         #expect(lines[0] == "<!-- pulsartrace:live -->")
         #expect(lines[1].hasPrefix("## Transcript — "))
         #expect(output.utteranceLines > 0)
-        // The mic stream's utterances are labelled `You` (PT-R17).
+        // The mic stream's utterances are labelled `You` (PT-R135).
         #expect(text.contains("You:**"))
     }
 

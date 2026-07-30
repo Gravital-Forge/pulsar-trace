@@ -1,8 +1,8 @@
 import Foundation
 import Logging
 
-/// PT-P8-R3 (d) — one-shot owner-profile backfill, run when the global toggle
-/// is first enabled (PT-P8-R12) and no profile exists: existing recordings'
+/// PT-R137 (d) — one-shot owner-profile backfill, run when the global toggle
+/// is first enabled (PT-R146) and no profile exists: existing recordings'
 /// mic WAVs are known-owner audio (they were never mic-diarized).
 public enum OwnerProfileBackfill {
 

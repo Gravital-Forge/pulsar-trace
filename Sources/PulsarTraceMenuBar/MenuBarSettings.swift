@@ -98,7 +98,7 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
-    /// PT-P8-R12 — sticky mic-diarization mode; stamps NEW recordings only.
+    /// PT-R146 — sticky mic-diarization mode; stamps NEW recordings only.
     /// Default `false`. Flipping this never rewrites existing recordings'
     /// `options.json`; it only changes what the next record-start stamps.
     public var diarizeMicEnabled: Bool {
@@ -238,7 +238,7 @@ public final class MenuBarSettings {
         self.systemAudioEnabled = store.object(forKey: Key.systemAudioEnabled)
             as? Bool ?? true
 
-        // PT-P8-R12: sticky mic-diarization mode, default off.
+        // PT-R146: sticky mic-diarization mode, default off.
         self.diarizeMicEnabled = store.object(forKey: Key.diarizeMicEnabled)
             as? Bool ?? false
 

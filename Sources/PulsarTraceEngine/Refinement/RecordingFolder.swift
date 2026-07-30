@@ -10,7 +10,7 @@ import Foundation
 /// ```
 /// 2026-04-30-team-standup/
 ///   audio-system.wav      ← system stream, diarized
-///   audio-mic.wav         ← mic stream, label "You", never diarized (PT-R17)
+///   audio-mic.wav         ← mic stream; "You" by default, diarized when stamped (PT-R135)
 ///   live.md               ← provisional transcript
 ///   final.md              ← refined transcript
 ///   metadata.json         ← machine-readable sidecar
@@ -41,7 +41,7 @@ public struct RecordingFolder: Sendable {
         /// UI-owned custom-title sidecar — written by the mac app's rename
         /// flow, never read by the engine (spec §4.1).
         public static let title = "title.txt"
-        /// PT-P8-R2 — per-recording input options sidecar (UI/CLI/MCP-owned).
+        /// PT-R136 — per-recording input options sidecar (UI/CLI/MCP-owned).
         public static let options = "options.json"
     }
 
@@ -67,7 +67,8 @@ public struct RecordingFolder: Sendable {
     public struct Stream: Sendable {
         /// The WAV file backing this stream.
         public let url: URL
-        /// True for the microphone stream — labelled `You`, never diarized (PT-R17).
+        /// True for the microphone stream — `You` by default, diarized when the
+        /// recording's mic-diarization stamp is on (PT-R135).
         public let isMicrophone: Bool
     }
 

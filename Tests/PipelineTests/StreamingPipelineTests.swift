@@ -199,7 +199,7 @@ struct StreamingPipelineTests {
         }
     }
 
-    /// PT-R19 mic-echo dedup, proven deterministically at the `LiveSink` level.
+    /// PT-R145 mic-echo dedup, proven deterministically at the `LiveSink` level.
     ///
     /// Why not a full two-stream pipeline run: the system and mic streams are
     /// consumed through one merged `AsyncStream`, and under `realtime: false`
@@ -213,8 +213,8 @@ struct StreamingPipelineTests {
     /// real `MicEchoDedup` — and proves that a mic utterance echoing a
     /// previously-seen system utterance is dropped, while a distinct mic
     /// utterance is kept. The `MicEchoDedup` decision core has its own unit
-    /// suite; this proves `LiveSink`'s *use* of it (PT-R19 integration).
-    @Test("mic-echo: LiveSink drops a mic utterance echoing system audio (PT-R19)")
+    /// suite; this proves `LiveSink`'s *use* of it (PT-R145 integration).
+    @Test("mic-echo: LiveSink drops a mic utterance echoing system audio (PT-R145)")
     func liveSinkDropsMicEcho() async throws {
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -234,7 +234,7 @@ struct StreamingPipelineTests {
             realElapsed: .seconds(6))
 
         // The mic picks the *same words* up off the speakers, 0.4 s later —
-        // a textbook PT-R19 echo, well within the ±5 s window.
+        // a textbook PT-R145 echo, well within the ±5 s window.
         let micEcho = CommittedUtterance(
             start: .milliseconds(2_400), end: .milliseconds(5_400),
             text: "lets review the auth flow before the demo")
@@ -250,7 +250,7 @@ struct StreamingPipelineTests {
         await writer.finish()
         let stats = await sink.stats()
 
-        // PT-R19: exactly the echo was dropped — the distinct mic line was kept.
+        // PT-R145: exactly the echo was dropped — the distinct mic line was kept.
         #expect(stats.micEchoesDropped == 1)
         // 2 lines written: the system utterance + the real mic utterance.
         #expect(stats.utteranceLines == 2)

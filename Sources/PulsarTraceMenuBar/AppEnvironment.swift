@@ -215,7 +215,7 @@ public final class AppEnvironment {
         return speakerLibrary
     }
 
-    /// The owner voice profile store (PT-P8-R6), at the standard path beside the
+    /// The owner voice profile store (PT-R140), at the standard path beside the
     /// speaker library. Built on demand — it is a stateless file-backed actor
     /// (its own cache), so a fresh instance reads the same `owner-profile.json`.
     /// The speaker editor passes this into `SpeakerEditService` so owner
@@ -224,7 +224,7 @@ public final class AppEnvironment {
         OwnerVoiceProfileStore(fileURL: paths.ownerProfileURL)
     }
 
-    /// PT-P8-R3 (d) / PT-P8-R12 — the sticky mic-diarization toggle changed.
+    /// PT-R137 (d) / PT-R146 — the sticky mic-diarization toggle changed.
     /// On the first false→true transition, if no owner profile exists yet,
     /// backfill it once in the background from existing (never-diarized)
     /// recordings so live "You" works immediately. A profile already present

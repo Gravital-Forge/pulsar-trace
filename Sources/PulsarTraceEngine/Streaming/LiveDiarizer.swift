@@ -94,7 +94,7 @@ public actor LiveDiarizer: LiveDiarizing {
     }
 
     private let rawDiarizer: (any RawWindowDiarizing)?
-    /// PT-P8-R13 — the provisional label family this instance mints keys in:
+    /// PT-R147 — the provisional label family this instance mints keys in:
     /// `"Them"` for the system stream (default, zero behavior change) and
     /// `"Guest"` for a mic-channel instance. `provisionalKey(index:)` derives
     /// `Them`, `Them #2`, … or `Guest`, `Guest #2`, … from it (PT-P8-D11).
@@ -113,7 +113,7 @@ public actor LiveDiarizer: LiveDiarizing {
 
     public init(
         rawDiarizer: any RawWindowDiarizing,
-        labelFamily: String = "Them",     // PT-P8-R13: mic instances pass "Guest"
+        labelFamily: String = "Them",     // PT-R147: mic instances pass "Guest"
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
         self.rawDiarizer = rawDiarizer
@@ -215,7 +215,7 @@ public actor LiveDiarizer: LiveDiarizing {
 
     /// The Nth provisional speaker key in this instance's label family:
     /// `Them`, `Them #2`, … for the system stream and `Guest`, `Guest #2`, …
-    /// for a mic-channel instance (PT-P8-R13 / PT-P8-D11). The `?` suffix is
+    /// for a mic-channel instance (PT-R147 / PT-P8-D11). The `?` suffix is
     /// added downstream by `LiveRunner.resolveSystemLabel` / `resolveMicLabel`
     /// (PT-R16).
     func provisionalKey(index: Int) -> String {

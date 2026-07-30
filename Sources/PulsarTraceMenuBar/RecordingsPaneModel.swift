@@ -311,7 +311,7 @@ public final class RecordingsPaneModel {
         await scanner.refresh()
     }
 
-    /// PT-P8-R8 — set the per-recording mic-diarization stamp via the
+    /// PT-R142 — set the per-recording mic-diarization stamp via the
     /// `options.json` sidecar, then rescan so the row/detail pick up the new
     /// `diarizeMicStamp`. Mirrors `rename`'s write-then-refresh shape (a full
     /// `scanner.refresh()` is the pane's only single-row refresh path). The

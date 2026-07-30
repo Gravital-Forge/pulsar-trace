@@ -237,13 +237,13 @@ struct SpeakerEditServiceTests {
         #expect(log.range(of: "speaker_delisted")!.lowerBound < log.range(of: "final_md_rewritten")!.lowerBound)
     }
 
-    // PT-P8-R7 (closes KI-3): the mic speaker can no longer be a library
+    // PT-R141 (closes KI-3): the mic speaker can no longer be a library
     // speaker named "You" — the name is reserved, so `createSpeaker(name: "You")`
     // throws before a delist could ever reach it. The old
     // `cannotDelistMicrophone` guard is dead code and removed; this test now
     // asserts the reservation that made it dead (the reservation-based
     // equivalent of the deleted mic-delist guard).
-    @Test("the reserved You label cannot be created as a library speaker (PT-P8-R7)")
+    @Test("the reserved You label cannot be created as a library speaker (PT-R141)")
     func reservedYouCannotBeCreated() async throws {
         let root = tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -259,7 +259,7 @@ struct SpeakerEditServiceTests {
 
     // MARK: - T1 (PT-P8): reserved owner label
 
-    @Test("rename to You surfaces EditError.reservedName (PT-P8-R7, closes KI-3)")
+    @Test("rename to You surfaces EditError.reservedName (PT-R141, closes KI-3)")
     func renameToYouRejected() async throws {
         let root = tempDir()
         defer { try? FileManager.default.removeItem(at: root) }

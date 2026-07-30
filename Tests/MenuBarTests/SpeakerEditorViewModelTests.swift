@@ -641,13 +641,13 @@ struct SpeakerEditorViewModelTests {
         #expect(!delistedLine.contains("rec_solo"))
     }
 
-    // PT-P8-R7 (closes KI-3): the mic speaker can no longer be a library
+    // PT-R141 (closes KI-3): the mic speaker can no longer be a library
     // speaker named "You" — the name is reserved (`createSpeaker`/`rename`
     // reject it), so no delistable row is ever named "You". The old name-based
     // mic-delist guard is removed; this test now asserts the reservation that
     // made it dead — a rename to "You" surfaces the reserved-name error and the
     // library name is unchanged (the reservation-based equivalent).
-    @Test("rename to the reserved 'You' label is rejected (PT-P8-R7)")
+    @Test("rename to the reserved 'You' label is rejected (PT-R141)")
     func renameToReservedYouRejected() async throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }

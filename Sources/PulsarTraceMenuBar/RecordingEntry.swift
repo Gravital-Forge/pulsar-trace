@@ -11,7 +11,7 @@ import PulsarTraceEngine
 /// was reconciled against the library, `nil` for `You` (the mic stream) and
 /// for system-stream speakers that were never reconciled (no library, or
 /// diarization skipped). `isMicrophone` flags the single "You" speaker — that
-/// stream is never diarized (PT-R17).
+/// stream is never diarized (PT-R135).
 public struct RecordingSpeaker: Identifiable, Sendable, Equatable, Hashable, Codable {
 
     /// Display label as it appears in `final.md` (e.g. `Steve`,
@@ -86,8 +86,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
     public let customTitle: String?
     /// The transcript language (`metadata.language`), `nil` when unrefined.
     public let language: String?
-    /// PT-P8-R8 — the recording's mic-diarization stamp, decoded from the
-    /// `options.json` sidecar (PT-P8-R2). Surfaced on the entry so the
+    /// PT-R142 — the recording's mic-diarization stamp, decoded from the
+    /// `options.json` sidecar (PT-R136). Surfaced on the entry so the
     /// recordings-pane checkbox renders without re-reading disk per frame.
     /// Defaults off when the sidecar is absent or malformed.
     public let diarizeMicStamp: Bool

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-@Suite("TranscriptAssembly per-cluster mic labels (PT-P8-R1/R4/R5/R10)")
+@Suite("TranscriptAssembly per-cluster mic labels (PT-R135/R4/R5/R10)")
 struct TranscriptAssemblyMicLabelsTests {
 
     private static let start = Date(timeIntervalSince1970: 1_777_000_000)

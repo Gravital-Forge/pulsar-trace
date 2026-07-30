@@ -69,7 +69,7 @@ public final class SpeakerEditorViewModel {
     ///   - events: events writer; `nil` disables event emission (unit tests
     ///     that do not assert on the log).
     ///   - settings: provides the output folder roots the rewriter scans.
-    ///   - ownerProfile: the owner voice profile store (PT-P8-R6) — passed to
+    ///   - ownerProfile: the owner voice profile store (PT-R140) — passed to
     ///     the shared `SpeakerEditService` so "this is me" / "not me" update the
     ///     profile. `nil` disables the profile side of a reassignment.
     ///   - toastLifetime: how long the undo toast stays up before
@@ -84,7 +84,7 @@ public final class SpeakerEditorViewModel {
         self.library = library
         self.events = events
         self.settings = settings
-        // PT-R123 / PT-P8-R6: the shared edit service, now carrying the owner
+        // PT-R123 / PT-R140: the shared edit service, now carrying the owner
         // profile so owner reassignment updates it.
         self.service = SpeakerEditService(
             library: library, events: events, ownerProfile: ownerProfile)
@@ -223,7 +223,7 @@ public final class SpeakerEditorViewModel {
     /// matching, and rewrite past `final.md` files to drop their token
     /// (solo → `Unrecognized`, co-attribution → drop just the token).
     ///
-    /// The mic owner (`You`) is never a library speaker — PT-P8-R7 reserves the
+    /// The mic owner (`You`) is never a library speaker — PT-R141 reserves the
     /// name, so it never appears as an editable row here and no name-based
     /// guard is needed (closes KI-3).
     public func delist(speakerId: String) async {
@@ -273,7 +273,7 @@ public final class SpeakerEditorViewModel {
         }
     }
 
-    // MARK: - Owner reassignment ("This is me" / "Not me", PT-P8-R6)
+    // MARK: - Owner reassignment ("This is me" / "Not me", PT-R140)
 
     /// "This is me": re-attribute a recording's mic-channel guest to the owner
     /// (`You`). Runs through the same `withRewrite` toast/undo frame as delist;
@@ -315,7 +315,7 @@ public final class SpeakerEditorViewModel {
         }
     }
 
-    /// Sidecar gate for the owner-reassignment button visibility (PT-P8-R6):
+    /// Sidecar gate for the owner-reassignment button visibility (PT-R140):
     /// the buttons show only for a recording whose `mic-diarization.json` exists
     /// (a mic-diarized recording — earlier recordings can't be reassigned).
     public func canReassignOwner(folderURL: URL) -> Bool {

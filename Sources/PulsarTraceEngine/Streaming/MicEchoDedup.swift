@@ -1,6 +1,6 @@
 import Foundation
 
-/// Mic-echo deduplication for the live pass (PT-R19).
+/// Mic-echo deduplication for the live pass (PT-R145).
 ///
 /// When the user listens to a call on **speakers** (not headphones), the
 /// system audio is played out loud and the **microphone picks it up too**. The
@@ -9,7 +9,7 @@ import Foundation
 /// alone, `live.md` would show every remote utterance twice — once as `Them`,
 /// once as `You`.
 ///
-/// PT-R19's rule: when a mic utterance's text is **more than 0.5 similar** to a
+/// PT-R145's rule: when a mic utterance's text is **more than 0.5 similar** to a
 /// system utterance within a **±5 s window**, the utterance is an echo and the
 /// **mic-side** copy is dropped (the system stream is the authoritative source
 /// of remote speech). This carries over the `transcribe-md` heuristic.
@@ -26,9 +26,9 @@ public struct MicEchoDedup {
         let end: Duration
     }
 
-    /// Similarity above which a mic utterance counts as an echo (PT-R19: > 0.5).
+    /// Similarity above which a mic utterance counts as an echo (PT-R145: > 0.5).
     public let similarityThreshold: Double
-    /// Half-width of the time window an echo may be offset by (PT-R19: ±5 s).
+    /// Half-width of the time window an echo may be offset by (PT-R145: ±5 s).
     public let window: Duration
 
     /// Recent system utterances, pruned to the window as time advances.
@@ -58,7 +58,7 @@ public struct MicEchoDedup {
     ///
     /// - Returns: `true` when a system utterance within ±`window` of this mic
     ///   utterance has text similarity strictly greater than the threshold —
-    ///   meaning the caller should **drop this mic line** (PT-R19).
+    ///   meaning the caller should **drop this mic line** (PT-R145).
     public func isMicEcho(text: String, start: Duration, end: Duration) -> Bool {
         let normalized = Self.normalize(text)
         guard !normalized.isEmpty else { return false }

@@ -35,7 +35,7 @@ public actor ResumableRefiner {
     /// (PT-R22, PT-R23). `nil` keeps the raw `Speaker_N` labels — the queue's
     /// `makeStandard` opens a real library and passes it in for production.
     private let library: SpeakerLibrary?
-    /// PT-P8-R3 (a) — passive owner-profile learning store. `nil` disables
+    /// PT-R137 (a) — passive owner-profile learning store. `nil` disables
     /// learning; the production queue passes a store rooted at
     /// `AppPaths.standard.ownerProfileURL`.
     private let ownerProfile: OwnerVoiceProfileStore?
@@ -94,7 +94,7 @@ public actor ResumableRefiner {
             try await advance(&progress, to: .diarizing, folder: folder)
             let diarization = try await runDiarization(folder: folder, progress: &progress)
 
-            // PT-P8-R1: mic diarization — per-recording opt-in via options.json.
+            // PT-R135: mic diarization — per-recording opt-in via options.json.
             // Runs as its own checkpointed stage; the result is persisted to
             // `mic-diarization.json` and threaded into the merge (T2/T3).
             var micDiarization: DiarizationResult?
@@ -346,7 +346,7 @@ public actor ResumableRefiner {
         }
     }
 
-    /// PT-P8-R1 — diarize the mic WAV (stamp on). Same D-Q7 cancel-retry
+    /// PT-R135 — diarize the mic WAV (stamp on). Same D-Q7 cancel-retry
     /// posture as `runDiarization`: a pause cancels the in-flight run and the
     /// loop re-runs when the gate reopens; other errors propagate.
     private func runMicDiarization(
@@ -391,7 +391,7 @@ public actor ResumableRefiner {
         let folderName = folder.directory.lastPathComponent
         let recordingStart = RecordingFolderTimestamp.parse(folderName) ?? Date()
 
-        // PT-P8-R3 (a): passive owner-profile learning — ordinary recordings
+        // PT-R137 (a): passive owner-profile learning — ordinary recordings
         // only. `recordingOptions` is read once per pass in `run` and passed in.
         if !recordingOptions.diarizeMic,
            let micStream = folder.micStream,
@@ -406,7 +406,7 @@ public actor ResumableRefiner {
                 logger: logger)
         }
 
-        // PT-P8-R4/R5: attribute the mic clusters when the stamp was on (a mic
+        // PT-R138/R5: attribute the mic clusters when the stamp was on (a mic
         // diarization exists). Owner → `You`, guests through the shared library.
         var micAttribution: MicChannelAttribution.Outcome?
         if let micDiarization {

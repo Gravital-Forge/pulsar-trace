@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-@Suite("mic-diarization.json sidecar (PT-P8-R1/E5 handoff)")
+@Suite("mic-diarization.json sidecar (PT-R135/E5 handoff)")
 struct MicDiarizationSidecarTests {
 
     @Test("write then read round-trips a DiarizationResult")

@@ -33,32 +33,46 @@ the shared transcript option/error types, and an in-process decode that is bound
 
 ### PT-C3 · Diarization Engine
 
-Produces speaker turns and per-speaker embeddings for the system stream by running FluidAudio's
-CoreML `speaker-diarization-community-1` pipeline — powerset segmentation, WeSpeaker embeddings, and
-AHC/VBx clustering — in-process on the Apple Neural Engine through a resident `DiarizerEngine`;
-never diarizes the microphone stream. Owns the transcript-to-turns merge by dominant overlap. One
-embedding model serves the offline pass, the live pass, and the Speaker Library, so the embedding
-space is unified by construction. There is no Python runtime anywhere in the product.
+Produces speaker turns and per-speaker embeddings by running FluidAudio's CoreML
+`speaker-diarization-community-1` pipeline — powerset segmentation, WeSpeaker embeddings, and AHC/VBx
+clustering — in-process on the Apple Neural Engine through a resident `DiarizerEngine`. Its entry
+point is stream-agnostic (`diarizeStream`): the system stream is always diarized, and the microphone
+stream is by default attributed to the local speaker `You` without diarization but is diarized the
+same way when a recording's mic-diarization stamp is on (PT-R135). Owns the transcript-to-turns merge
+by dominant overlap. One embedding model serves the offline pass, the live pass, and the Speaker
+Library, so the embedding space is unified by construction. There is no Python runtime anywhere in
+the product.
 
-*Interactions:* reads system-stream audio; model bundles via Model Acquisition (PT-C21); its turns
-and embeddings flow to the Refinement Pipeline, Live Diarization, and the Speaker Library.
+*Interactions:* reads system- and (when stamped) microphone-stream audio; model bundles via Model
+Acquisition (PT-C21); its turns and embeddings flow to the Refinement Pipeline, Live Diarization, the
+Owner Voice Profile (PT-C25), and the Speaker Library.
 
-*Satisfies:* PT-R111, PT-R17, PT-R112
+*Satisfies:* PT-R111, PT-R135, PT-R112
 
 ### PT-C4 · Refinement Pipeline
 
 The post-recording pass that produces the authoritative transcript: re-transcribe, diarize globally,
 merge by timestamp, reconcile speakers, and write the final transcript atomically with its metadata
-sidecar. Owns recording-folder input dispatch and the atomic write-with-backup process. Offline
-decoding runs per voice-activity region (escaping silence-repetition and preserving cross-turn
-order) with a phrase-plus-confidence hallucination gate. An in-process refiner shares this path with
-the menubar, and a retroactive rewriter re-renders affected final transcripts after a speaker edit,
-now driven through the shared Speaker Edit Service (PT-C23).
+sidecar. Owns recording-folder input dispatch and the atomic write-with-backup process. Reads the
+recording's `options.json` mic-diarization stamp (PT-R136) and follows it, never an ambient global
+toggle. Every microphone segment is run through mic-echo dedup against the system stream before the
+merge, mode on or off, so system-audio bleed-through never reaches attribution or profile learning
+(PT-R145). With the stamp on it also diarizes the microphone stream (persisting `mic-diarization.json`
+so a later owner edit has the cluster embeddings without re-diarizing), attributes at most one mic
+cluster to `You` through the Owner Voice Profile (PT-C25), and reconciles the remaining mic clusters
+as ordinary library speakers (PT-R139); per-stream microphone provenance is recorded in the metadata
+sidecar under its microphone-aware schema (PT-R144). Offline decoding runs per voice-activity region
+(escaping silence-repetition and preserving cross-turn order) with a phrase-plus-confidence
+hallucination gate. An in-process refiner shares this path with the menubar, and a retroactive
+rewriter re-renders affected final transcripts after a speaker edit, now driven through the shared
+Speaker Edit Service (PT-C23).
 
-*Interactions:* drives the Transcription and Diarization engines and the Speaker Library; writes the
-Transcript Output; emits refinement, file, and speaker-rewrite events to the Events Log.
+*Interactions:* drives the Transcription and Diarization engines, the Owner Voice Profile (PT-C25),
+and the Speaker Library; writes the Transcript Output; emits refinement, file, speaker-rewrite, and
+owner-profile events to the Events Log.
 
-*Satisfies:* PT-R20, PT-R21, PT-R24, PT-R25, PT-R26, PT-R38, PT-R39, PT-R48, PT-R90, PT-R91
+*Satisfies:* PT-R20, PT-R21, PT-R24, PT-R25, PT-R26, PT-R38, PT-R39, PT-R48, PT-R90, PT-R91, PT-R135,
+PT-R136, PT-R139, PT-R144, PT-R145
 
 ### PT-C5 · Speaker Library
 
@@ -68,14 +82,19 @@ clusters, soft-delete with undo, and corruption auto-restore. Owns the merge/unm
 arithmetic and speaker delisting; a per-line fallback for speech overlapping no diarized turn labels
 the line without becoming a person. Centroids live in the unified WeSpeaker embedding space with
 thresholds calibrated to it; a schema migration archives and resets a database carrying centroids
-from a prior, incompatible embedding space.
+from a prior, incompatible embedding space. Reconciliation can exclude nominated speakers so a mic
+cluster attributed to the owner never enrols as a library row (PT-R139), a single recording's
+appearance can be removed without deleting the speaker (the "not-me"/"this-is-me" de-attribution
+path), and the label `You` is reserved — it can never be created on, or renamed onto, a library
+speaker (PT-R141).
 
 *Interactions:* read and written by the Refinement Pipeline; managed by the CLI, the Menubar editor,
 and the MCP server, all through the shared Speaker Edit Service (PT-C23); edits drive the
 retroactive rewriter. The menubar app owns one shared library instance used by both the editor and
 the in-process MCP server, so an agent edit and a UI edit are the same writer.
 
-*Satisfies:* PT-R22, PT-R23, PT-R28, PT-R30, PT-R32a, PT-R32b, PT-R49, PT-R83, PT-R105, PT-R113
+*Satisfies:* PT-R22, PT-R23, PT-R28, PT-R30, PT-R32a, PT-R32b, PT-R49, PT-R83, PT-R105, PT-R113,
+PT-R139, PT-R141
 
 ### PT-C6 · Events Log
 
@@ -109,17 +128,18 @@ the engine/capture boundary.
 
 ### PT-C9 · Command-Line Interface
 
-The `pulsartrace` tool: `refine` (run the refinement pass), `speakers` (manage the library — its
+The `pulsartrace` tool: `refine` (run the refinement pass, with a `--diarize-mic on|off` override
+that persists to the recording's sidecar before refining), `speakers` (manage the library — its
 mutating subcommands route through the shared Speaker Edit Service, gaining the retroactive
 transcript rewrite, with a repeatable `--output-folder` to resolve the roots a non-menubar caller
-scans), `record` (run a full session via the engine orchestrator), `doctor` (environment checks and
-a tone-based capture self-test), `events tail` (stream the event log), and `install-cli` (symlink
-with consent).
+scans), `record` (run a full session via the engine orchestrator, with a `--diarize-mic` flag that
+stamps the recording's sidecar at start), `doctor` (environment checks and a tone-based capture
+self-test), `events tail` (stream the event log), and `install-cli` (symlink with consent).
 
 *Interactions:* drives the Refinement Pipeline, the Speaker Library through the shared Speaker Edit
 Service (PT-C23), and the record orchestrator; spawns the Capture Daemon and engine for `record`.
 
-*Satisfies:* PT-R47, PT-R48, PT-R49, PT-R50, PT-R51, PT-R68, PT-R86
+*Satisfies:* PT-R47, PT-R48, PT-R49, PT-R50, PT-R51, PT-R68, PT-R86, PT-R143
 
 ### PT-C10 · Model Store
 
@@ -136,12 +156,15 @@ a single product-owned cache root; emitted a model-download event.
 ### PT-C11 · Transcript Output
 
 The transcript files PulsarTrace writes — a public contract. Owns the final-transcript marker, the
-atomic write/backup discipline, and the metadata sidecar format. Normative detail in
+atomic write/backup discipline, and the metadata sidecar format — including the microphone-aware
+metadata schema (a `mic_diarized` field and a per-stream `is_microphone` that several speakers may
+carry) and the provisional `Guest` mic label family in `live.md` (PT-R144). Normative detail in
 `transcript-format.md`.
 
-*Interactions:* written by the Refinement Pipeline; read by users and external tools.
+*Interactions:* written by the Refinement Pipeline and the live pass; read by users and external
+tools.
 
-*Satisfies:* PT-R13, PT-R24, PT-R38, PT-R39, PT-R89
+*Satisfies:* PT-R13, PT-R24, PT-R38, PT-R39, PT-R89, PT-R144
 
 ### PT-C12 · Streaming Transcription
 
@@ -164,23 +187,31 @@ Windowed diarization of the system stream, in-process over the resident `Diarize
 stitching provisional speaker identity across windows by embedding similarity, with read-only
 speaker-library lookup to surface known names. A single in-flight window is gated so a wedged window
 never stalls transcription or the live transcript, and an utterance with no diarized coverage takes
-a neutral provisional marker rather than a named speaker. Never writes the library.
+a neutral provisional marker rather than a named speaker. Never writes the library. When a
+recording's mic-diarization stamp is on, a second, independent `LiveDiarizer` instance runs over the
+microphone stream with its own window state (no cross-stream stitching): the cluster matching the
+owner profile (read-only) is labeled `You`, library matches surface their names with the provisional
+`?` suffix, and the rest take a `Guest` provisional family distinct from the system stream's `Them`
+(PT-R147).
 
-*Interactions:* reads the system source (PT-C1), runs the Diarization Engine (PT-C3), and reads the
-Speaker Library (PT-C5); labels live utterances for the Live Markdown Writer.
+*Interactions:* reads the system and (when stamped) microphone sources (PT-C1), runs the Diarization
+Engine (PT-C3), and reads the Speaker Library (PT-C5) and the Owner Voice Profile (PT-C25); labels
+live utterances for the Live Markdown Writer.
 
-*Satisfies:* PT-R15, PT-R16, PT-R18, PT-R32
+*Satisfies:* PT-R15, PT-R16, PT-R18, PT-R32, PT-R147
 
 ### PT-C14 · Live Markdown Writer
 
 Writes the provisional live transcript — created at session start with its marker and header,
-strictly append-only with atomic per-line writes — and drops microphone-echo duplicates. Its
+strictly append-only with atomic per-line writes — and drops microphone-echo duplicates before a mic
+line is written (PT-R145). A mic line carries its resolved live label (`You`, a library name, or a
+`Guest`-family placeholder) when the recording is mic-diarized, and the literal `You` otherwise. Its
 contract is part of the Transcript Output spec (`transcript-format.md`).
 
 *Interactions:* written by Streaming Transcription and Live Diarization; its file is replaced by the
 final transcript at refinement.
 
-*Satisfies:* PT-R12, PT-R19, PT-R35, PT-R35a, PT-R36, PT-R37
+*Satisfies:* PT-R12, PT-R145, PT-R35, PT-R35a, PT-R36, PT-R37
 
 ### PT-C15 · Capture Daemon
 
@@ -212,14 +243,19 @@ runs the full record flow from committed WAVs through an engine-only orchestrato
 single shared Speaker Library instance, delegates speaker edits to the Speaker Edit Service
 (PT-C23), and hosts the opt-in in-process MCP Server (PT-C22) via an `MCPController` — with a
 Settings section for the toggle, port, live `/healthz` status, copyable connection snippet, and
-manual restart.
+manual restart. Settings also carries the sticky mic-diarization toggle (PT-R146) whose first enable
+triggers the Owner Voice Profile backfill (PT-C25); each record path stamps the recording's
+`options.json` at start, the recordings detail view shows the stamp as an editable control beside
+Refine (the post-hoc apply/revert flow), and the detail view offers per-recording "this is me" /
+"not me" owner reassignment beside the speaker pills (PT-R142, PT-R140).
 
 *Interactions:* drives recording and the in-process refiner (PT-C4); reads the live transcript;
-edits the Speaker Library (PT-C5) through the Speaker Edit Service (PT-C23); surfaces the Refinement
-Job Queue (PT-C17); hosts the MCP Server (PT-C22).
+edits the Speaker Library (PT-C5) through the Speaker Edit Service (PT-C23); triggers the Owner Voice
+Profile backfill (PT-C25); surfaces the Refinement Job Queue (PT-C17); hosts the MCP Server
+(PT-C22).
 
 *Satisfies:* PT-R31, PT-R40, PT-R41, PT-R42, PT-R43, PT-R44, PT-R45, PT-R103, PT-R104, PT-R106,
-PT-R114, PT-R126, PT-R127, PT-R128
+PT-R114, PT-R126, PT-R127, PT-R128, PT-R142, PT-R146
 
 ### PT-C17 · Refinement Job Queue
 
@@ -303,7 +339,9 @@ a persistent bind failure rather than rotating ports. Hosts a 17-tool surface �
 speaker queries, the nine thin speaker-management tools (refused during capture), recording
 title-set and refine-request, an event query, and a self-describing operations manual — that returns
 identity, state, and filesystem paths only, never transcript or audio bytes, and that cannot change
-settings, model selection, or capture.
+settings, model selection, or capture. The refine-request tool accepts an optional `diarize_mic`
+override that stamps the recording's sidecar before enqueuing, and recording listings report both the
+pending mic-diarization stamp and whether the current `final.md` already reflects it (PT-R143).
 
 *Interactions:* hosted by the Menubar Application (PT-C16) over the single shared Speaker Library
 (PT-C5) that the menubar editor also uses; drives speaker edits through the Speaker Edit Service
@@ -312,7 +350,7 @@ refines onto the Refinement Job Queue (PT-C17). The tool-handling core is transp
 future LAN transport is an isolated addition rather than a rewrite.
 
 *Satisfies:* PT-R115, PT-R116, PT-R117, PT-R118, PT-R119, PT-R120, PT-R121, PT-R122, PT-R124,
-PT-R125
+PT-R125, PT-R143
 
 ### PT-C23 · Speaker Edit Service
 
@@ -322,13 +360,21 @@ then emit the `speaker_*` cause event before its `final_md_rewritten` effects. T
 the MCP server, and the CLI all invoke it, so an edit produces identical file and event effects
 regardless of who triggered it; a process-wide non-reentrant lock serializes the whole
 mutate→rewrite→emit sequence so concurrent edits cannot lose a transcript rewrite. Owns the shared
-speaker-name validation rule, the unchanged-name no-op, and the microphone-speaker delist refusal.
+speaker-name validation rule, the unchanged-name no-op, and the reserved-`You` refusal — enforcing
+the structural owner identity so the microphone-delist guard no longer keys on a display name
+(PT-R141). Owns the per-recording owner reassignment: `designateOwner` ("this is me") re-attributes a
+mic guest's lines to `You`, updates the Owner Voice Profile, and prunes a solely-misattributed
+library speaker, while `demoteOwner` ("not me") reconciles the `You` cluster back to an ordinary
+library speaker — both under the same lock and causal-event order, through a rewriter hook that
+sets the mic row's `speaker_id` (nulled on designate, resolved on demote) rather than remapping a
+name (PT-R140).
 
 *Interactions:* invoked by the Menubar Application (PT-C16), the MCP Server (PT-C22), and the
-Command-Line Interface (PT-C9); mutates the Speaker Library (PT-C5) and drives the Refinement
-Pipeline's retroactive rewriter (PT-C4); emits to the Events Log (PT-C6).
+Command-Line Interface (PT-C9); mutates the Speaker Library (PT-C5) and the Owner Voice Profile
+(PT-C25), drives the Refinement Pipeline's retroactive rewriter (PT-C4), and reads the recording's
+`mic-diarization.json` for cluster embeddings; emits to the Events Log (PT-C6).
 
-*Satisfies:* PT-R123
+*Satisfies:* PT-R123, PT-R140, PT-R141
 
 ### PT-C24 · End-to-End Verification Harness
 
@@ -351,3 +397,26 @@ Command-Line Interface (PT-C9) and the Capture Daemon (PT-C15); the runbook cros
 Transcript Output (PT-C11), the Events Log (PT-C6), and the MCP Server (PT-C22).
 
 *Satisfies:* PT-R128, PT-R129, PT-R130, PT-R131, PT-R132, PT-R133, PT-R134
+
+### PT-C25 · Owner Voice Profile
+
+The subsystem that keeps `You` canonical when the microphone carries several voices. Owns a
+persistent owner voiceprint — a single centroid in the unified WeSpeaker embedding space (PT-R112),
+stored beside the Speaker Library but never a library row, pinned to the diarization model revision
+with the same archive-and-reset migration the library uses (PT-R113) — and the processes that build
+and apply it. It is updated by a running mean from four sources: passive learning during the
+refinement of ordinary (non-mic-diarized) recordings, inlier-gated over the mic speech that survived
+echo dedup so a borrowed microphone cannot poison it; the `You` cluster of a mic-diarized refine;
+explicit owner designation; and a one-shot, first-enable backfill over recent recordings' mic WAVs,
+newest-first and capped, so an established user's `You` attribution works immediately. Owns the mic
+attribution decision (PT-R138): the mic cluster best matching the profile at or above the owner-match
+threshold becomes `You` (at most one), and with no profile or no confident match no cluster is
+auto-labeled `You` — fail-safe over guessing. The live pass reads the profile read-only.
+
+*Interactions:* read/written by the Refinement Pipeline (PT-C4) for passive learning and mic
+attribution; read-only by Live Diarization (PT-C13); updated by the Speaker Edit Service (PT-C23) on
+owner reassignment; its backfill triggered by the Menubar Application (PT-C16) on first enable;
+embeddings come from the Diarization Engine (PT-C3); emits owner-profile events to the Events Log
+(PT-C6).
+
+*Satisfies:* PT-R137, PT-R138

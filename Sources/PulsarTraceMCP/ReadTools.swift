@@ -87,7 +87,7 @@ public enum ReadTools {
             "speakers": e.speakers.map {
                 ["label": $0.label, "speaker_id": $0.speakerId as Any, "is_microphone": $0.isMicrophone]
             },
-            // PT-P8-R9/PT-P8-R10: the per-recording mic-diarization input stamp
+            // PT-R143/PT-R144: the per-recording mic-diarization input stamp
             // (`options.json`) and the last refine's output flag (`metadata.json`
             // `mic_diarized`, absent → false). The stamp is what the NEXT refine
             // will honor; `mic_diarized` is what the CURRENT `final.md` reflects.
@@ -100,7 +100,7 @@ public enum ReadTools {
         ]
     }
 
-    /// The last refine's `mic_diarized` flag from `metadata.json` (PT-P8-R10);
+    /// The last refine's `mic_diarized` flag from `metadata.json` (PT-R144);
     /// `false` when the recording is unrefined or the file is absent/malformed.
     private static func micDiarized(_ e: RecordingEntry) -> Bool {
         let url = e.folderURL.appendingPathComponent(RecordingFolder.FileName.metadata)

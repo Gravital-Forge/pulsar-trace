@@ -1,6 +1,6 @@
 import Foundation
 
-/// PT-P8-R2 — the per-recording **input** sidecar (`options.json`).
+/// PT-R136 — the per-recording **input** sidecar (`options.json`).
 ///
 /// Written by the app, CLI, or MCP surface; read by the live engine at start
 /// and by every refine pass. Absent or malformed means all-defaults; the file
@@ -8,7 +8,7 @@ import Foundation
 /// inputs live here (PT-P8-D5).
 public struct RecordingOptions: Codable, Equatable, Sendable {
 
-    /// PT-P8-R1 — the recording's mic-diarization stamp.
+    /// PT-R135 — the recording's mic-diarization stamp.
     public var diarizeMic: Bool
 
     public static let defaults = RecordingOptions(diarizeMic: false)

@@ -67,7 +67,7 @@ struct RecordingEntryDecodeTests {
         #expect(you.isUnknownPlaceholder == false)
     }
 
-    @Test("RecordingEntry carries the diarize-mic stamp (PT-P8-R8)")
+    @Test("RecordingEntry carries the diarize-mic stamp (PT-R142)")
     func entryCarriesStamp() throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -80,7 +80,7 @@ struct RecordingEntryDecodeTests {
         #expect(entry?.diarizeMicStamp == true)
     }
 
-    @Test("no sidecar decodes as stamp off (PT-P8-R8)")
+    @Test("no sidecar decodes as stamp off (PT-R142)")
     func entryStampDefaultsOff() throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -89,7 +89,7 @@ struct RecordingEntryDecodeTests {
         #expect(RecordingEntry.decode(folderURL: folder)?.diarizeMicStamp == false)
     }
 
-    @Test("an unrefined folder carries the diarize-mic stamp too (PT-P8-R8)")
+    @Test("an unrefined folder carries the diarize-mic stamp too (PT-R142)")
     func unrefinedEntryCarriesStamp() throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }

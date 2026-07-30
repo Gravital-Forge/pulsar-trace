@@ -15,7 +15,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
     /// Current schema version. v2: `pyannote_model` → `diarization_model`
     /// {id, revision} (PT-P5-D3 — diarization moved to the ANE; the pyannote.audio
     /// library version no longer exists).
-    /// v3: `mic_diarized` + per-stream `is_microphone` (PT-P8-R10) — the mic
+    /// v3: `mic_diarized` + per-stream `is_microphone` (PT-R144) — the mic
     /// stream can now carry several speakers, so `is_microphone` is no longer
     /// synonymous with the single `You` row.
     public static let currentSchemaVersion = 3
@@ -28,8 +28,8 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
         /// `final.md` files carry `Speaker_N`.
         public let label: String
         /// True for every speaker attributed to the microphone stream
-        /// (PT-P8-R10; may be several — `You` plus mic-diarized guests). Before
-        /// PT-P8-R1 this was synonymous with the single `You` row.
+        /// (PT-R144; may be several — `You` plus mic-diarized guests). Before
+        /// PT-R135 this was synonymous with the single `You` row.
         public let isMicrophone: Bool
         /// Stable library speaker id (`spk_<ulid>`, PT-R83) — present for a
         /// system-stream speaker reconciled against the library,
@@ -101,7 +101,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
     public let language: String
     /// Basename of the user-supplied input (never a full path — Invariant #7).
     public let sourceBasename: String
-    /// PT-P8-R10 — true when this recording's mic stream was diarized (the
+    /// PT-R144 — true when this recording's mic stream was diarized (the
     /// per-recording stamp was on). Absent in v2 files ⇒ `false`.
     public let micDiarized: Bool
 
@@ -132,7 +132,7 @@ public struct RefinementMetadata: Codable, Equatable, Sendable {
     }
 
     /// Tolerant decode: `mic_diarized` is absent in v2 files and defaults to
-    /// `false` so an older `metadata.json` still reads (PT-P8-R10).
+    /// `false` so an older `metadata.json` still reads (PT-R144).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)

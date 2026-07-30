@@ -730,7 +730,7 @@ public struct SpeakerCentroidUpdatedEvent: EventPayload {
     }
 }
 
-/// PT-P8-R3 / PT-P8-R10 — the owner voice profile changed. Payload carries
+/// PT-R137 / PT-R144 — the owner voice profile changed. Payload carries
 /// provenance and count only — never embedding values (PT-R84).
 public struct OwnerProfileUpdatedEvent: EventPayload {
     public static let eventType = "owner_profile_updated"
@@ -749,7 +749,7 @@ public struct OwnerProfileUpdatedEvent: EventPayload {
     }
 }
 
-/// `owner_designated` — PT-P8-R6 "this is me": a recording's mic-channel guest
+/// `owner_designated` — PT-R140 "this is me": a recording's mic-channel guest
 /// was re-attributed to the owner (`You`). The cause event that precedes the
 /// paired `final_md_rewritten` (Hard Invariant #8) and, when the owner profile
 /// was updated, `owner_profile_updated`. Payload carries ids/provenance only —
@@ -778,7 +778,7 @@ public struct OwnerDesignatedEvent: EventPayload {
     }
 }
 
-/// `owner_demoted` — PT-P8-R6 "not me": a recording's owner (`You`) was demoted
+/// `owner_demoted` — PT-R140 "not me": a recording's owner (`You`) was demoted
 /// to a reconciled-or-minted library speaker. The cause event that precedes the
 /// paired `final_md_rewritten` (Hard Invariant #8). Payload carries
 /// ids/provenance only — never embedding values (PT-R84).

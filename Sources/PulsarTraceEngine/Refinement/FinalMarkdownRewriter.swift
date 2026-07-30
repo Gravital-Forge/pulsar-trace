@@ -52,10 +52,10 @@ public struct FinalMarkdownRewriter: Sendable {
         /// the original position of `<name>` on undelist — that degradation is
         /// documented and accepted.
         case speakerUndelisted = "speaker_undelisted"
-        /// PT-P8-R6 "this is me": a recording's mic-channel guest is
+        /// PT-R140 "this is me": a recording's mic-channel guest is
         /// re-attributed to the owner (`You`). Scoped to the one recording.
         case ownerDesignated = "owner_designated"
-        /// PT-P8-R6 "not me": a recording's owner (`You`) is demoted to a
+        /// PT-R140 "not me": a recording's owner (`You`) is demoted to a
         /// reconciled/minted library speaker. Scoped to the one recording.
         case ownerDemoted = "owner_demoted"
     }
@@ -119,7 +119,7 @@ public struct FinalMarkdownRewriter: Sendable {
     ///   skipped and absent from the result — so a caller's
     ///   `applied_to_recordings` lists only the recordings the edit actually
     ///   altered (and no spurious `.bak` files are created).
-    ///   - setMicOwnerSpeakerId: optional PT-P8-R6 owner-reassignment hook. When
+    ///   - setMicOwnerSpeakerId: optional PT-R140 owner-reassignment hook. When
     ///     set, after the label substitution any `metadata.json` row whose
     ///     `label` equals `matchLabel` and `is_microphone` is `true` has its
     ///     `speaker_id` set to `id` (which may be `nil`). Owner designation
@@ -616,7 +616,7 @@ public struct FinalMarkdownRewriter: Sendable {
             let remapApplies = remapSpeakerId.map { remap in
                 metadata.speakers.contains { $0.speakerId == remap.from }
             } ?? false
-            // PT-P8-R6: an owner reassignment may need to set the mic row's
+            // PT-R140: an owner reassignment may need to set the mic row's
             // speaker_id even when nothing else changes (e.g. demote where the
             // resolved name differs but the id-set is the material change).
             // A row already carrying the target id needs no write.
@@ -652,7 +652,7 @@ public struct FinalMarkdownRewriter: Sendable {
                 } else {
                     mappedId = speaker.speakerId
                 }
-                // Step 2b (PT-P8-R6) — owner reassignment: set the mic row's
+                // Step 2b (PT-R140) — owner reassignment: set the mic row's
                 // speaker_id (nulled on designate, set to the resolved id on
                 // demote) keyed on the row's NEW label + is_microphone.
                 if let set = setMicOwnerSpeakerId,

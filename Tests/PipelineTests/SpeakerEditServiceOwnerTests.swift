@@ -2,12 +2,12 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-/// PT-P8-R6 — owner reassignment ("this is me" / "not me") through the shared
+/// PT-R140 — owner reassignment ("this is me" / "not me") through the shared
 /// `SpeakerEditService`. Drives the service directly over hand-built,
 /// byte-realistic recording folders: `final.md` + `metadata.json` (v3) written
 /// with the same encoders production uses, plus a `mic-diarization.json` sidecar
 /// carrying the cluster embeddings.
-@Suite("SpeakerEditService owner designation (PT-P8-R6)")
+@Suite("SpeakerEditService owner designation (PT-R140)")
 struct SpeakerEditServiceOwnerTests {
 
     // MARK: - Helpers

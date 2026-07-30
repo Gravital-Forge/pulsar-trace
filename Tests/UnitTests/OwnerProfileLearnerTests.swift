@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-@Suite("Owner profile learner — cluster selection (PT-P8-R3)")
+@Suite("Owner profile learner — cluster selection (PT-R137)")
 struct OwnerProfileLearnerTests {
 
     private func seg(_ s: Double, _ e: Double) -> TranscriptSegment {

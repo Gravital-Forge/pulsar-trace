@@ -42,7 +42,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier(A11yID.Settings.micPicker)
                 Toggle("Capture system audio", isOn: $settings.systemAudioEnabled)
                     .accessibilityIdentifier(A11yID.Settings.systemAudioToggle)
-                // PT-P8-R12: sticky mic-diarization mode. Stamps NEW recordings
+                // PT-R146: sticky mic-diarization mode. Stamps NEW recordings
                 // only; the first enable backfills the owner voice profile from
                 // existing recordings (wired in the composition root's onChange).
                 Toggle("Diarize microphone (in-person meetings)",

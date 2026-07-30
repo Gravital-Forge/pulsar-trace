@@ -10,7 +10,7 @@ import Testing
 /// fixture — where the guest assertion belongs — is minted in E4-T4 where the
 /// live path needs it too; this suite gains the guest assertion there via a
 /// follow-up run.
-@Suite("Mic-diarized refine end-to-end (PT-P8-R1)", .serialized)
+@Suite("Mic-diarized refine end-to-end (PT-R135)", .serialized)
 struct MicDiarizedRefineTests {
 
     /// One lazily-loading WhisperKit transcriber per process (PT-P5-D1 backend).
@@ -140,7 +140,7 @@ struct MicDiarizedRefineTests {
         #expect(metadata.speakers.first(where: \.isMicrophone)?.label == "You")
     }
 
-    /// PT-P8-R5 — the guest assertion deferred from E3 (the single-voice paired
+    /// PT-R139 — the guest assertion deferred from E3 (the single-voice paired
     /// fixture could not exercise it). The two-voice mic fixture minted in E4-T4
     /// diarizes into two mic clusters: the dominant voice (the seeded owner) →
     /// `You`, and the second voice → a guest reconciled against the (empty)

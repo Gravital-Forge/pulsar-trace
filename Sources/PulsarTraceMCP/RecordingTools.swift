@@ -66,7 +66,7 @@ public enum RecordingTools {
             guard let entry = await recordings.snapshot().first(where: { $0.id == id }) else {
                 return ReadTools.errorResult("No recording with id \(id).")
             }
-            // PT-P8-R9: when present, persist the stamp before enqueue so the
+            // PT-R143: when present, persist the stamp before enqueue so the
             // background refine — and every subsequent one — agrees with it.
             if let diarizeMic = args?["diarize_mic"]?.boolValue {
                 var options = RecordingOptions.read(from: entry.folderURL)

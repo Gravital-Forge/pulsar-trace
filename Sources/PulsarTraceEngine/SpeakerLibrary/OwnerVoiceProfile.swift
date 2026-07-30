@@ -1,6 +1,6 @@
 import Foundation
 
-/// PT-P8-R3 — the persistent owner voice profile: one centroid in the unified
+/// PT-R137 — the persistent owner voice profile: one centroid in the unified
 /// embedding space (PT-R112), pinned to the diarization model revision with
 /// archive-and-reset on mismatch (PT-R113 semantics). Stored BESIDE the
 /// speaker library, never inside it: the reconciler and the edit surface can
@@ -21,9 +21,9 @@ public struct OwnerVoiceProfile: Codable, Equatable, Sendable {
 public actor OwnerVoiceProfileStore {
 
     /// Owner-match threshold — its own constant in the unified space,
-    /// initially the library calibration value (PT-P8-R4).
+    /// initially the library calibration value (PT-R138).
     public static let matchThreshold = 0.45
-    /// Inlier gate for passive learning (PT-P8-R3).
+    /// Inlier gate for passive learning (PT-R137).
     public static let inlierThreshold = 0.45
 
     public enum UpdateOutcome: Equatable, Sendable {
@@ -47,7 +47,7 @@ public actor OwnerVoiceProfileStore {
 
     public func snapshot() -> OwnerVoiceProfile? { load() }
 
-    /// Read-only match — safe for the live pass (PT-P8-R3).
+    /// Read-only match — safe for the live pass (PT-R137).
     public func match(embedding: [Float], modelRevision: String) -> Double? {
         guard let profile = load(), profile.modelRevision == modelRevision
         else { return nil }
@@ -78,7 +78,7 @@ public actor OwnerVoiceProfileStore {
         return .accepted
     }
 
-    /// Weighted subtraction of one accepted sample (PT-P8-R6 "not me").
+    /// Weighted subtraction of one accepted sample (PT-R140 "not me").
     public func remove(embedding: [Float]) throws {
         guard var profile = load() else { return }
         guard profile.sampleCount > 1 else {

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-@Suite("Owner voice profile store (PT-P8-R3)")
+@Suite("Owner voice profile store (PT-R137)")
 struct OwnerVoiceProfileTests {
 
     private func tempURL() -> URL {

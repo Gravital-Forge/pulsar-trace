@@ -207,7 +207,7 @@ final class LiveRunner: Sendable {
         /// flight (Fix B) and lets the run hand off any in-flight task at exit.
         let diarGate = DiarGate()
 
-        // PT-P8-R13 — the mic channel's own, fully independent diarization
+        // PT-R147 — the mic channel's own, fully independent diarization
         // state: its own window buffer, gate, and accumulated-span state, with
         // the same 10 s/5 s geometry as the system stream. No cross-stream
         // stitching — the mic `LiveDiarizer` and this `micDiarState` share
@@ -369,7 +369,7 @@ final class LiveRunner: Sendable {
                     await workerResult.noteProgress()
                     for utt in utterances {
                         if isMic {
-                            // PT-P8-R13: with a mic diarizer configured the label
+                            // PT-R147: with a mic diarizer configured the label
                             // resolves owner → library → Guest; otherwise the
                             // path is unchanged (LiveSink defaults to "You").
                             let micLabel = micDiarizer == nil ? nil
@@ -530,7 +530,7 @@ final class LiveRunner: Sendable {
                     await sink.appendGap(.resumed(micFrameNow - lastMicActivity))
                 }
                 lastMicActivity = micFrameNow
-                // PT-P8-R13 — feed the mic diarizer on the same 10 s/5 s cadence
+                // PT-R147 — feed the mic diarizer on the same 10 s/5 s cadence
                 // as the system stream, off the run loop's critical path (Fix B):
                 // a detached task runs `diarizeWindow` then merges into the mic's
                 // own `micDiarState`. At most one window in flight per the mic
@@ -656,7 +656,7 @@ final class LiveRunner: Sendable {
         // bounded, so a wedged diarizer cannot make the run hang on exit.
         phase.set("await-diarGate-drain")
         await diarGate.drain(timeout: .seconds(2))
-        // PT-P8-R13 — same bounded hand-off for the mic diarizer's in-flight
+        // PT-R147 — same bounded hand-off for the mic diarizer's in-flight
         // window (a no-op when the mic gate was never acquired / mode off).
         await micDiarGate.drain(timeout: .seconds(2))
         phase.set("await-readers-value")
@@ -779,7 +779,7 @@ final class LiveRunner: Sendable {
         return "\(key)?"
     }
 
-    /// PT-P8-R13 — the mic twin of `resolveSystemLabel`: owner → library →
+    /// PT-R147 — the mic twin of `resolveSystemLabel`: owner → library →
     /// Guest-family provisional. Same shape as the system path (dominant span
     /// over the utterance range → label), but the mic channel resolves against
     /// the owner voice profile first (a `You` attribution as strong as a library
@@ -825,7 +825,7 @@ final class LiveRunner: Sendable {
         return "\(dominant.provisionalKey)?"
     }
 
-    /// PT-P8-R13 — resolve one committed mic utterance's label by assembling the
+    /// PT-R147 — resolve one committed mic utterance's label by assembling the
     /// inputs for the pure `resolveMicLabel`: the mic channel's accumulated
     /// provisional spans (`micDiarState`), the read-only library-name map for the
     /// dominant span's key (mirroring `resolveSystemLabel`'s per-utterance PT-R18
@@ -833,7 +833,7 @@ final class LiveRunner: Sendable {
     /// mic diarizer's model revision (for owner/library revision scoping).
     ///
     /// The library and owner profile are both read-only here (invariant #5 +
-    /// PT-P8-R13): `bestMatch` is a pure read, and the owner centroid arrives as
+    /// PT-R147): `bestMatch` is a pure read, and the owner centroid arrives as
     /// a snapshot value — no write, no per-utterance store hop.
     func resolveMicLabel(
         for utterance: CommittedUtterance,

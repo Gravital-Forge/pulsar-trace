@@ -54,11 +54,11 @@ actor LiveSink {
     }
 
     /// Append a mic-stream utterance. Dropped when it is a mic-echo of a recent
-    /// system utterance (PT-R19) — the echo check runs FIRST, unchanged.
+    /// system utterance (PT-R145) — the echo check runs FIRST, unchanged.
     ///
     /// `label` is `nil` in the default (mode-off) path — the mic line is then
-    /// the literal `You` (PT-R17), byte-identical to today. With mic-channel
-    /// diarization on (PT-P8-R13) `LiveRunner` resolves the label
+    /// the literal `You` (PT-R135), byte-identical to today. With mic-channel
+    /// diarization on (PT-R147) `LiveRunner` resolves the label
     /// (owner → library → Guest) and passes it here.
     func appendMicUtterance(
         _ utterance: CommittedUtterance,

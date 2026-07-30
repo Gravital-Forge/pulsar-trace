@@ -1,8 +1,8 @@
 import Foundation
 
-/// PT-P8-R1 — persisted mic-stream diarization (`mic-diarization.json`).
+/// PT-R135 — persisted mic-stream diarization (`mic-diarization.json`).
 /// Written by every mic-diarized refine so owner-reassignment edits
-/// (PT-P8-R6) have cluster embeddings without re-diarizing. Input-tolerant:
+/// (PT-R140) have cluster embeddings without re-diarizing. Input-tolerant:
 /// absent or malformed reads nil and never fails a pass. Lives in the
 /// recording folder; contains embeddings, so it is covered by the same
 /// local-only posture as the WAVs themselves (never in events — PT-R84).

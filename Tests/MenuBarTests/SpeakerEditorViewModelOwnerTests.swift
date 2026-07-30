@@ -3,12 +3,12 @@ import Testing
 @testable import PulsarTraceMenuBar
 @testable import PulsarTraceEngine
 
-/// PT-P8-R6 — the speaker editor's owner-reassignment actions ("This is me" /
+/// PT-R140 — the speaker editor's owner-reassignment actions ("This is me" /
 /// "Not me") and the sidecar-gated visibility, exercised at the view-model
 /// level. These are headless unit tests (no SwiftUI, no running app): they
 /// drive `SpeakerEditorViewModel` over byte-realistic recording folders built
 /// with the production writers.
-@Suite("Speaker editor owner actions (PT-P8-R6)")
+@Suite("Speaker editor owner actions (PT-R140)")
 @MainActor
 struct SpeakerEditorViewModelOwnerTests {
 

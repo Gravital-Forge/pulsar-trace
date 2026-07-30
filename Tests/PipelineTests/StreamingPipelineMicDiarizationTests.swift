@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-/// PT-P8-R13 — the live half: a second windowed diarizer over the mic stream,
+/// PT-R147 — the live half: a second windowed diarizer over the mic stream,
 /// resolving `You` (owner) / library names / `Guest`-family labels, driven by a
 /// scripted mic diarizer so the label outcome is deterministic (the real ANE
 /// diarizer's per-window content is exercised in `DiarizationE2ETests`).
@@ -10,7 +10,7 @@ import Testing
 /// The mic diarizer is scripted; both transcribers are the real resident
 /// Parakeet engine (shared, `.serialized`) over committed fixtures so the run
 /// exercises the true LiveRunner mic hand-off, not a stubbed sink.
-@Suite("Streaming pipeline — mic diarization (PT-P8-R13)", .serialized)
+@Suite("Streaming pipeline — mic diarization (PT-R147)", .serialized)
 struct StreamingPipelineMicDiarizationTests {
 
     /// A `RawWindowDiarizing` fake returning a scripted result per call. Local to
@@ -51,7 +51,7 @@ struct StreamingPipelineMicDiarizationTests {
         let folder = tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
 
-        // Read-only invariant (PT-P8-R13): the owner profile lives beside the
+        // Read-only invariant (PT-R147): the owner profile lives beside the
         // library and is never written by the live pass. There is no profile
         // file on disk in this run — assert it stays absent afterward.
         let profileURL = folder.appendingPathComponent("owner-profile.json")

@@ -79,7 +79,7 @@ public struct RecordPlan: Sendable, Equatable {
     ///     spawn for such plans, and the engine reads the fixtures through its
     ///     realtime `--source fixture` source. `nil` (the default) is the
     ///     unchanged device-capture path.
-    ///   - diarizeMic: PT-P8-R13 — the recording's mic-diarization stamp. When
+    ///   - diarizeMic: PT-R147 — the recording's mic-diarization stamp. When
     ///     `true` the engine is launched with `--diarize-mic`, which turns on the
     ///     second windowed diarizer over the mic stream (owner → library → Guest
     ///     labels) instead of the flat `You`. The engine also honors the same
@@ -148,7 +148,7 @@ public struct RecordPlan: Sendable, Equatable {
                            allowedLanguages.joined(separator: ",")]
         }
         if diarizeMic {
-            engineArgs.append("--diarize-mic")   // PT-P8-R13
+            engineArgs.append("--diarize-mic")   // PT-R147
         }
 
         return RecordPlan(

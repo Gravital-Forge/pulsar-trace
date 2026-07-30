@@ -3,12 +3,12 @@ import Foundation
 @testable import pulsartrace
 
 /// `pulsartrace refine` option parsing — the tri-state mic-diarization
-/// override (PT-P8-R9). Absent (`nil`) must not overwrite the recording's
+/// override (PT-R143). Absent (`nil`) must not overwrite the recording's
 /// stamp; `on`/`off` persist it before refining so subsequent refines agree.
-@Suite("RefineCommand parse (PT-P8-R9)")
+@Suite("RefineCommand parse (PT-R143)")
 struct RefineCommandTests {
 
-    @Test("refine --diarize-mic on|off parses; anything else is an error (PT-P8-R9)")
+    @Test("refine --diarize-mic on|off parses; anything else is an error (PT-R143)")
     func refineDiarizeMicParses() throws {
         #expect(try RefineCommand.parse(["/tmp/x", "--diarize-mic", "on"])
             .diarizeMicOverride == true)

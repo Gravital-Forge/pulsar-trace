@@ -11,14 +11,14 @@ struct TranscriptDetailView: View {
     let settings: MenuBarSettings
 
     /// Shared app environment — the single speaker library + events writer the
-    /// owner-reassignment view model is built over (PT-P8-R6). Optional so the
+    /// owner-reassignment view model is built over (PT-R140). Optional so the
     /// previews/tests that construct this view without an environment still
     /// render (the owner controls just stay hidden).
     @Environment(AppEnvironment.self) private var environment: AppEnvironment?
 
     @State private var autoScroll = AutoScrollController()
     @State private var find = TranscriptFindActivator()
-    /// The owner-reassignment view model (PT-P8-R6), built lazily from the
+    /// The owner-reassignment view model (PT-R140), built lazily from the
     /// shared environment when a mic-diarized recording is shown.
     @State private var ownerVM: SpeakerEditorViewModel?
 
@@ -92,13 +92,13 @@ struct TranscriptDetailView: View {
         }
         .padding(12)
         // Build the owner-reassignment VM once the environment is available
-        // (PT-P8-R6). Built once, shared across recordings — the VM is
+        // (PT-R140). Built once, shared across recordings — the VM is
         // recording-agnostic (recording ids are passed per action, and the
         // sidecar gate reads the shown folder on each render).
         .task(id: detailModel.shown?.id) { await buildOwnerVM() }
     }
 
-    // MARK: Per-recording mic-diarization stamp (PT-P8-R8)
+    // MARK: Per-recording mic-diarization stamp (PT-R142)
 
     /// The per-recording "Diarize microphone" checkbox. Reflects the recording's
     /// `options.json` stamp (`diarizeMicStamp`); toggling writes the sidecar and
@@ -128,7 +128,7 @@ struct TranscriptDetailView: View {
                 + "refine to undo.")
     }
 
-    // MARK: Owner reassignment ("This is me" / "Not me", PT-P8-R6)
+    // MARK: Owner reassignment ("This is me" / "Not me", PT-R140)
 
     /// The owner-reassignment affordances, shown only for a mic-diarized
     /// recording (its `mic-diarization.json` exists): "Not me" on the `You` mic

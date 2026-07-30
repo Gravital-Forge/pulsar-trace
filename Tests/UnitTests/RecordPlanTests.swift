@@ -115,7 +115,7 @@ struct RecordPlanTests {
         #expect(!plan.engineArguments.contains("--model"))
     }
 
-    @Test("diarizeMic appends --diarize-mic to engine args (PT-P8-R13)")
+    @Test("diarizeMic appends --diarize-mic to engine args (PT-R147)")
     func diarizeMicFlag() {
         let plan = RecordPlan.make(
             outputFolder: folder, paths: paths,

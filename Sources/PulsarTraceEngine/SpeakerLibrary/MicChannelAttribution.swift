@@ -1,7 +1,7 @@
 import Foundation
 import Logging
 
-/// PT-P8-R4/R5 — attribute mic clusters: at most one `You` (owner-profile
+/// PT-R138/R5 — attribute mic clusters: at most one `You` (owner-profile
 /// match, fail-safe), everyone else through the shared reconciler.
 public enum MicChannelAttribution {
 
@@ -39,7 +39,7 @@ public enum MicChannelAttribution {
         events: EventWriter?,
         logger: Logger
     ) async throws -> Outcome {
-        // 1. Owner match — best similarity at/above threshold (PT-P8-R4).
+        // 1. Owner match — best similarity at/above threshold (PT-R138).
         //    `match` returns nil for an empty profile or a revision mismatch;
         //    that state is identical for every embedding this pass, so the very
         //    first nil is dispositive — there is no owner match at all. Breaking
@@ -60,7 +60,7 @@ public enum MicChannelAttribution {
             ownerRawLabel = best?.label
         }
 
-        // PT-P8-R3 (b): the You cluster refines the profile.
+        // PT-R137 (b): the You cluster refines the profile.
         if let ownerRawLabel, let ownerProfile,
            let vector = micDiarization.embeddings
                .first(where: { $0.speaker == ownerRawLabel })?.vector {
@@ -71,7 +71,7 @@ public enum MicChannelAttribution {
                 sampleCount: await ownerProfile.snapshot()?.sampleCount ?? 0))
         }
 
-        // 2. Guests through the shared reconciler (PT-P8-R5); non-fatal on
+        // 2. Guests through the shared reconciler (PT-R139); non-fatal on
         //    failure, same posture as the system stream.
         var names: [String: String] = [:]
         var ids: [String: String] = [:]

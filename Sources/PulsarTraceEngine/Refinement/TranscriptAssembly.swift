@@ -16,7 +16,7 @@ enum TranscriptAssembly {
         /// Display label → stable library speaker id, for reconciled speakers.
         /// `You` and unreconciled speakers are absent.
         let speakerIdByLabel: [String: String]
-        /// PT-P8-R10 — display labels attributed to the mic stream (`You` plus
+        /// PT-R144 — display labels attributed to the mic stream (`You` plus
         /// any mic-diarized guests). `buildMetadata` marks these rows
         /// `is_microphone: true`. Without mic diarization this is just `["You"]`
         /// (or empty when there is no mic stream).
@@ -76,16 +76,16 @@ enum TranscriptAssembly {
         for (i, seg) in systemSegments.enumerated() {
             rows.append((seg, systemLabels[i]))
         }
-        // PT-P8-R11: refine-side mic-echo dedup — drop mic segments that
+        // PT-R145: refine-side mic-echo dedup — drop mic segments that
         // duplicate system speech (same MicEchoDedup semantics as the live pass,
         // PT-C14) before labeling them. The system stream is the authoritative
         // source of remote speech.
         let dedupedMic = dedupedMicSegments(micSegments ?? [], against: systemSegments)
-        // PT-P8-R10 — the set of display labels this mic block emits, so
+        // PT-R144 — the set of display labels this mic block emits, so
         // `buildMetadata` can mark `is_microphone: true` per stream.
         var micLabels: Set<String> = []
         if let micDiarization, let micAttribution {
-            // PT-P8-R1: per-cluster mic labels. `DiarizationMerge.speakerLabels`
+            // PT-R135: per-cluster mic labels. `DiarizationMerge.speakerLabels`
             // emits *display* labels (`Speaker_N`, `Speaker_0+Speaker_1`) while
             // the attribution maps *raw* labels (`SPEAKER_00`) — build the
             // display→name map via the same round-trip the system path uses.
@@ -117,7 +117,7 @@ enum TranscriptAssembly {
             }
         } else {
             for seg in dedupedMic {
-                // PT-P8-R1: mode-off default — the whole mic stream is "You"
+                // PT-R135: mode-off default — the whole mic stream is "You"
                 // (was PT-R17: the mic stream is always "You").
                 rows.append((seg, "You"))
                 micLabels.insert("You")
@@ -176,7 +176,7 @@ enum TranscriptAssembly {
             micLabels: micLabels)
     }
 
-    /// PT-P8-R11 — the mic-side copy of system speech is dropped; the system
+    /// PT-R145 — the mic-side copy of system speech is dropped; the system
     /// stream is the authoritative source of remote speech. Runs the same
     /// `MicEchoDedup` value type the live pass uses (PT-C14): a mic segment
     /// whose text is > 0.5 similar to a system segment within ±5 s is an echo
@@ -245,7 +245,7 @@ enum TranscriptAssembly {
 
     /// Static variant so `assembleAndWrite` can call it without a pipeline
     /// instance. Takes the whole `merged` transcript so the per-stream
-    /// `is_microphone` set (`merged.micLabels`, PT-P8-R10) and the
+    /// `is_microphone` set (`merged.micLabels`, PT-R144) and the
     /// speaker-id map travel together.
     static func buildMetadata(
         folder: RecordingFolder,
@@ -262,7 +262,7 @@ enum TranscriptAssembly {
     ) -> RefinementMetadata {
         // `metadata.json` records the stable `speaker_id` ↔ name mapping (PT-R83):
         // an agent keys off the id across renames.
-        // PT-P8-R10: `is_microphone` is per-stream — every label the mic branch
+        // PT-R144: `is_microphone` is per-stream — every label the mic branch
         // emitted (`You` plus mic-diarized guests), not just `You`.
         let speakerEntries = merged.speakers.map { label in
             RefinementMetadata.Speaker(

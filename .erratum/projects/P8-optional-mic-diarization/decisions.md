@@ -1,5 +1,7 @@
 # PT-P8 · Optional Microphone-Channel Diarization — Decision Log
 
+**Status:** Frozen · **Closed:** 2026-07-30
+
 The choices behind the opt-in mic-diarization mode — where the option lives, how `You` stays
 canonical via the owner voice profile, and what the mode covers — recorded as each was taken.
 

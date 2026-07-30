@@ -61,7 +61,7 @@ struct MenuBarSettingsTests {
         #expect(reloaded.mcpServerPort == 9001)
     }
 
-    @Test("diarizeMicEnabled defaults false and persists (PT-P8-R12)")
+    @Test("diarizeMicEnabled defaults false and persists (PT-R146)")
     func diarizeMicPersists() {
         let (defaults, suiteName) = tempSuite()
         defer { defaults.removePersistentDomain(forName: suiteName) }

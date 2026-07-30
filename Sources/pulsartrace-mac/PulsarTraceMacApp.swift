@@ -72,7 +72,7 @@ struct PulsarTraceMacApp: App {
                         settings: environment.settings,
                         recording: environment.recording)
                 }
-                // PT-P8-R12 / PT-P8-R3 (d): observe the sticky mic-diarization
+                // PT-R146 / PT-R137 (d): observe the sticky mic-diarization
                 // toggle here — the MenuBarExtra is always mounted, so the
                 // first-enable owner-profile backfill fires even when the
                 // Settings window was never opened. Kept in the composition

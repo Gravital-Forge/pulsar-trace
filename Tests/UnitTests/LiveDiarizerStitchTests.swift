@@ -47,7 +47,7 @@ struct LiveDiarizerStitchTests {
         #expect(await diarizer.modelRevision() == "digest-xyz")
     }
 
-    @Test("a Guest-family diarizer mints Guest / Guest #2 keys (PT-P8-R13)")
+    @Test("a Guest-family diarizer mints Guest / Guest #2 keys (PT-R147)")
     func guestFamilyKeys() async {
         let window1 = DiarWindowResult(
             spans: [.init(speaker: "S1", startMillis: 0, endMillis: 2000)],

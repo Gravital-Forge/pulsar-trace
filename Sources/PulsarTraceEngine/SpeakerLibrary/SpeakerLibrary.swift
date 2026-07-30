@@ -39,7 +39,7 @@ public actor SpeakerLibrary {
         case notMergeable(String)
         case database(Error)
         case modelRevisionMismatch(stored: String, incoming: String)
-        /// PT-P8-R7 — the transcript label `You` is the reserved owner label
+        /// PT-R141 — the transcript label `You` is the reserved owner label
         /// and can never be a library speaker name (closes KI-3).
         case reservedName(String)
 
@@ -437,7 +437,7 @@ public actor SpeakerLibrary {
         recordingFolderName: String,
         sampleAudioPath: String? = nil
     ) async throws -> Speaker {
-        // PT-P8-R7: "You" is the reserved owner label — never a library name
+        // PT-R141: "You" is the reserved owner label — never a library name
         // (closes KI-3). Case-sensitive exact match: the transcript label is exact.
         guard name != SpeakerEditService.microphoneSpeakerName else {
             throw LibraryError.reservedName(name)
@@ -533,10 +533,10 @@ public actor SpeakerLibrary {
         return speaker
     }
 
-    // MARK: - Appearance removal (PT-P8-R6 — designateOwner de-attribution)
+    // MARK: - Appearance removal (PT-R140 — designateOwner de-attribution)
 
     /// Remove one `(speaker, recording)` appearance row and re-derive the
-    /// speaker's `appearance_count` (PT-P8-R6). Used by `designateOwner` when a
+    /// speaker's `appearance_count` (PT-R140). Used by `designateOwner` when a
     /// mic-channel guest that appears in more than one recording is re-attributed
     /// to the owner: the guest survives in the library, but loses the appearance
     /// for the reassigned recording. A no-op when the row does not exist.
@@ -587,7 +587,7 @@ public actor SpeakerLibrary {
         to newName: String,
         suppressEvent: Bool = false
     ) async throws -> String {
-        // PT-P8-R7: "You" is the reserved owner label — never a library name
+        // PT-R141: "You" is the reserved owner label — never a library name
         // (closes KI-3).
         guard newName != SpeakerEditService.microphoneSpeakerName else {
             throw LibraryError.reservedName(newName)

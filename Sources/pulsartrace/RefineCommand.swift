@@ -17,7 +17,7 @@ enum RefineCommand {
         let inputPath: URL
         let modelName: String
         let language: String?
-        /// PT-P8-R9 — the mic-diarization override, tri-state: `nil` = respect
+        /// PT-R143 — the mic-diarization override, tri-state: `nil` = respect
         /// the existing stamp (default); `true`/`false` = persist that stamp to
         /// `options.json` before refining, so subsequent refines agree.
         let diarizeMicOverride: Bool?
@@ -72,7 +72,7 @@ enum RefineCommand {
             return 2
         }
 
-        // PT-P8-R9: the override persists — subsequent refines agree with this
+        // PT-R143: the override persists — subsequent refines agree with this
         // one. Written to the SAME directory the pipeline reads its
         // `options.json` stamp from (`RecordingFolder.resolve(...).directory`),
         // so the flag and the sidecar can never disagree. Omitted flag leaves

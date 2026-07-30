@@ -38,13 +38,13 @@ struct WriteToolsLifecycleTests {
         #expect(try await lib.liveSpeakers().contains { $0.id == steve.id })
     }
 
-    // PT-P8-R7 (closes KI-3): the mic owner (`You`) can no longer be a library
+    // PT-R141 (closes KI-3): the mic owner (`You`) can no longer be a library
     // speaker — the name is reserved, so it never appears as a delistable row.
     // The old `cannotDelistMicrophone` guard (and the "You" library speaker this
     // test used to construct) are gone; this now asserts the reservation via the
     // shared MCP path: renaming any speaker to "You" is refused and leaves the
     // library name unchanged (the reservation-based equivalent).
-    @Test("rename_speaker to the reserved 'You' label is refused (PT-P8-R7)")
+    @Test("rename_speaker to the reserved 'You' label is refused (PT-R141)")
     func renameToReservedYouRefused() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pt-wtl-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

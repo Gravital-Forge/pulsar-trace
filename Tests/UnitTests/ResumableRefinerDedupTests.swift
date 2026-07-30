@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-@Suite("ResumableRefiner drops mic echoes in the merge (PT-P8-R11)")
+@Suite("ResumableRefiner drops mic echoes in the merge (PT-R145)")
 struct ResumableRefinerDedupTests {
 
     private func tempDir() -> URL {

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-@Suite("RecordingOptions sidecar (PT-P8-R2)")
+@Suite("RecordingOptions sidecar (PT-R136)")
 struct RecordingOptionsTests {
 
     private func tempDir() -> URL {
@@ -43,7 +43,7 @@ struct RecordingOptionsTests {
         #expect(RecordingOptions.read(from: dir) == .defaults)
     }
 
-    @Test("the stamp is per-recording: another folder's stamp is untouched by later writes (PT-P8-R12)")
+    @Test("the stamp is per-recording: another folder's stamp is untouched by later writes (PT-R146)")
     func stampsAreIndependent() throws {
         let a = tempDir()
         let b = tempDir()

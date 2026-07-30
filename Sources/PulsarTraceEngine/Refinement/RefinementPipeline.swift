@@ -10,8 +10,9 @@ import Logging
 /// 1. Resolve the input into a `RecordingFolder` (bare-WAV vs folder dispatch).
 /// 2. Transcribe the system stream with the WhisperKit ANE backend (PT-R20).
 /// 3. Diarize the system stream with pyannote (PT-R21) — `Speaker_N` labels.
-/// 4. If a mic stream exists, transcribe it too; its utterances are `You`,
-///    never diarized (PT-R17). Merge the two streams by timestamp.
+/// 4. If a mic stream exists, transcribe it too; by default its utterances are
+///    `You`, or diarized per cluster when the recording's mic-diarization stamp
+///    is on (PT-R135). Merge the two streams by timestamp.
 /// 5. Render `final.md` with the `<!-- pulsartrace:final -->` marker (PT-R38),
 ///    written atomically (PT-R24); back up any prior `live.md` / `final.md`.
 /// 6. Write the `metadata.json` sidecar (PT-R39).
@@ -253,7 +254,7 @@ public struct RefinementPipeline: Sendable {
         progress: ProgressReporter?
     ) async throws -> Output {
 
-        // PT-P8-R2 — the per-recording input stamp, read once for this pass and
+        // PT-R136 — the per-recording input stamp, read once for this pass and
         // reused by the mic-diarization stage (below) and the passive-learning
         // hook (Stage 4). Absent/malformed ⇒ all-defaults (mode off).
         let recordingOptions = RecordingOptions.read(from: folder.directory)
@@ -290,7 +291,7 @@ public struct RefinementPipeline: Sendable {
         }
 
         // --- Stage 3a: mic diarization (per-recording opt-in) ---------------
-        // PT-P8-R1: when the stamp is on and a mic stream exists, diarize the
+        // PT-R135: when the stamp is on and a mic stream exists, diarize the
         // mic WAV as its own stage and persist it to `mic-diarization.json`
         // (E5's owner-reassignment edits read the sidecar rather than
         // re-diarizing). The merge (T2/T3) attributes its clusters.
@@ -338,7 +339,7 @@ public struct RefinementPipeline: Sendable {
                 options: options)
         }
 
-        // PT-P8-R4/R5: attribute the mic clusters — at most one `You` (owner
+        // PT-R138/R5: attribute the mic clusters — at most one `You` (owner
         // profile), the rest through the shared library. Only when the mic
         // stream was diarized (stamp on); nil otherwise so the merge keeps the
         // single-`You` shape.
@@ -364,7 +365,7 @@ public struct RefinementPipeline: Sendable {
             micAttribution: micAttribution,
             recordingStart: recordingStart)
 
-        // PT-P8-R3 (a): passive owner-profile learning — ordinary recordings only.
+        // PT-R137 (a): passive owner-profile learning — ordinary recordings only.
         if !recordingOptions.diarizeMic,
            let micStream = folder.micStream,
            let ownerProfile {

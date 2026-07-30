@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-@Suite("TranscriptAssembly refine-side mic-echo dedup (PT-P8-R11)")
+@Suite("TranscriptAssembly refine-side mic-echo dedup (PT-R145)")
 struct TranscriptAssemblyDedupTests {
 
     private static let start = Date(timeIntervalSince1970: 1_777_000_000)

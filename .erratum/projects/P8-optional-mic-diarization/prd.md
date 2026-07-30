@@ -1,6 +1,7 @@
 # PT-P8 · Optional Microphone-Channel Diarization — Project PRD
 
-**Status:** Open · **Opened:** 2026-07-29
+**Status:** Frozen · **Opened:** 2026-07-29 · **Closed:** 2026-07-30 (close-out reconciled:
+PT-R135–PT-R147 minted, PT-C25 minted; PT-R17 superseded by PT-R135, PT-R19 by PT-R145; KI-3 closed)
 
 ## Scope
 

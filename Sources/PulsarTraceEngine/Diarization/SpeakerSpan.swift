@@ -3,8 +3,10 @@ import Foundation
 /// One diarized speaker turn: a label active over `[start, end]` of the
 /// recording.
 ///
-/// `start`/`end` are offsets from the start of the **system-stream** recording
-/// (PT-R17 — only the system stream is diarized; the mic stream is always "You").
+/// `start`/`end` are offsets from the start of the recording (both streams share
+/// the recording clock). The mic stream is diarized only when the recording's
+/// mic-diarization stamp is on; otherwise its speech is attributed to "You"
+/// (PT-R135).
 /// pyannote's raw labels are `SPEAKER_00`, `SPEAKER_01`, … — PulsarTrace
 /// re-renders them as `Speaker_0`, `Speaker_1`, … for the transcript
 /// (see `DiarizationResult.displayLabel(for:)`).
@@ -112,9 +114,9 @@ extension Duration {
     }
 }
 
-// MARK: - Codable (PT-P8-R1)
+// MARK: - Codable (PT-R135)
 
-/// PT-P8-R1 — `DiarizationResult` and its parts are `Codable` so the mic-stream
+/// PT-R135 — `DiarizationResult` and its parts are `Codable` so the mic-stream
 /// result can be persisted as `mic-diarization.json` (`MicDiarizationSidecar`)
 /// and reloaded by E5's owner-reassignment edits without re-diarizing.
 ///

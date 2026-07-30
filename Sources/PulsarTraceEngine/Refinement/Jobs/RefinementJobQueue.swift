@@ -507,7 +507,7 @@ extension RefinementJobQueue {
         let library: SpeakerLibrary? = try? await SpeakerLibrary(
             databaseURL: paths.speakersDatabaseURL, events: events)
 
-        // PT-P8-R3 (a): passive owner-profile learning — the store lives beside
+        // PT-R137 (a): passive owner-profile learning — the store lives beside
         // the speaker library, never inside it. Each ordinary refine feeds the
         // dedup-surviving mic speech into the inlier-gated profile.
         let ownerProfile = OwnerVoiceProfileStore(fileURL: paths.ownerProfileURL)

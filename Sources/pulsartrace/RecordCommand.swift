@@ -20,7 +20,7 @@ enum RecordCommand {
         let systemAudioEnabled: Bool
         let refineModelName: String
         let listMics: Bool
-        /// PT-P8-R9 — `--diarize-mic` stamps the new recording's `options.json`
+        /// PT-R143 — `--diarize-mic` stamps the new recording's `options.json`
         /// and launches the engine with the mic-diarization flag. Default off.
         let diarizeMic: Bool
     }
@@ -85,7 +85,7 @@ enum RecordCommand {
             return 1
         }
 
-        // PT-P8-R2/PT-P8-R12: stamp the recording at start; refines follow the
+        // PT-R136/PT-R146: stamp the recording at start; refines follow the
         // stamp. Written right after the folder exists and before the engine
         // spawns, so a refine can never see the folder without its sidecar.
         var recordingOptions = RecordingOptions.defaults

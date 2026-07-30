@@ -12,7 +12,7 @@ struct ManualToolTests {
         #expect(text.contains("Speaker") || text.contains("speaker"))
         #expect(text.contains("rename_speaker"))
         #expect(text.contains("request_refine"))
-        // PT-P8-R9/PT-P8-R10: the mic-diarization mode paragraph.
+        // PT-R143/PT-R144: the mic-diarization mode paragraph.
         #expect(text.contains("diarize_mic"))
         #expect(text.contains("mic_diarized"))
 

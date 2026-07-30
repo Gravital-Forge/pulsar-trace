@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-@Suite("Mic-channel attribution (PT-P8-R4, PT-P8-R5)")
+@Suite("Mic-channel attribution (PT-R138, PT-R139)")
 struct MicChannelAttributionTests {
 
     private func vec(_ axis: Int) -> [Float] {
@@ -100,7 +100,7 @@ struct MicChannelAttributionTests {
             recordingId: "rec_remote", recordingFolderName: "remote")
         let systemMintedId = outcome.speakerIdByRawLabel["SPEAKER_00"]!
 
-        // Now they speak into the mic in an in-person recording (PT-P8-R5):
+        // Now they speak into the mic in an in-person recording (PT-R139):
         let micOutcome = try await MicChannelAttribution.attribute(
             micDiarization: diarization(["SPEAKER_00": vec(7)]),
             ownerProfile: profile,   // empty → no You, pure guest path

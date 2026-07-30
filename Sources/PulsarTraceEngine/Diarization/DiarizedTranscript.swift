@@ -40,7 +40,7 @@ public enum DiarizationMerge {
     /// - Parameters:
     ///   - segments: whisper utterances, in time order, offsets relative to
     ///     recording start.
-    ///   - diarization: the diarization result for the *system stream* (PT-R17).
+    ///   - diarization: the diarization result for the *system stream* (PT-R135).
     /// - Returns: one label per segment, index-aligned with `segments`.
     public static func speakerLabels(
         for segments: [TranscriptSegment],

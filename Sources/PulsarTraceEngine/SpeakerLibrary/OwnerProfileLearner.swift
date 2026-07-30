@@ -1,7 +1,7 @@
 import Foundation
 import Logging
 
-/// PT-P8-R3 (a) — passive owner-profile learning from ordinary (non-mic-
+/// PT-R137 (a) — passive owner-profile learning from ordinary (non-mic-
 /// diarized) recordings: diarize the mic WAV, pick the cluster dominant over
 /// the dedup-surviving mic segments, feed it to the inlier-gated store.
 public enum OwnerProfileLearner {

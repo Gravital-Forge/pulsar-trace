@@ -12,7 +12,7 @@ public actor SpeakerEditService {
     /// What an edit rewrote — the recording ids whose `final.md` changed.
     public struct EditResult: Sendable, Equatable {
         public let rewrittenRecordingIds: [String]
-        /// PT-P8-R6 — for `demoteOwner`, the library speaker the owner was
+        /// PT-R140 — for `demoteOwner`, the library speaker the owner was
         /// demoted to (reconciled or freshly minted). `nil` for every other
         /// edit, so existing constructions compile unchanged. E5-T4's
         /// demote-undo consumes it to designate the resolved speaker back.
@@ -29,14 +29,14 @@ public actor SpeakerEditService {
     public enum EditError: Error, CustomStringConvertible, Equatable {
         case invalidName(String)
         case speakerNotFound
-        /// PT-P8-R7 — the transcript label `You` is the reserved owner label
+        /// PT-R141 — the transcript label `You` is the reserved owner label
         /// and cannot be assigned to a library speaker (closes KI-3).
         case reservedName(String)
-        /// PT-P8-R6 — an owner reassignment needs the recording's
+        /// PT-R140 — an owner reassignment needs the recording's
         /// `mic-diarization.json` (E3) for the cluster embedding; the recording
         /// predates E3 or was never mic-diarized.
         case micDiarizationUnavailable
-        /// PT-P8-R6 "not me" — the recording has no `You` mic row to demote, or
+        /// PT-R140 "not me" — the recording has no `You` mic row to demote, or
         /// no sidecar cluster matches the owner profile.
         case noOwnerAttribution
 
@@ -57,7 +57,7 @@ public actor SpeakerEditService {
     }
 
     /// The reserved owner label — the microphone owner's transcript label
-    /// (`You`). Never a library speaker name (PT-P8-R7): `SpeakerLibrary`
+    /// (`You`). Never a library speaker name (PT-R141): `SpeakerLibrary`
     /// rejects it on create/rename, so the mic speaker is never an editable
     /// library row.
     public static let microphoneSpeakerName = "You"
@@ -72,7 +72,7 @@ public actor SpeakerEditService {
     let library: SpeakerLibrary
     let events: EventWriter?
     let rewriter: FinalMarkdownRewriter
-    /// PT-P8-R6 — the owner voice profile, updated by owner reassignment
+    /// PT-R140 — the owner voice profile, updated by owner reassignment
     /// ("this is me" adds the cluster sample, "not me" subtracts it). `nil`
     /// disables the profile side of a reassignment (the rewrite still runs).
     let ownerProfile: OwnerVoiceProfileStore?
@@ -111,7 +111,7 @@ public actor SpeakerEditService {
     ) async throws -> EditResult {
         try await Self.editLock.run {
             try Self.validateName(newName)
-            // PT-P8-R7: reject the reserved owner label here so every caller
+            // PT-R141: reject the reserved owner label here so every caller
             // (menubar, MCP, CLL) surfaces the same `reservedName` error; the
             // library also rejects it as defense-in-depth (closes KI-3).
             guard newName != Self.microphoneSpeakerName else {
@@ -196,7 +196,7 @@ public actor SpeakerEditService {
 
     /// Drop a speaker's label from past `final.md` (solo → `Unrecognized`,
     /// co-attributed → lose the token). The mic owner (`You`) is never a
-    /// library speaker (PT-P8-R7 reserves the name), so it can never reach a
+    /// library speaker (PT-R141 reserves the name), so it can never reach a
     /// delist — no name-based guard is needed here (closes KI-3).
     // PT-R123
     public func delist(
@@ -306,9 +306,9 @@ public actor SpeakerEditService {
         }
     }
 
-    // MARK: - Owner reassignment (PT-P8-R6)
+    // MARK: - Owner reassignment (PT-R140)
 
-    /// PT-P8-R6 — "this is me": re-attribute one recording's mic-channel guest
+    /// PT-R140 — "this is me": re-attribute one recording's mic-channel guest
     /// to the owner (`You`).
     ///
     /// Relabels the speaker's lines to `You` in **that recording only** (scoped
@@ -385,12 +385,12 @@ public actor SpeakerEditService {
         }
     }
 
-    /// PT-P8-R6 — "not me": demote one recording's owner (`You`) back to a
+    /// PT-R140 — "not me": demote one recording's owner (`You`) back to a
     /// library speaker.
     ///
     /// Reads the recording's `mic-diarization.json`, identifies the `You`
     /// cluster (the sidecar embedding best-matching the owner profile — the same
-    /// rule that attributed it, PT-P8-R4), reconciles that embedding against the
+    /// rule that attributed it, PT-R138), reconciles that embedding against the
     /// library (a match ≥ threshold folds into that speaker; otherwise a fresh
     /// `Unknown #N` is minted via the reconciler's shared numbering), relabels
     /// the recording's `You` lines to the resolved name (scoped), stamps the mic
@@ -408,7 +408,7 @@ public actor SpeakerEditService {
                       recordingId: recordingId, in: outputFolderRoots),
                   let micDiarization = MicDiarizationSidecar.read(from: folder)
             else { throw EditError.micDiarizationUnavailable }
-            // Metadata must carry a You mic row (PT-P8-R6 inverse precondition).
+            // Metadata must carry a You mic row (PT-R140 inverse precondition).
             guard let metadata = try? JSONDecoder().decode(
                       RefinementMetadata.self,
                       from: Data(contentsOf: folder.appendingPathComponent(
@@ -464,7 +464,7 @@ public actor SpeakerEditService {
     }
 
     /// The sidecar embedding that best matches the owner profile — the `You`
-    /// cluster (PT-P8-R4, the same rule that attributed it). Returns `nil` when
+    /// cluster (PT-R138, the same rule that attributed it). Returns `nil` when
     /// no embedding matches at/above the owner threshold (or the profile is
     /// empty / revision-mismatched), so `demoteOwner` fails safe with
     /// `noOwnerAttribution` rather than demoting a guest.

@@ -299,7 +299,7 @@ struct RecordingsPaneModelTests {
         #expect(RecordingTitleStore.read(folderURL: folder) == nil)
     }
 
-    // MARK: Per-recording mic-diarization stamp (PT-P8-R8)
+    // MARK: Per-recording mic-diarization stamp (PT-R142)
 
     @Test("setDiarizeMic writes the options.json sidecar; toggling off reverts it")
     func setDiarizeMicRoundTrip() async throws {

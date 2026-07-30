@@ -2,10 +2,10 @@ import Foundation
 import Testing
 @testable import PulsarTraceEngine
 
-/// PT-P8-R13 — the mic twin of `resolveSystemLabel`. The four behaviors are the
+/// PT-R147 — the mic twin of `resolveSystemLabel`. The four behaviors are the
 /// contract; the owner centroid + revision arrive as plain values (loaded once
 /// at pipeline start — no per-utterance actor hop to `OwnerVoiceProfileStore`).
-@Suite("Live mic label resolution (PT-P8-R13)")
+@Suite("Live mic label resolution (PT-R147)")
 struct LiveMicLabelTests {
 
     private func vec(_ axis: Int) -> [Float] {

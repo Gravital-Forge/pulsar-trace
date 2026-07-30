@@ -506,7 +506,7 @@ struct SpeakerEditorView: View {
                         splitTarget = speaker
                     }
                     // "Don't Recognize This Speaker". The mic owner (`You`) is
-                    // never a library speaker (PT-P8-R7 reserves the name), so
+                    // never a library speaker (PT-R141 reserves the name), so
                     // it never appears in this list — no name-based guard is
                     // needed (closes KI-3). Delisting rewrites final.md files,
                     // so this only stages the confirmation (Task 7a) — the

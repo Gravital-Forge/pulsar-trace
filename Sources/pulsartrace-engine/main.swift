@@ -180,7 +180,7 @@ struct EngineMain {
         // share one vector space (PT-R112). Best-effort: a model-load failure must
         // NOT crash the live pass — it degrades to neutral `Speaker?` labels
         // (§2b). `--no-live-diarization` skips it entirely.
-        // PT-P8-R13 — the mic-diarization stamp comes from `options.json` in the
+        // PT-R147 — the mic-diarization stamp comes from `options.json` in the
         // output folder (written by the record surfaces); `--diarize-mic` is the
         // direct-engine/test override and wins. It only takes effect when live
         // diarization is on at all (`--no-live-diarization` disables both).
@@ -196,7 +196,7 @@ struct EngineMain {
                 // stateless `diarize(samples:)` call); the per-stream stitching
                 // that keeps the streams independent lives in each `LiveDiarizer`
                 // instance, not the engine — so two adapters over one engine is
-                // correct and carries no extra model-memory cost (PT-P8-R13).
+                // correct and carries no extra model-memory cost (PT-R147).
                 let diarEngine = try await DiarizerEngine.load(
                     cacheRoot: AppPaths.standard.modelsCacheDirectory,
                     events: lifecycle.events)
@@ -212,7 +212,7 @@ struct EngineMain {
             }
         }
 
-        // PT-P8-R13 — owner-profile snapshot for the mic `You` attribution. Read
+        // PT-R147 — owner-profile snapshot for the mic `You` attribution. Read
         // ONCE here (a value, not the store actor) so the live pass makes no
         // per-utterance store hop and stays read-only against the profile file.
         // Only loaded when the mic diarizer is actually wired.

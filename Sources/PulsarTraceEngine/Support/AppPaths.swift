@@ -61,7 +61,7 @@ public struct AppPaths: Sendable {
         applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
     }
 
-    /// PT-P8-R3 — owner voice profile sidecar (beside the library, never in it).
+    /// PT-R137 — owner voice profile sidecar (beside the library, never in it).
     public var ownerProfileURL: URL {
         applicationSupport.appendingPathComponent("owner-profile.json", isDirectory: false)
     }
