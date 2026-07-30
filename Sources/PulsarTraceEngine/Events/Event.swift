@@ -749,6 +749,63 @@ public struct OwnerProfileUpdatedEvent: EventPayload {
     }
 }
 
+/// `owner_designated` — PT-P8-R6 "this is me": a recording's mic-channel guest
+/// was re-attributed to the owner (`You`). The cause event that precedes the
+/// paired `final_md_rewritten` (Hard Invariant #8) and, when the owner profile
+/// was updated, `owner_profile_updated`. Payload carries ids/provenance only —
+/// never embedding values (PT-R84).
+public struct OwnerDesignatedEvent: EventPayload {
+    public static let eventType = "owner_designated"
+
+    /// The recording whose mic-channel speaker was re-attributed.
+    public let recordingId: String
+    /// The library speaker id (`spk_<ulid>`) that was demoted from the
+    /// recording (the previously mis-attributed guest).
+    public let speakerId: String
+    /// Recordings whose `final.md` was rewritten (scoped to the one recording).
+    public let appliedToRecordings: [String]
+
+    public init(recordingId: String, speakerId: String, appliedToRecordings: [String]) {
+        self.recordingId = recordingId
+        self.speakerId = speakerId
+        self.appliedToRecordings = appliedToRecordings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case speakerId = "speaker_id"
+        case appliedToRecordings = "applied_to_recordings"
+    }
+}
+
+/// `owner_demoted` — PT-P8-R6 "not me": a recording's owner (`You`) was demoted
+/// to a reconciled-or-minted library speaker. The cause event that precedes the
+/// paired `final_md_rewritten` (Hard Invariant #8). Payload carries
+/// ids/provenance only — never embedding values (PT-R84).
+public struct OwnerDemotedEvent: EventPayload {
+    public static let eventType = "owner_demoted"
+
+    /// The recording whose owner (`You`) was demoted.
+    public let recordingId: String
+    /// The library speaker id (`spk_<ulid>`) the owner was demoted to
+    /// (reconciled to an existing speaker, or a freshly-minted `Unknown #N`).
+    public let speakerId: String
+    /// Recordings whose `final.md` was rewritten (scoped to the one recording).
+    public let appliedToRecordings: [String]
+
+    public init(recordingId: String, speakerId: String, appliedToRecordings: [String]) {
+        self.recordingId = recordingId
+        self.speakerId = speakerId
+        self.appliedToRecordings = appliedToRecordings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingId = "recording_id"
+        case speakerId = "speaker_id"
+        case appliedToRecordings = "applied_to_recordings"
+    }
+}
+
 /// `library_backup_created` — emitted after the speaker-library SQLite file is
 /// copied to its last-good `.bak` ahead of a mutating write (§8.13, PT-R32a edge
 /// case "library corrupted").

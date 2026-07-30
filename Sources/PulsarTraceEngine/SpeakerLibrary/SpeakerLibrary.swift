@@ -39,6 +39,9 @@ public actor SpeakerLibrary {
         case notMergeable(String)
         case database(Error)
         case modelRevisionMismatch(stored: String, incoming: String)
+        /// PT-P8-R7 — the transcript label `You` is the reserved owner label
+        /// and can never be a library speaker name (closes KI-3).
+        case reservedName(String)
 
         public var description: String {
             switch self {
@@ -51,6 +54,8 @@ public actor SpeakerLibrary {
             case .database(let e): return "speaker library database error: \(e)"
             case .modelRevisionMismatch(let s, let i):
                 return "centroid model revision mismatch (stored \(s), incoming \(i))"
+            case .reservedName(let name):
+                return "\"\(name)\" is a reserved label and cannot be a speaker name"
             }
         }
     }
@@ -432,6 +437,11 @@ public actor SpeakerLibrary {
         recordingFolderName: String,
         sampleAudioPath: String? = nil
     ) async throws -> Speaker {
+        // PT-P8-R7: "You" is the reserved owner label — never a library name
+        // (closes KI-3). Case-sensitive exact match: the transcript label is exact.
+        guard name != SpeakerEditService.microphoneSpeakerName else {
+            throw LibraryError.reservedName(name)
+        }
         let backupEvent = backupBeforeWrite()
         let now = clock()
         let nowStamp = Timestamps.event(now)
@@ -523,6 +533,39 @@ public actor SpeakerLibrary {
         return speaker
     }
 
+    // MARK: - Appearance removal (PT-P8-R6 — designateOwner de-attribution)
+
+    /// Remove one `(speaker, recording)` appearance row and re-derive the
+    /// speaker's `appearance_count` (PT-P8-R6). Used by `designateOwner` when a
+    /// mic-channel guest that appears in more than one recording is re-attributed
+    /// to the owner: the guest survives in the library, but loses the appearance
+    /// for the reassigned recording. A no-op when the row does not exist.
+    ///
+    /// The centroid is intentionally left unchanged: reversing one appearance's
+    /// contribution to a running mean is not exact without the original
+    /// embedding, and the guest's remaining appearances still describe them —
+    /// the same best-effort posture `unmerge` documents.
+    public func removeAppearance(
+        speakerId: String, recordingId: String
+    ) async throws {
+        guard try speaker(id: speakerId) != nil else {
+            throw LibraryError.speakerNotFound(speakerId)
+        }
+        let backupEvent = backupBeforeWrite()
+        do {
+            try database.transaction {
+                try database.run(
+                    "DELETE FROM appearances "
+                        + "WHERE speaker_id = ? AND recording_id = ?",
+                    [.text(speakerId), .text(recordingId)])
+                try recomputeAppearanceCount(speakerId)
+            }
+        } catch {
+            throw LibraryError.database(error)
+        }
+        await emitBackupEvent(backupEvent)
+    }
+
     // MARK: - Rename (PT-R83 — speaker_renamed)
 
     /// Change a speaker's display name. The `id` is unchanged (PT-R83). This
@@ -544,6 +587,11 @@ public actor SpeakerLibrary {
         to newName: String,
         suppressEvent: Bool = false
     ) async throws -> String {
+        // PT-P8-R7: "You" is the reserved owner label — never a library name
+        // (closes KI-3).
+        guard newName != SpeakerEditService.microphoneSpeakerName else {
+            throw LibraryError.reservedName(newName)
+        }
         guard let speaker = try speaker(id: speakerId) else {
             throw LibraryError.speakerNotFound(speakerId)
         }

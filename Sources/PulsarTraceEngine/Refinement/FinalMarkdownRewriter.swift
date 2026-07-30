@@ -52,6 +52,12 @@ public struct FinalMarkdownRewriter: Sendable {
         /// the original position of `<name>` on undelist — that degradation is
         /// documented and accepted.
         case speakerUndelisted = "speaker_undelisted"
+        /// PT-P8-R6 "this is me": a recording's mic-channel guest is
+        /// re-attributed to the owner (`You`). Scoped to the one recording.
+        case ownerDesignated = "owner_designated"
+        /// PT-P8-R6 "not me": a recording's owner (`You`) is demoted to a
+        /// reconciled/minted library speaker. Scoped to the one recording.
+        case ownerDemoted = "owner_demoted"
     }
 
     /// One recording whose `final.md` was rewritten.
@@ -113,6 +119,15 @@ public struct FinalMarkdownRewriter: Sendable {
     ///   skipped and absent from the result — so a caller's
     ///   `applied_to_recordings` lists only the recordings the edit actually
     ///   altered (and no spurious `.bak` files are created).
+    ///   - setMicOwnerSpeakerId: optional PT-P8-R6 owner-reassignment hook. When
+    ///     set, after the label substitution any `metadata.json` row whose
+    ///     `label` equals `matchLabel` and `is_microphone` is `true` has its
+    ///     `speaker_id` set to `id` (which may be `nil`). Owner designation
+    ///     passes `(matchLabel: "You", id: nil)` so the re-attributed mic row
+    ///     becomes `label: You, speaker_id: null`; demotion passes
+    ///     `(matchLabel: <resolved name>, id: <spk_ id>)` so the demoted mic row
+    ///     carries the resolved library id. `final.md` itself is not affected —
+    ///     this only touches `metadata.json`.
     @discardableResult
     public func rewrite(
         oldName: String,
@@ -121,7 +136,8 @@ public struct FinalMarkdownRewriter: Sendable {
         outputFolderRoots: [URL],
         reason: RewriteReason,
         removedSpeakerId: String? = nil,
-        remapSpeakerId: (from: String, to: String)? = nil
+        remapSpeakerId: (from: String, to: String)? = nil,
+        setMicOwnerSpeakerId: (matchLabel: String, id: String?)? = nil
     ) async throws -> [RecordingResult] {
         var results: [RecordingResult] = []
 
@@ -151,7 +167,8 @@ public struct FinalMarkdownRewriter: Sendable {
                 folder: folder, finalURL: finalURL,
                 oldName: oldName, newName: newName,
                 removedSpeakerId: removedSpeakerId,
-                remapSpeakerId: remapSpeakerId)
+                remapSpeakerId: remapSpeakerId,
+                setMicOwnerSpeakerId: setMicOwnerSpeakerId)
             else { continue }
 
             let result = RecordingResult(
@@ -424,7 +441,8 @@ public struct FinalMarkdownRewriter: Sendable {
         oldName: String,
         newName: String,
         removedSpeakerId: String?,
-        remapSpeakerId: (from: String, to: String)?
+        remapSpeakerId: (from: String, to: String)?,
+        setMicOwnerSpeakerId: (matchLabel: String, id: String?)? = nil
     ) throws -> String? {
         let fm = FileManager.default
         let original = try String(contentsOf: finalURL, encoding: .utf8)
@@ -452,7 +470,8 @@ public struct FinalMarkdownRewriter: Sendable {
         rewriteMetadataIfPresent(
             in: folder, oldName: oldName, newName: newName,
             removedSpeakerId: removedSpeakerId,
-            remapSpeakerId: remapSpeakerId)
+            remapSpeakerId: remapSpeakerId,
+            setMicOwnerSpeakerId: setMicOwnerSpeakerId)
 
         return sha
     }
@@ -576,7 +595,8 @@ public struct FinalMarkdownRewriter: Sendable {
         oldName: String,
         newName: String,
         removedSpeakerId: String?,
-        remapSpeakerId: (from: String, to: String)?
+        remapSpeakerId: (from: String, to: String)?,
+        setMicOwnerSpeakerId: (matchLabel: String, id: String?)? = nil
     ) {
         let metadataURL = folder.appendingPathComponent(
             RecordingFolder.FileName.metadata)
@@ -596,10 +616,23 @@ public struct FinalMarkdownRewriter: Sendable {
             let remapApplies = remapSpeakerId.map { remap in
                 metadata.speakers.contains { $0.speakerId == remap.from }
             } ?? false
+            // PT-P8-R6: an owner reassignment may need to set the mic row's
+            // speaker_id even when nothing else changes (e.g. demote where the
+            // resolved name differs but the id-set is the material change).
+            // A row already carrying the target id needs no write.
+            let ownerSetApplies = setMicOwnerSpeakerId.map { set in
+                metadata.speakers.contains {
+                    $0.isMicrophone
+                        && ($0.label == set.matchLabel || $0.label == oldName)
+                        && $0.speakerId != set.id
+                }
+            } ?? false
             // Nothing to do for this recording: neither the rename, the drop,
-            // nor the id remap touches its speakers list. Avoid an atomic
-            // rewrite that would only change the on-disk timestamp.
-            guard renamingApplies || dropApplies || remapApplies else { return }
+            // the id remap, nor the owner-id set touches its speakers list.
+            // Avoid an atomic rewrite that would only change the on-disk
+            // timestamp.
+            guard renamingApplies || dropApplies || remapApplies || ownerSetApplies
+            else { return }
 
             // Step 1 — drop the merged-away row if requested.
             let afterDrop = metadata.speakers.filter { speaker in
@@ -613,11 +646,18 @@ public struct FinalMarkdownRewriter: Sendable {
             // the speaker_id remap to the remaining rows.
             let relabelled = afterDrop.map { speaker -> RefinementMetadata.Speaker in
                 let newLabel = speaker.label == oldName ? newName : speaker.label
-                let mappedId: String?
+                var mappedId: String?
                 if let remap = remapSpeakerId, speaker.speakerId == remap.from {
                     mappedId = remap.to
                 } else {
                     mappedId = speaker.speakerId
+                }
+                // Step 2b (PT-P8-R6) — owner reassignment: set the mic row's
+                // speaker_id (nulled on designate, set to the resolved id on
+                // demote) keyed on the row's NEW label + is_microphone.
+                if let set = setMicOwnerSpeakerId,
+                   speaker.isMicrophone, newLabel == set.matchLabel {
+                    mappedId = set.id
                 }
                 guard newLabel != speaker.label || mappedId != speaker.speakerId
                 else { return speaker }

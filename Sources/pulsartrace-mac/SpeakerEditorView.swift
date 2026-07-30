@@ -505,29 +505,24 @@ struct SpeakerEditorView: View {
                         splitSelectedRecordingIds = []
                         splitTarget = speaker
                     }
-                    // "Don't Recognize This Speaker" — hidden for the mic
-                    // speaker (name `"You"`), matching the ViewModel's
-                    // mic-rejection guard. The library doesn't carry an
-                    // `isMicrophone` flag on a `Speaker` today, so the UI
-                    // mirrors the same name-based policy. See
-                    // SpeakerEditorViewModel.delist for the rationale.
-                    // Delisting rewrites final.md files, so this only stages
-                    // the confirmation (Task 7a) — the dialog on the List
-                    // performs the actual delist.
-                    if speaker.name != "You" {
-                        Button("Don't Recognize This Speaker") {
-                            Task {
-                                let count = await viewModel
-                                    .appearances(ofSpeaker: speaker.id).count
-                                pendingDelist = PendingDelist(
-                                    id: speaker.id, name: speaker.name,
-                                    count: count)
-                            }
+                    // "Don't Recognize This Speaker". The mic owner (`You`) is
+                    // never a library speaker (PT-P8-R7 reserves the name), so
+                    // it never appears in this list — no name-based guard is
+                    // needed (closes KI-3). Delisting rewrites final.md files,
+                    // so this only stages the confirmation (Task 7a) — the
+                    // dialog on the List performs the actual delist.
+                    Button("Don't Recognize This Speaker") {
+                        Task {
+                            let count = await viewModel
+                                .appearances(ofSpeaker: speaker.id).count
+                            pendingDelist = PendingDelist(
+                                id: speaker.id, name: speaker.name,
+                                count: count)
                         }
-                        .help("Stop recognizing this speaker. Their lines in "
-                            + "transcripts become 'Unrecognized'. Undoable for "
-                            + "30 days.")
                     }
+                    .help("Stop recognizing this speaker. Their lines in "
+                        + "transcripts become 'Unrecognized'. Undoable for "
+                        + "30 days.")
                     Divider()
                     // One-click + undo toast, no confirmation — locked
                     // decision; delete is a soft tombstone and rewrites

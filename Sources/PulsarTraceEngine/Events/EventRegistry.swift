@@ -149,6 +149,17 @@ public enum EventRegistry {
             version: OwnerProfileUpdatedEvent.schemaVersion,
             category: .speakerLibrary
         ),
+        // PT-P8-R6 — owner reassignment ("this is me" / "not me").
+        Entry(
+            type: OwnerDesignatedEvent.eventType,
+            version: OwnerDesignatedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: OwnerDemotedEvent.eventType,
+            version: OwnerDemotedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
         // Speaker-library database health (system category).
         Entry(
             type: LibraryBackupCreatedEvent.eventType,

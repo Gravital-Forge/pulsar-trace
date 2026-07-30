@@ -30,6 +30,23 @@ struct SpeakerReconcilerTests {
         #expect(SpeakerReconciler.unknownNumber(in: "Unknown #") == nil)
     }
 
+    // PT-P8-R7 tripwire: the reconciler mints `Unknown #N` placeholders and
+    // never the reserved owner label `You` (the mic owner is excluded via
+    // `excludingSpeakers` and never enrolled). If someone ever changed the
+    // placeholder to `You`, the library reservation would reject it — this
+    // pins that the reserved name can never be a library speaker.
+    @Test("You is a reserved library name (PT-P8-R7 tripwire)")
+    func reconcilerPlaceholderIsNeverReserved() async throws {
+        let (lib, dir) = try await library()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await #expect(throws: (any Error).self) {
+            _ = try await lib.createSpeaker(
+                name: "You", centroid: [Float](repeating: 0, count: 256),
+                modelRevision: "rev-1", recordingId: "rec_x",
+                recordingFolderName: "x")
+        }
+    }
+
     /// Build a minimal `DiarizationResult` with one embedding per raw label.
     private func diarization(
         embeddings: [String: [Float]], revision: String = "rev-1"

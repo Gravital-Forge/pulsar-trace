@@ -214,6 +214,15 @@ public final class AppEnvironment {
         return speakerLibrary
     }
 
+    /// The owner voice profile store (PT-P8-R6), at the standard path beside the
+    /// speaker library. Built on demand — it is a stateless file-backed actor
+    /// (its own cache), so a fresh instance reads the same `owner-profile.json`.
+    /// The speaker editor passes this into `SpeakerEditService` so owner
+    /// reassignment ("this is me" / "not me") updates the profile.
+    public func ownerProfileStore() -> OwnerVoiceProfileStore {
+        OwnerVoiceProfileStore(fileURL: paths.ownerProfileURL)
+    }
+
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).
     ///
     /// The watcher was created but never `start()`-ed at a file, so the live

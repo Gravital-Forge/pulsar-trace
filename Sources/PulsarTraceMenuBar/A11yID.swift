@@ -74,6 +74,16 @@ public enum A11yID {
         public static let undoButton = "pt.speakers.undoButton"
     }
 
+    /// Speaker editor owner-reassignment actions (PT-P8-R6). Kept under a
+    /// dedicated `speakerEditor` surface per the task's convention
+    /// (`pt.speakerEditor.thisIsMe` / `pt.speakerEditor.notMe`).
+    public enum SpeakerEditor {
+        /// "This is me" — designates a mic-channel guest as the owner.
+        public static let thisIsMe = "pt.speakerEditor.thisIsMe"
+        /// "Not me" — demotes the owner (`You`) back to a library speaker.
+        public static let notMe = "pt.speakerEditor.notMe"
+    }
+
     /// Settings pane (`SettingsView`).
     public enum Settings {
         public static let micPicker = "pt.settings.micPicker"

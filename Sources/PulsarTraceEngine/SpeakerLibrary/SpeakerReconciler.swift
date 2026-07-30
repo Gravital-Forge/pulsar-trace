@@ -102,7 +102,7 @@ public struct SpeakerReconciler: Sendable {
                 matchedCount += 1
             } else {
                 // New speaker — `Unknown #N`, N counting all-time library size.
-                let placeholder = try await nextUnknownName()
+                let placeholder = try await Self.nextUnknownName(in: library)
                 let created = try await library.createSpeaker(
                     name: placeholder,
                     centroid: embedding,
@@ -128,13 +128,17 @@ public struct SpeakerReconciler: Sendable {
     /// past the 30-day recovery window. The all-time scan (not just the
     /// recoverable window, SW2) is what makes a placeholder number genuinely
     /// never reused, even after a speaker has been hard-aged-out or delisted.
-    private func nextUnknownName() async throws -> String {
+    ///
+    /// `internal static` (PT-P8-R6): `SpeakerEditService.demoteOwner` mints an
+    /// `Unknown #N` for the demoted owner and must share this one numbering
+    /// scan — never duplicate it, or two mints could collide on a number.
+    static func nextUnknownName(in library: SpeakerLibrary) async throws -> String {
         let live = try await library.liveSpeakers()
         let deleted = try await library.allDeletedSpeakers()
         let delisted = try await library.allDelistedSpeakers()
         var highest = 0
         for speaker in live + deleted + delisted {
-            if let n = Self.unknownNumber(in: speaker.name) {
+            if let n = unknownNumber(in: speaker.name) {
                 highest = max(highest, n)
             }
         }
