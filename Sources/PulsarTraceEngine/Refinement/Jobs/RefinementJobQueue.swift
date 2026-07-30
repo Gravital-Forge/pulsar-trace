@@ -507,6 +507,11 @@ extension RefinementJobQueue {
         let library: SpeakerLibrary? = try? await SpeakerLibrary(
             databaseURL: paths.speakersDatabaseURL, events: events)
 
+        // PT-P8-R3 (a): passive owner-profile learning — the store lives beside
+        // the speaker library, never inside it. Each ordinary refine feeds the
+        // dedup-surviving mic speech into the inlier-gated profile.
+        let ownerProfile = OwnerVoiceProfileStore(fileURL: paths.ownerProfileURL)
+
         let runJob: RunJob = { [weak queue] job in
             guard let queue else { return }
             // ANE refine (PT-P5-D1): in-process WhisperKit + FluidAudio VAD. The
@@ -593,6 +598,7 @@ extension RefinementJobQueue {
                 pauseGate: gate,
                 events: events,
                 library: library,
+                ownerProfile: ownerProfile,
                 options: options,
                 onStageUpdate: { [weak queue] state in
                     guard let queue else { return }

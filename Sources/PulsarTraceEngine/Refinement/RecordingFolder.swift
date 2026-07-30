@@ -41,6 +41,8 @@ public struct RecordingFolder: Sendable {
         /// UI-owned custom-title sidecar — written by the mac app's rename
         /// flow, never read by the engine (spec §4.1).
         public static let title = "title.txt"
+        /// PT-P8-R2 — per-recording input options sidecar (UI/CLI/MCP-owned).
+        public static let options = "options.json"
     }
 
     public enum InputError: Error, CustomStringConvertible, Equatable {
@@ -82,6 +84,8 @@ public struct RecordingFolder: Sendable {
     public var finalURL: URL { directory.appendingPathComponent(FileName.final) }
     /// `metadata.json` destination URL.
     public var metadataURL: URL { directory.appendingPathComponent(FileName.metadata) }
+    /// `options.json` input-sidecar URL (may or may not exist).
+    public var optionsURL: URL { directory.appendingPathComponent(FileName.options) }
     /// `live.md` URL (may or may not exist).
     public var liveURL: URL { directory.appendingPathComponent(FileName.live) }
 

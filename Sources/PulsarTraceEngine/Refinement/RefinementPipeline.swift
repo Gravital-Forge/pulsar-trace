@@ -181,6 +181,7 @@ public struct RefinementPipeline: Sendable {
         recordingStart: Date = Date(),
         options: TranscriptionOptions = .init(),
         library: SpeakerLibrary? = nil,
+        ownerProfile: OwnerVoiceProfileStore? = nil,
         precomputedDiarization: DiarizationResult? = nil,
         progress: ProgressReporter? = nil
     ) async throws -> Output {
@@ -215,6 +216,7 @@ public struct RefinementPipeline: Sendable {
                 recordingStart: recordingStart,
                 options: options,
                 library: library,
+                ownerProfile: ownerProfile,
                 precomputedDiarization: precomputedDiarization,
                 startedAt: started,
                 sourceBasename: inputPath.lastPathComponent,
@@ -243,6 +245,7 @@ public struct RefinementPipeline: Sendable {
         recordingStart: Date,
         options: TranscriptionOptions,
         library: SpeakerLibrary?,
+        ownerProfile: OwnerVoiceProfileStore?,
         precomputedDiarization: DiarizationResult?,
         startedAt: Date,
         sourceBasename: String,
@@ -316,6 +319,22 @@ public struct RefinementPipeline: Sendable {
             reconciliation: reconciliation,
             mic: micTranscription,
             recordingStart: recordingStart)
+
+        // PT-P8-R3 (a): passive owner-profile learning — ordinary recordings only.
+        let recordingOptions = RecordingOptions.read(from: folder.directory)
+        if !recordingOptions.diarizeMic,
+           let micStream = folder.micStream,
+           let ownerProfile {
+            await OwnerProfileLearner.learn(
+                micWav: micStream.url,
+                dedupedMicSegments: TranscriptAssembly.dedupedMicSegments(
+                    micTranscription?.segments ?? [],
+                    against: systemTranscription.segments),
+                diarize: { try await diarizer.diarizeSystemStream(wavPath: $0) },
+                store: ownerProfile,
+                events: events,
+                logger: logger)
+        }
 
         // --- Stage 5: write final.md atomically -----------------------------
         progress?(.writingFinal)

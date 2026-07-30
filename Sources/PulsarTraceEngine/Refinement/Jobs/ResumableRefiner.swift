@@ -35,6 +35,10 @@ public actor ResumableRefiner {
     /// (PT-R22, PT-R23). `nil` keeps the raw `Speaker_N` labels — the queue's
     /// `makeStandard` opens a real library and passes it in for production.
     private let library: SpeakerLibrary?
+    /// PT-P8-R3 (a) — passive owner-profile learning store. `nil` disables
+    /// learning; the production queue passes a store rooted at
+    /// `AppPaths.standard.ownerProfileURL`.
+    private let ownerProfile: OwnerVoiceProfileStore?
     /// Decode tunables threaded into every region decode (`allowedLanguages`
     /// drives the language policy; a forced `language` pins it).
     private let options: TranscriptionOptions
@@ -48,6 +52,7 @@ public actor ResumableRefiner {
         pauseGate: PauseGate,
         events: EventWriter?,
         library: SpeakerLibrary? = nil,
+        ownerProfile: OwnerVoiceProfileStore? = nil,
         options: TranscriptionOptions = .init(),
         onStageUpdate: StageReporter? = nil,
         logger: Logger = Logger(label: LogSubsystem.engine)
@@ -58,6 +63,7 @@ public actor ResumableRefiner {
         self.pauseGate = pauseGate
         self.events = events
         self.library = library
+        self.ownerProfile = ownerProfile
         self.options = options
         self.reportState = onStageUpdate
         self.logger = logger
@@ -346,6 +352,22 @@ public actor ResumableRefiner {
         }
         let folderName = folder.directory.lastPathComponent
         let recordingStart = RecordingFolderTimestamp.parse(folderName) ?? Date()
+
+        // PT-P8-R3 (a): passive owner-profile learning — ordinary recordings only.
+        let recordingOptions = RecordingOptions.read(from: folder.directory)
+        if !recordingOptions.diarizeMic,
+           let micStream = folder.micStream,
+           let ownerProfile {
+            await OwnerProfileLearner.learn(
+                micWav: micStream.url,
+                dedupedMicSegments: TranscriptAssembly.dedupedMicSegments(
+                    mic, against: system),
+                diarize: diarize,
+                store: ownerProfile,
+                events: events,
+                logger: logger)
+        }
+
         return try await TranscriptAssembly.assembleAndWrite(
             folder: folder,
             systemSegments: system,

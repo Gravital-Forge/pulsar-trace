@@ -730,6 +730,25 @@ public struct SpeakerCentroidUpdatedEvent: EventPayload {
     }
 }
 
+/// PT-P8-R3 / PT-P8-R10 — the owner voice profile changed. Payload carries
+/// provenance and count only — never embedding values (PT-R84).
+public struct OwnerProfileUpdatedEvent: EventPayload {
+    public static let eventType = "owner_profile_updated"
+    public static let schemaVersion = 1
+
+    public let source: String       // passive_refine | backfill | mic_diarized_refine | owner_designated
+    public let sampleCount: Int
+
+    public init(source: String, sampleCount: Int) {
+        self.source = source
+        self.sampleCount = sampleCount
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case source, sampleCount = "sample_count"
+    }
+}
+
 /// `library_backup_created` — emitted after the speaker-library SQLite file is
 /// copied to its last-good `.bak` ahead of a mutating write (§8.13, PT-R32a edge
 /// case "library corrupted").
