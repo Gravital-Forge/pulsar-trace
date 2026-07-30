@@ -53,11 +53,17 @@ actor LiveSink {
             utterance, label: label, realElapsed: realElapsed, isFlush: isFlush)
     }
 
-    /// Append a mic-stream utterance — always `You` (PT-R17). Dropped when it is a
-    /// mic-echo of a recent system utterance (PT-R19).
+    /// Append a mic-stream utterance. Dropped when it is a mic-echo of a recent
+    /// system utterance (PT-R19) — the echo check runs FIRST, unchanged.
+    ///
+    /// `label` is `nil` in the default (mode-off) path — the mic line is then
+    /// the literal `You` (PT-R17), byte-identical to today. With mic-channel
+    /// diarization on (PT-P8-R13) `LiveRunner` resolves the label
+    /// (owner → library → Guest) and passes it here.
     func appendMicUtterance(
         _ utterance: CommittedUtterance,
         realElapsed: Duration,
+        label: String? = nil,
         isFlush: Bool = false
     ) async {
         if dedup.isMicEcho(
@@ -68,7 +74,8 @@ actor LiveSink {
             return
         }
         await append(
-            utterance, label: "You", realElapsed: realElapsed, isFlush: isFlush)
+            utterance, label: label ?? "You",
+            realElapsed: realElapsed, isFlush: isFlush)
     }
 
     /// Append a capture pause/resume gap annotation to `live.md` (PT-R7). A

@@ -12,6 +12,10 @@ actor DiarState {
     /// Diagnostic: total spans accumulated so far (the `live trace diar` log).
     func count() -> Int { spans.count }
 
+    /// All accumulated spans (PT-P8-R13 — the mic label resolver needs the
+    /// dominant span's *embedding*, not just its key, for the owner match).
+    func allSpans() -> [LiveSpeakerSpan] { spans }
+
     /// The provisional key whose spans overlap `[start, end]` the most.
     func dominantKey(start: Duration, end: Duration) -> String? {
         let range = start.seconds...max(start.seconds, end.seconds)

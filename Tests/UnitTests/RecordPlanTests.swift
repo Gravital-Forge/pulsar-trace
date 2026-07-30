@@ -114,4 +114,23 @@ struct RecordPlanTests {
         #expect(value(after: "--model", in: plan.captureArguments) == "parakeet-v3")
         #expect(!plan.engineArguments.contains("--model"))
     }
+
+    @Test("diarizeMic appends --diarize-mic to engine args (PT-P8-R13)")
+    func diarizeMicFlag() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: nil, systemAudioEnabled: true,
+            diarizeMic: true)
+        #expect(plan.engineArguments.contains("--diarize-mic"))
+        // Capture is not a diarization concern — the flag rides the engine argv.
+        #expect(!plan.captureArguments.contains("--diarize-mic"))
+    }
+
+    @Test("default keeps engine args byte-identical to today")
+    func defaultOmitsFlag() {
+        let plan = RecordPlan.make(
+            outputFolder: folder, paths: paths,
+            micDeviceID: nil, systemAudioEnabled: true)
+        #expect(!plan.engineArguments.contains("--diarize-mic"))
+    }
 }

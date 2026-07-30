@@ -48,6 +48,16 @@ public struct StreamingPipeline: Sendable {
         /// `DiarizerEngine` actor.
         /// `nil` → no live diarization (no coverage → neutral `Speaker?`, §2b).
         public let liveRawDiarizer: (any RawWindowDiarizing)?
+        /// PT-P8-R13 — windowed diarizer for the mic stream (nil = mode off →
+        /// byte-identical to today, every mic line `You`). Independent of the
+        /// system stream's diarizer — no cross-stream stitching.
+        public let micRawDiarizer: (any RawWindowDiarizing)?
+        /// PT-P8-R13 — owner-profile snapshot for live `You` attribution on the
+        /// mic channel. A VALUE snapshot (read once at pipeline start), not the
+        /// `OwnerVoiceProfileStore` actor: the live pass stays read-only against
+        /// the profile and never hops to the store per utterance. `nil` → no
+        /// owner attribution (mic labels fall through to library / Guest).
+        public let ownerProfile: OwnerVoiceProfile?
         /// How often the system stream is handed to the live diarizer, and the
         /// window length it sees.
         public let diarizationStep: Duration
@@ -59,6 +69,8 @@ public struct StreamingPipeline: Sendable {
             recordingId: String,
             transcriberConfig: StreamingTranscriber.Configuration = .init(),
             liveRawDiarizer: (any RawWindowDiarizing)? = nil,
+            micRawDiarizer: (any RawWindowDiarizing)? = nil,
+            ownerProfile: OwnerVoiceProfile? = nil,
             diarizationStep: Duration = .seconds(5),
             diarizationWindow: Duration = .seconds(10)
         ) {
@@ -67,6 +79,8 @@ public struct StreamingPipeline: Sendable {
             self.recordingId = recordingId
             self.transcriberConfig = transcriberConfig
             self.liveRawDiarizer = liveRawDiarizer
+            self.micRawDiarizer = micRawDiarizer
+            self.ownerProfile = ownerProfile
             self.diarizationStep = diarizationStep
             self.diarizationWindow = diarizationWindow
         }
@@ -147,6 +161,15 @@ public struct StreamingPipeline: Sendable {
         if let raw = configuration.liveRawDiarizer {
             liveDiarizer = LiveDiarizer(rawDiarizer: raw, logger: logger)
         }
+        // --- mic-channel diarization (PT-P8-R13, opt-in per recording) -------
+        // A fully independent `LiveDiarizer` over the mic frames, minting a
+        // distinct `Guest` label family (PT-P8-D11). No cross-stream stitching:
+        // this instance shares no running-speaker state with the system one.
+        var micDiarizer: LiveDiarizer?
+        if let raw = configuration.micRawDiarizer {
+            micDiarizer = LiveDiarizer(
+                rawDiarizer: raw, labelFamily: "Guest", logger: logger)
+        }
         // --- run the streams ------------------------------------------------
         let runner = LiveRunner(
             configuration: configuration,
@@ -160,7 +183,8 @@ public struct StreamingPipeline: Sendable {
                 micTranscriber: micTranscriber,
                 systemSource: systemSource,
                 micSource: micSource,
-                liveDiarizer: liveDiarizer)
+                liveDiarizer: liveDiarizer,
+                micDiarizer: micDiarizer)
         } catch {
             // Always close the file, even on a throw. The in-process diarizer
             // holds no resources to release — no subprocess, no scratch WAVs.

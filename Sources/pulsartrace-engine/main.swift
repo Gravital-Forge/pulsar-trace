@@ -133,7 +133,7 @@ struct EngineMain {
             throw UsageError(message: """
                 usage: pulsartrace-engine --live \
                 [--stdin | --source fixture <wav> [--mic-fixture <wav>] | --system-socket <path> [--mic-socket <path>]] \
-                [--out <dir>] [--recording-id <id>] [--no-live-diarization]
+                [--out <dir>] [--recording-id <id>] [--no-live-diarization] [--diarize-mic]
                 """)
         }
 
@@ -180,17 +180,48 @@ struct EngineMain {
         // share one vector space (PT-R112). Best-effort: a model-load failure must
         // NOT crash the live pass — it degrades to neutral `Speaker?` labels
         // (§2b). `--no-live-diarization` skips it entirely.
+        // PT-P8-R13 — the mic-diarization stamp comes from `options.json` in the
+        // output folder (written by the record surfaces); `--diarize-mic` is the
+        // direct-engine/test override and wins. It only takes effect when live
+        // diarization is on at all (`--no-live-diarization` disables both).
+        let diarizeMic = args.contains("--diarize-mic")
+            || RecordingOptions.read(from: recordingFolder).diarizeMic
+
         var liveRawDiarizer: (any RawWindowDiarizing)?
+        var micRawDiarizer: (any RawWindowDiarizing)?
         if !args.contains("--no-live-diarization") {
             do {
+                // One resident `DiarizerEngine`, shared by both stream adapters.
+                // `DiarizerEngineRawAdapter` holds no per-stream state (it maps a
+                // stateless `diarize(samples:)` call); the per-stream stitching
+                // that keeps the streams independent lives in each `LiveDiarizer`
+                // instance, not the engine — so two adapters over one engine is
+                // correct and carries no extra model-memory cost (PT-P8-R13).
                 let diarEngine = try await DiarizerEngine.load(
                     cacheRoot: AppPaths.standard.modelsCacheDirectory,
                     events: lifecycle.events)
                 liveRawDiarizer = DiarizerEngineRawAdapter(engine: diarEngine)
+                // Only wire the mic adapter when the stamp is on AND a mic stream
+                // exists — a system-only recording has nothing to diarize on mic.
+                if diarizeMic, micSource != nil {
+                    micRawDiarizer = DiarizerEngineRawAdapter(engine: diarEngine)
+                }
             } catch {
                 Logger(label: LogSubsystem.engine).error(
                     "live diarization unavailable — continuing without it: \(PathRedactor.redactHome("\(error)"))")
             }
+        }
+
+        // PT-P8-R13 — owner-profile snapshot for the mic `You` attribution. Read
+        // ONCE here (a value, not the store actor) so the live pass makes no
+        // per-utterance store hop and stays read-only against the profile file.
+        // Only loaded when the mic diarizer is actually wired.
+        let ownerProfile: OwnerVoiceProfile?
+        if micRawDiarizer != nil {
+            ownerProfile = await OwnerVoiceProfileStore(
+                fileURL: AppPaths.standard.ownerProfileURL).snapshot()
+        } else {
+            ownerProfile = nil
         }
 
         // --- speaker library, READ-ONLY (PT-R18/PT-R32) ---------------------------
@@ -230,7 +261,9 @@ struct EngineMain {
                 recordingStart: recordingStart,
                 recordingId: recordingId,
                 transcriberConfig: transcriberConfig,
-                liveRawDiarizer: liveRawDiarizer),
+                liveRawDiarizer: liveRawDiarizer,
+                micRawDiarizer: micRawDiarizer,
+                ownerProfile: ownerProfile),
             systemTranscriber: transcriber,
             micTranscriber: micTranscriber,
             systemSource: source,
