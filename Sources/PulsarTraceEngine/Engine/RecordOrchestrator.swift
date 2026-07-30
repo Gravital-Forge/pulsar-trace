@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 /// Drives one `pulsartrace record` session: spawns `pulsartrace-capture`,
 /// waits for its `ready` handshake, spawns `pulsartrace-engine --live`, and
@@ -84,6 +85,13 @@ public actor RecordOrchestrator {
     }
 
     private let configuration: Configuration
+    /// Operational logger for the capture daemon's own diagnostics — its
+    /// stderr lines (prefixed `pulsartrace-capture: `) are forwarded here
+    /// after the `ready` handshake. Defaults to the `capture` subsystem so
+    /// the lines land in `~/Library/Logs/PulsarTrace/<day>.log` under the
+    /// same column the daemon would use if it logged in-process; injectable
+    /// so tests can capture what is forwarded.
+    private let logger: Logger
 
     private var capture: Process?
     private var engine: Process?
@@ -91,9 +99,15 @@ public actor RecordOrchestrator {
     private var engineExit: Task<Int32, Never>?
     /// Background collector for the engine's stdout (its summary line).
     private var engineStdout: Task<String, Never>?
+    /// Retained so its background stderr reader is not deallocated mid-session.
+    private var captureStderrForwarder: CaptureStderrForwarder?
 
-    public init(configuration: Configuration) {
+    public init(
+        configuration: Configuration,
+        logger: Logger = Logger(label: LogSubsystem.capture)
+    ) {
         self.configuration = configuration
+        self.logger = logger
     }
 
     // MARK: - Start
@@ -130,10 +144,19 @@ public actor RecordOrchestrator {
             captureExit: captureExitTask,
             timeout: readyTimeout)
 
-        // Capture is up — drain its remaining stdout/stderr so its pipes
-        // cannot fill and block it.
+        // Capture is up. Its stdout has no more use after `ready` — void-drain
+        // it so its pipe cannot fill and block the daemon. Its stderr, however,
+        // carries the daemon's own operational diagnostics (mic-stall/restart/
+        // recovery, prefixed `pulsartrace-capture: `). Forward those path-free
+        // lines into the operational log instead of discarding them — the
+        // forwarder drains continuously (so the pipe still cannot block the
+        // child) and only ever logs prefixed, length-capped lines (Hard
+        // Invariant #7: no content/paths in the log).
         drainToVoid(captureOut.fileHandleForReading)
-        drainToVoid(captureErr.fileHandleForReading)
+        let forwarder = CaptureStderrForwarder(
+            handle: captureErr.fileHandleForReading, logger: logger)
+        forwarder.start()
+        self.captureStderrForwarder = forwarder
 
         // Launch the engine.
         let engine = Process()
