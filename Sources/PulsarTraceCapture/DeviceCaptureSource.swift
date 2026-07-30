@@ -68,7 +68,16 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     /// - `streamError`: `SCStream.didStopWithError` fired — the stream is
     ///   dead now, regardless of how recently the engine was installed. The
     ///   recency guard must NOT apply.
-    internal enum StallCause: Sendable { case watchdog, streamError }
+    /// - `noFramesAfterInstall`: the post-install verification check found no
+    ///   frame delivered since a fresh engine was installed (initial start or
+    ///   `handleWake`). Like `streamError`, this is by construction about the
+    ///   *fresh* engine itself — the check runs +1s past the stream's own stall
+    ///   threshold, so a wedged device that returned from `start()` yet never
+    ///   produced audio is caught. The recency guard must NOT apply: the guard
+    ///   exists to filter stale watchdog callbacks aimed at a healthy fresh
+    ///   engine, but here the fresh engine is precisely the one that never
+    ///   delivered.
+    internal enum StallCause: Sendable { case watchdog, streamError, noFramesAfterInstall }
 
     private let configuration: Configuration
     private let systemServer: CaptureSocketServer
@@ -116,6 +125,16 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     /// sleep/wake) is stale: if the live engine is younger than its stall
     /// threshold, it cannot have genuinely stalled, so `handleStall` skips.
     private var engineInstalledAt: [Stream: Date] = [:]
+    /// Wall-clock time each stream last delivered a (non-dropped) frame through
+    /// `route()`. The post-install verification check (`checkFramesAfterInstall`)
+    /// reads this to decide whether a freshly-installed engine — from initial
+    /// start or `handleWake` — has produced any audio since install: a wedged
+    /// CoreAudio/USB device lets `start()` return yet delivers no buffers, and
+    /// its one-shot watchdog can fire inside `handleStall`'s recency window and
+    /// be swallowed as stale, leaving the stream silently dead. Written under
+    /// `lock` inside `route()` on the same critical section that already decides
+    /// frame verification, so the hot path takes no extra lock.
+    private var lastFrameAt: [Stream: Date] = [:]
     /// Set once `stopCapture()` begins. A sleep/wake handler that fires during
     /// or after teardown is a no-op — it must not resurrect engines or enqueue
     /// onto a closing socket.
@@ -195,6 +214,12 @@ public final class DeviceCaptureSource: @unchecked Sendable {
             resolvedMicName = mic.deviceName
             engineInstalledAt[.mic] = Date()
         }
+        // Verify the initial mic engine actually delivers audio: a wedged device
+        // at session start returns from start() yet produces no frames, and its
+        // watchdog fire would be swallowed by handleStall's recency window,
+        // leaving a silent no-audio session. This check routes that into stall
+        // recovery. (Same zero-frame hole as handleWake.)
+        scheduleFrameCheckAfterInstall(stream: .mic)
 
         if configuration.systemAudioEnabled {
             let system = makeSystemEngine()
@@ -203,6 +228,7 @@ public final class DeviceCaptureSource: @unchecked Sendable {
                 systemEngine = system
                 engineInstalledAt[.system] = Date()
             }
+            scheduleFrameCheckAfterInstall(stream: .system)
         }
 
         sleepWake.onSleep = { [weak self] in self?.handleSleep() }
@@ -302,6 +328,12 @@ public final class DeviceCaptureSource: @unchecked Sendable {
             if stopped { return (true, nil) }
             if case .frame = event {
                 if paused { return (true, nil) }
+                // Record delivery for the post-install verification check
+                // (`checkFramesAfterInstall`). Folded into the frame-verification
+                // critical section so the hot path takes no extra lock; only
+                // non-dropped frames (past the stopped/paused gates) count as
+                // proof the engine is producing audio.
+                lastFrameAt[stream] = Date()
                 if awaitingFirstFrame.remove(stream) != nil {
                     // This frame verifies recovery — pair it with the stall's
                     // wall time to size the resume gap, then fall through to
@@ -420,11 +452,18 @@ public final class DeviceCaptureSource: @unchecked Sendable {
                 // Fresh engine instances — the capture sessions were torn down
                 // on sleep — feeding the same socket servers.
                 let mic = makeMicEngine()
+                // `try?` swallows a thrown start() deliberately: the wake event
+                // flow (recording_resumed(sleep) emitted immediately below) is
+                // unchanged, and the post-install frame check scheduled after
+                // this block catches a start() that threw exactly like one that
+                // returned silently — no frame ever arrives, the check fires,
+                // and handleStall runs a full stop+retry loop. No watchdog is
+                // armed on a thrown start(), so this check is the only signal.
                 try? mic.start()
                 var system: (any SystemAudioCapturing)?
                 if configuration.systemAudioEnabled {
                     let engine = makeSystemEngine()
-                    try? await engine.start()
+                    try? await engine.start()  // see the try? note above
                     system = engine
                 }
                 // Teardown may have begun while the engines were starting — if
@@ -458,6 +497,21 @@ public final class DeviceCaptureSource: @unchecked Sendable {
                 }
                 await emit(RecordingResumedEvent(
                     recordingId: configuration.recordingId, reason: "sleep"))
+
+                // Verify the rebuilt engines actually deliver audio. A wedged
+                // device (or a thrown start() the try? above swallowed) returns
+                // with no frames; its watchdog fire would be swallowed by
+                // handleStall's recency window, leaving the stream silently dead.
+                // Scheduled only after `paused = false` (so the check body does
+                // not early-return on paused) and after install (engineInstalledAt
+                // set in the abort block). recording_resumed(sleep) stays emitted
+                // immediately above; a dead stream then gets its own
+                // recording_paused(stall_recovery) a few seconds later — the same
+                // observable sequence as a device stalling right after wake.
+                scheduleFrameCheckAfterInstall(stream: .mic)
+                if configuration.systemAudioEnabled {
+                    scheduleFrameCheckAfterInstall(stream: .system)
+                }
             }
         }
     }
@@ -506,6 +560,15 @@ public final class DeviceCaptureSource: @unchecked Sendable {
             // permission inconsistency or ScreenCaptureKit abort can fire
             // within the first second of start(); suppressing that would leave
             // capture silently dead.
+            //
+            // Nor does it apply to `.noFramesAfterInstall`: the post-install
+            // check only ever runs +1s past the stream's own stall threshold and
+            // fires precisely because the *fresh* engine produced no frame since
+            // install. Applying the recency guard (which asks whether install was
+            // longer ago than the threshold) would defeat the check's purpose —
+            // the check already established the fresh engine is the dead one.
+            // Only `.watchdog` — which can be a genuinely stale callback aimed at
+            // a healthy fresh engine — is guarded.
             let proceed = lock.withLock { () -> Bool in
                 guard !stopped, !paused, !restartingStreams.contains(stream)
                 else { return false }
@@ -828,6 +891,52 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         case .system: return SystemAudioCaptureEngine.stallThreshold
         case .mic: return MicCaptureEngine.stallThreshold
         }
+    }
+
+    // MARK: - Post-install frame verification
+
+    /// Schedule a per-stream check that a freshly-installed engine (initial
+    /// `startCapture` or `handleWake`) actually delivered a frame. Both install
+    /// paths trust a returning `start()`, but a wedged CoreAudio/USB device lets
+    /// `start()` succeed silently: its one-shot watchdog then fires inside
+    /// `handleStall`'s recency window and is swallowed as stale, leaving the
+    /// stream silently dead. A thrown `start()` on wake is worse — `try?`
+    /// swallows it, no watchdog is ever armed. This check routes both into the
+    /// existing frame-verified stall recovery.
+    ///
+    /// The deadline mirrors `scheduleNoFrameTimeout`: `noFrameTimeoutOverride`
+    /// (tests) or `stallThreshold + 1s` (production). The +1s slack means the
+    /// engine's own watchdog — when it works — wins the race and this check
+    /// finds `restartingStreams` already occupied, so the check introduces no
+    /// new false-trigger class beyond what the watchdog already does in steady
+    /// state (the system watchdog fires after 6s of no frames regardless).
+    private func scheduleFrameCheckAfterInstall(stream: Stream) {
+        let timeout = noFrameTimeoutOverride
+            ?? (stallThreshold(for: stream) + .seconds(1))
+        restartQueue.asyncAfter(deadline: .now() + secondsValue(timeout)) {
+            [self] in checkFramesAfterInstall(stream: stream)
+        }
+    }
+
+    /// The post-install verification check body (runs on `restartQueue`). Under
+    /// `lock`: if stopped or paused, do nothing; if a restart is already in
+    /// flight for this stream (`restartingStreams`), do nothing — the stall path
+    /// already owns recovery, including the watchdog winning the +1s race above;
+    /// otherwise, if no frame has been delivered since this engine was installed
+    /// (`lastFrameAt` nil or earlier than `engineInstalledAt`), the fresh engine
+    /// produced no audio — route into the frame-verified stall recovery via
+    /// `.noFramesAfterInstall` (which bypasses the recency guard, since the
+    /// fresh engine itself is the dead one).
+    private func checkFramesAfterInstall(stream: Stream) {
+        let deadEngine = lock.withLock { () -> Bool in
+            if stopped || paused { return false }
+            if restartingStreams.contains(stream) { return false }
+            guard let installedAt = engineInstalledAt[stream] else { return false }
+            if let last = lastFrameAt[stream], last >= installedAt { return false }
+            return true
+        }
+        guard deadEngine else { return }
+        handleStall(stream: stream, cause: .noFramesAfterInstall)
     }
 
     /// A `Duration` as a `TimeInterval` (seconds, fractional) for comparison

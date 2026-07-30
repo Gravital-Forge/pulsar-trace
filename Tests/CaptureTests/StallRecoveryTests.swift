@@ -754,4 +754,269 @@ struct FrameVerifiedRecoveryTests {
 
         await source.stopCapture(reason: "test_teardown")
     }
+
+    // MARK: - Post-install frame verification (wake + initial start)
+
+    /// Count `(type, reason)` pairs matching a predicate across the persisted
+    /// events. A small wrapper over `typedEvents` for the checks below.
+    private func countEvents(
+        in url: URL, where match: (_ type: String, _ reason: String?) -> Bool
+    ) throws -> Int {
+        try typedEvents(in: url).filter { match($0.type, $0.reason) }.count
+    }
+
+    /// Poll the persisted events until at least one
+    /// `recording_paused(stall_recovery)` appears, or the deadline elapses.
+    /// The paused emit is asynchronous (a `runBlocking` inside `handleStall`)
+    /// and lags the `restartingStreams` membership a state poll observes, so a
+    /// single read after the membership appears can race the flush. Flushes
+    /// before each read so the writer's buffer is on disk.
+    private func pollPausedStallRecovery(
+        events: EventWriter, timeout: Duration = .seconds(3)
+    ) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            await events.flush()
+            let url = await events.currentFileURL()
+            if let n = try? countEvents(in: url, where: {
+                $0 == "recording_paused" && $1 == "stall_recovery"
+            }), n >= 1 {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
+    }
+
+    /// Wake rebuilds an engine whose start() succeeds but delivers no frame — a
+    /// wedged device right after wake. Today's code trusts the returning
+    /// start(): it emits recording_resumed(sleep) and the stream is silently
+    /// dead (its one-shot watchdog fire lands inside handleStall's recency
+    /// window and is swallowed). The post-install frame check must route this
+    /// into the existing frame-verified stall recovery — a
+    /// recording_paused(stall_recovery) a few seconds after wake — and, once the
+    /// retry's engine delivers frames, exactly one recording_resumed(stall_recovery).
+    ///
+    /// RED before the fix: no recording_paused(stall_recovery) is ever emitted;
+    /// the stream stays dead. `waitUntil` for the paused event times out.
+    @Test("Wake installs a zero-frame engine → stall recovery takes over")
+    func wakeZeroFrameEngineTriggersRecovery() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-fv-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let events = EventWriter(directory: dir.appendingPathComponent("events"))
+        await events.bootstrap()
+
+        // Short no-frame slack so the post-install check fires on sub-second
+        // timers — the same override the stall-restart no-frame timeout uses.
+        let factory = FakeMicFactory()
+        let source = makeSource(
+            factory: factory, events: events, noFrameTimeout: .milliseconds(200))
+
+        // Enter a paused (sleep) state, then wake. The wake builds a fresh mic
+        // engine (factory index 0) that starts cleanly but never delivers a
+        // frame — the wedged-device signature.
+        source.simulateSleepForTest()
+        let asleep = await waitUntil { source.pausedForTest }
+        #expect(asleep, "sleep must park the source in the paused state")
+
+        source.simulateWakeForTest()
+        let awake = await waitUntil { !source.pausedForTest }
+        #expect(awake, "wake must clear paused and install a rebuilt engine")
+        #expect(factory.count >= 1, "wake must have built a fresh mic engine")
+
+        // The post-install check finds no frame since install and routes into
+        // stall recovery — the mic enters the restart/awaiting state.
+        let pausedByCheck = await waitUntil {
+            source.restartingStreamsForTest.contains(.mic)
+                || source.awaitingFirstFrameForTest.contains(.mic)
+        }
+        #expect(pausedByCheck,
+                "the zero-frame wake engine must be routed into stall recovery")
+
+        // Now let the retry's engine deliver frames: real audio proves recovery.
+        // The check fired handleStall, which built another engine (awaiting its
+        // first frame). Deliver a frame on the latest engine.
+        let awaiting = await waitUntil {
+            source.awaitingFirstFrameForTest.contains(.mic)
+        }
+        #expect(awaiting, "the recovery restart must be awaiting its first frame")
+        factory.latest?.deliverFrame()
+
+        let resumed = await waitUntil {
+            !source.restartingStreamsForTest.contains(.mic)
+                && !source.awaitingFirstFrameForTest.contains(.mic)
+        }
+        #expect(resumed, "a delivered frame must clear awaiting/restarting state")
+
+        // The paused emit (asynchronous, in handleStall) may lag; poll for it.
+        let paused = await pollPausedStallRecovery(events: events)
+        #expect(paused,
+                "a zero-frame wake engine must emit recording_paused(stall_recovery)")
+
+        // The resumed emit completes synchronously (runBlocking) before the
+        // membership `resumed` observed is cleared, so a single post-flush read
+        // is race-free here.
+        await events.flush()
+        let resumedCount = try countEvents(in: await events.currentFileURL()) {
+            $0 == "recording_resumed" && $1 == "stall_recovery"
+        }
+        #expect(resumedCount == 1,
+                "exactly one recording_resumed(stall_recovery) once a frame verifies recovery")
+
+        await source.stopCapture(reason: "test_teardown")
+    }
+
+    /// A thrown start() on wake is swallowed by `try?` — no engine is running,
+    /// no watchdog is ever armed, so today the stream is silently dead with no
+    /// signal at all. The post-install frame check needs no special-casing: no
+    /// frame ever arrives, so it fires and routes into the full stop+retry loop
+    /// exactly like a returning-but-silent start().
+    ///
+    /// RED before the fix: nothing happens after wake — no paused event, no
+    /// retry. `waitUntil` for the recovery membership times out.
+    @Test("Thrown start() on wake → same stall recovery")
+    func wakeThrownStartTriggersRecovery() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-fv-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let events = EventWriter(directory: dir.appendingPathComponent("events"))
+        await events.bootstrap()
+
+        // The wake engine (factory index 0) throws on start(); the recovery
+        // retry engine (index 1) starts cleanly and can deliver a frame.
+        let factory = FakeMicFactory(throwFirstN: 1)
+        let source = makeSource(
+            factory: factory, events: events, noFrameTimeout: .milliseconds(200))
+
+        source.simulateSleepForTest()
+        let asleep = await waitUntil { source.pausedForTest }
+        #expect(asleep, "sleep must park the source in the paused state")
+
+        source.simulateWakeForTest()
+        let awake = await waitUntil { !source.pausedForTest }
+        #expect(awake, "wake completes even though the rebuilt engine threw")
+        #expect(factory.count >= 1, "wake attempted to build a mic engine")
+
+        // The post-install check fires (no frame ever arrived — start() threw)
+        // and routes into stall recovery: paused event + a retry engine built.
+        let recovering = await waitUntil {
+            source.restartingStreamsForTest.contains(.mic)
+                || source.awaitingFirstFrameForTest.contains(.mic)
+                || factory.count >= 2
+        }
+        #expect(recovering,
+                "a thrown start() on wake must be routed into stall recovery")
+
+        let paused = await pollPausedStallRecovery(events: events)
+        #expect(paused,
+                "a thrown wake start() must emit recording_paused(stall_recovery)")
+
+        await source.stopCapture(reason: "test_teardown")
+    }
+
+    /// A healthy wake — the rebuilt engine delivers frames promptly — must NOT
+    /// trip the post-install check: no recording_paused(stall_recovery) is ever
+    /// emitted and `restartingStreams` stays empty. Guards against the check
+    /// becoming a false-trigger class of its own.
+    @Test("Healthy wake stays quiet — no false stall recovery")
+    func healthyWakeStaysQuiet() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-fv-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let events = EventWriter(directory: dir.appendingPathComponent("events"))
+        await events.bootstrap()
+
+        let factory = FakeMicFactory()
+        let source = makeSource(
+            factory: factory, events: events, noFrameTimeout: .milliseconds(200))
+
+        source.simulateSleepForTest()
+        let asleep = await waitUntil { source.pausedForTest }
+        #expect(asleep, "sleep must park the source in the paused state")
+
+        source.simulateWakeForTest()
+        let awake = await waitUntil {
+            !source.pausedForTest && factory.count >= 1
+        }
+        #expect(awake, "wake must rebuild the engine and clear paused")
+
+        // Deliver frames on the rebuilt engine continuously across the check
+        // window so `lastFrameAt` is always newer than the install — the check
+        // must find a fresh frame and do nothing.
+        for _ in 0..<8 {
+            factory.latest?.deliverFrame()
+            try await Task.sleep(for: .milliseconds(40))
+        }
+
+        // Give the post-install check (200 ms) ample time to have fired and
+        // found the stream healthy. A fixed wait is the honest primitive for a
+        // negative assertion (nothing must happen) — there is no state to poll
+        // toward, so `waitUntil` would just spin for the same duration.
+        try await Task.sleep(for: .milliseconds(500))
+
+        #expect(source.restartingStreamsForTest.isEmpty,
+                "a healthy wake must not enter stall recovery")
+        #expect(source.awaitingFirstFrameForTest.isEmpty,
+                "a healthy wake must not be left awaiting a first frame")
+
+        await events.flush()
+        let paused = try countEvents(in: await events.currentFileURL()) {
+            $0 == "recording_paused" && $1 == "stall_recovery"
+        }
+        #expect(paused == 0,
+                "no recording_paused(stall_recovery) for a healthy wake")
+
+        await source.stopCapture(reason: "test_teardown")
+    }
+
+    /// Initial startCapture installs a mic engine that returns from start() yet
+    /// delivers no frame — a wedged device at session start. Without the check
+    /// this is a silent no-audio session (the watchdog fire is swallowed inside
+    /// handleStall's recency window). The initial-install check must route it
+    /// into stall recovery: a recording_paused(stall_recovery) after the window.
+    ///
+    /// startCapture is driven hardware-free here: sockets are never bound
+    /// (no prepareForCapture), so `beginServing` early-returns; the fake mic
+    /// engine flows through the production factory wiring; systemAudioEnabled is
+    /// false, so no ScreenCaptureKit is touched.
+    ///
+    /// RED before the fix: startCapture emits recording_started and nothing
+    /// else — the silent engine is never noticed. `waitUntil` for the recovery
+    /// membership times out.
+    @Test("Initial start zero-frame → stall recovery takes over")
+    func initialStartZeroFrameTriggersRecovery() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pt-fv-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let events = EventWriter(directory: dir.appendingPathComponent("events"))
+        await events.bootstrap()
+
+        let factory = FakeMicFactory()
+        let source = makeSource(
+            factory: factory, events: events, noFrameTimeout: .milliseconds(200))
+
+        // Start hardware-free: the fake mic (factory index 0) starts cleanly but
+        // never delivers a frame — the wedged-device-at-start signature.
+        try await source.startCapture()
+        #expect(factory.count >= 1, "startCapture must build the initial mic engine")
+
+        // The initial-install check finds no frame since install and routes into
+        // stall recovery.
+        let recovering = await waitUntil {
+            source.restartingStreamsForTest.contains(.mic)
+                || source.awaitingFirstFrameForTest.contains(.mic)
+                || factory.count >= 2
+        }
+        #expect(recovering,
+                "a zero-frame initial engine must be routed into stall recovery")
+
+        // Poll the persisted events: the paused emit is asynchronous (runBlocking
+        // inside handleStall) and lags the membership the check above observes.
+        let paused = await pollPausedStallRecovery(events: events)
+        #expect(paused,
+                "a zero-frame initial start must emit recording_paused(stall_recovery)")
+
+        await source.stopCapture(reason: "test_teardown")
+    }
 }
