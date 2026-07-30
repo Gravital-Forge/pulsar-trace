@@ -69,7 +69,12 @@ enum TranscriptAssembly {
         for (i, seg) in systemSegments.enumerated() {
             rows.append((seg, systemLabels[i]))
         }
-        for seg in micSegments ?? [] {
+        // PT-P8-R11: refine-side mic-echo dedup — drop mic segments that
+        // duplicate system speech (same MicEchoDedup semantics as the live pass,
+        // PT-C14) before labeling them "You". The system stream is the
+        // authoritative source of remote speech.
+        let dedupedMic = dedupedMicSegments(micSegments ?? [], against: systemSegments)
+        for seg in dedupedMic {
             rows.append((seg, "You"))   // PT-R17: the mic stream is always "You".
         }
         // Sort by start offset; ties broken by end then label for determinism.
@@ -121,6 +126,25 @@ enum TranscriptAssembly {
             document: document,
             speakers: speakers,
             speakerIdByLabel: speakerIdByLabel)
+    }
+
+    /// PT-P8-R11 — the mic-side copy of system speech is dropped; the system
+    /// stream is the authoritative source of remote speech. Runs the same
+    /// `MicEchoDedup` value type the live pass uses (PT-C14): a mic segment
+    /// whose text is > 0.5 similar to a system segment within ±5 s is an echo
+    /// and is filtered out before it can earn a "You" line.
+    static func dedupedMicSegments(
+        _ micSegments: [TranscriptSegment],
+        against systemSegments: [TranscriptSegment]
+    ) -> [TranscriptSegment] {
+        guard !micSegments.isEmpty, !systemSegments.isEmpty else { return micSegments }
+        var dedup = MicEchoDedup()
+        for sys in systemSegments {
+            dedup.noteSystemUtterance(text: sys.text, start: sys.start, end: sys.end)
+        }
+        return micSegments.filter {
+            !dedup.isMicEcho(text: $0.text, start: $0.start, end: $0.end)
+        }
     }
 
     // MARK: - final.md write + backups
