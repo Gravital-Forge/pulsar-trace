@@ -55,10 +55,14 @@ public struct CommittedUtterance: Sendable, Equatable {
 /// ## Backpressure
 ///
 /// The decode of a window must finish before the next window is due, or the
-/// sample buffer grows unbounded. The transcriber tracks how far decoding lags
-/// real audio; if a window decode overruns it **skips** windows to catch up
-/// (coarser commits, but bounded memory and bounded lag) and logs the overrun.
-/// It never blocks the source or crashes.
+/// sample buffer grows unbounded. The transcriber tracks its own un-decoded
+/// **backlog** — delivered audio still past the anchor — and when that grows
+/// past two windows the decoder is genuinely behind real-time, so it **skips**
+/// the anchor forward to shed the excess (coarser commits, but bounded memory
+/// and bounded backlog) and logs the overrun. It never blocks the source or
+/// crashes. Backpressure is measured on the *delivered* backlog, not wall-clock
+/// lag, so audio dropped upstream or a paused source cannot create a permanent
+/// deficit that starves the committer (2026-07-30 incident).
 ///
 /// Not `Sendable` by construction — it owns a non-`Sendable`
 /// `WindowTranscribing` conformer. Drive it from one task.
@@ -209,35 +213,46 @@ public final class StreamingTranscriber {
         while recordingSampleCount - lastDecodeEndSample >= stepSamples
             && recordingSampleCount - windowAnchorSample >= stepSamples {
 
-            // Backpressure: if real time has run far past
-            // the anchor — the decoder cannot keep up — skip the anchor forward
-            // so the buffer and the lag stay bounded. The skipped audio is lost
+            // Backpressure: bound the transcriber's own un-decoded backlog —
+            // the delivered audio still sitting past the anchor,
+            // `recordingSampleCount − windowAnchorSample`. When it grows past
+            // two windows the decoder is genuinely falling behind real-time, so
+            // skip the anchor forward to shed the excess. The shed audio is lost
             // to the live pass (coarser commits); the post-pass recovers it.
             //
-            // Cap the backpressure target at `recordingSampleCount −
-            // windowSamples` so the anchor never advances past where
-            // `windowSamples` of audio remains. Without this cap a wedge
-            // big enough to make `realSample − windowSamples` exceed
-            // `recordingSampleCount` lets `advanceAnchor` clamp to
-            // `recordingSampleCount`, which empties the sample buffer;
-            // `runWindow` then hits its `guard hi > lo` and returns
-            // without calling `transcribeWindow`. The streamer keeps
-            // logging backpressure but never asks the decoder to decode
-            // anything, so a transient decode failure permanently
-            // silences live (2026-05-28 incident). With the cap the
-            // next `runWindow` always has the most recent `windowSamples`
-            // of audio to decode, so the next attempt re-enters the decoder
-            // and can recover the moment it catches up.
-            if let realTimeElapsed {
-                let realSample = durationToSamples(realTimeElapsed)
-                let lagSamples = realSample - windowAnchorSample
-                if lagSamples > 2 * windowSamples {
+            // Advance to `recordingSampleCount − windowSamples` — never further.
+            // That cap keeps `windowSamples` of audio in front of the anchor, so
+            // the very next `runWindow` always has a full window to decode and
+            // re-enters the decoder; without it a target past
+            // `recordingSampleCount` would empty the sample buffer, `runWindow`
+            // would hit its `guard hi > lo` and return without ever calling
+            // `transcribeWindow`, and a transient decode failure would
+            // permanently silence live (2026-05-28 incident — the clamp
+            // reasoning we must keep documented).
+            //
+            // Why *backlog*, not wall-clock lag (2026-07-30 incident,
+            // rec_2026-07-30-133002): the old check measured
+            // `realSample − windowAnchorSample`, wall clock minus the anchor.
+            // During a system-wide load wedge ~80 s of system audio was dropped
+            // *upstream* (capture socket layer) and never reached the
+            // transcriber, so delivered audio permanently trailed wall clock by
+            // ~78 s — a deficit that can never close. Wall-clock lag therefore
+            // stayed over two windows on every window for the rest of the hour;
+            // backpressure fired 891 times, each force-advancing the anchor and
+            // starving LocalAgreement-2 (it needs two consecutive decodes over
+            // the same region to commit), so live output nearly stopped.
+            // Measuring the delivered backlog instead makes that livelock
+            // impossible: audio lost upstream or paused gaps leave the backlog
+            // small, so nothing is shed and LocalAgreement keeps committing on
+            // what actually arrived; only a decoder that is genuinely slower
+            // than real-time grows the backlog and gets throttled — exactly what
+            // backpressure is meant to bound.
+            if realTimeElapsed != nil {
+                let backlogSamples = recordingSampleCount - windowAnchorSample
+                if backlogSamples > 2 * windowSamples {
                     logger.warning(
-                        "streaming transcription backpressure: decode lag exceeds two windows; advancing anchor to catch up")
-                    let safeTarget = min(
-                        realSample - windowSamples,
-                        recordingSampleCount - windowSamples)
-                    advanceAnchor(to: safeTarget)
+                        "streaming transcription backpressure: decode backlog exceeds two windows; advancing anchor to catch up")
+                    advanceAnchor(to: recordingSampleCount - windowSamples)
                 }
             }
 
@@ -245,6 +260,11 @@ public final class StreamingTranscriber {
             lastDecodeEndSample = recordingSampleCount
 
             // Per-pass diagnostic trace (numbers only — Hard Invariant #7).
+            // `lag` is the wall-clock delivery deficit (wall clock minus the
+            // anchor); `backlog` is the un-decoded delivered audio past the
+            // anchor that backpressure actually bounds. Keeping both
+            // distinguishes an upstream delivery deficit (large lag, small
+            // backlog) from a slow decoder (backlog grows) in future incidents.
             let _sr = AudioFormat.sampleRate
             let _realSample = realTimeElapsed.map { durationToSamples($0) }
                 ?? recordingSampleCount
@@ -252,7 +272,8 @@ public final class StreamingTranscriber {
             logger.notice("""
                 live trace transcriber[\(streamLabel)]: \
                 anchor=\(windowAnchorSample / _sr)s total=\(recordingSampleCount / _sr)s \
-                lag=\(String(format: "%.1f", _lag))s buf=\(samples.count / _sr)s \
+                lag=\(String(format: "%.1f", _lag))s backlog=\((recordingSampleCount - windowAnchorSample) / _sr)s \
+                buf=\(samples.count / _sr)s \
                 decode=\(Int(lastDecodeMS))ms vad=\(lastVADSkipped) \
                 committedTokens=\(committer.committed.count)
                 """)
