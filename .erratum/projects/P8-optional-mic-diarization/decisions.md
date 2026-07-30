@@ -107,3 +107,71 @@ dedicated inverse-rewrite machinery is built.
 **Because:** Refinement is already deterministic re-generation from persisted WAVs plus the sidecar
 inputs — the single-`You` transcript is exactly what a refine with the option off produces. A
 bespoke undo would duplicate that guarantee and add a second code path that can drift from it.
+
+### PT-P8-D9 · The mode covers the live pass too (supersedes PT-P8-D1)
+
+*2026-07-29*
+
+**Decision:** With a recording's mic-diarization stamp on, the live pass windows-diarizes the mic
+stream and shows provisional labels in `live.md`, exactly as it does for the system stream; the
+refine pass finalizes. PT-P8-D1's refine-only scoping is superseded.
+
+**Because:** User direction on design review: refine-only mic diarization makes the feature behave
+differently from every other diarization the app does — the system channel shows provisional
+speakers live and firms them up at refine, and a mic channel that flips from all-`You` to
+multi-speaker only at refine is a visible discontinuity and a harder mental model. UX parity wins:
+"you toggle it, you start your meeting, and that's it." The costs D1 avoided are bounded: the extra
+windowed diarizer runs on the ANE only when the mode is on (default off), diarization windows are
+light relative to Parakeet transcription (relevant after the thermal-wedge history), and the
+post-hoc apply/revert capability is unchanged — it never depended on refine-only scoping, only on
+refines re-reading the persisted WAVs.
+
+### PT-P8-D10 · Sticky global toggle stamps recordings; refines follow the stamp (supersedes PT-P8-D6)
+
+*2026-07-29*
+
+**Decision:** The mode switch is a persisted, default-off Settings toggle (the `systemAudioEnabled`
+precedent), whose value is stamped onto each recording at record start. Every refine follows the
+recording's own stamp; the per-recording control in the recordings pane edits the stamp (flip +
+Refine = post-hoc apply/revert). Manual refine never silently consults the ambient global toggle.
+PT-P8-D6's non-sticky record-time toggle is superseded.
+
+**Because:** User direction: the control should feel like an app mode ("a toggle you press in the
+settings"), not a per-recording ritual — someone in a stretch of in-person meetings flips it once.
+Stamping at start keeps recordings self-describing and refines deterministic. The alternative the
+review floated — refine reads the current global toggle at click time — was rejected for its
+retroactivity: re-refining an old in-person recording months later (say, after a model upgrade)
+with the toggle since turned off would silently collapse its speakers back to `You`; with the
+stamp, a recording's transcript shape changes only when the user edits that recording's own state.
+PT-P8-D5 is unaffected: the sidecar remains the per-recording input home, and what D5 rejected — a
+global setting *instead of* per-recording state, where every meeting diarizes alike — is still
+rejected; the toggle only chooses the default each new recording is stamped with.
+
+### PT-P8-D11 · `Guest` is the live provisional label family for mic clusters
+
+*2026-07-29*
+
+**Decision:** Unmatched mic clusters in the live pass take `Guest`, `Guest #2`, … provisional
+labels with the existing `?` pre-reconciliation semantics, alongside `You` (owner match) and
+library names (read-only match).
+
+**Because:** The system stream already owns the `Them` family; reusing it for mic clusters would
+make a hybrid meeting's transcript ambiguous about who was in the room versus on the call, which is
+exactly the distinction an in-person mode exists to capture. A distinct family also keeps the two
+streams' provisional label spaces independent, matching the no-cross-stream-stitching scope
+boundary. Naming stays provisional-only: refine replaces the family with reconciled names.
+
+### PT-P8-D12 · Owner-profile backfill on first enable
+
+*2026-07-29*
+
+**Decision:** When the global toggle is first enabled and no owner profile exists, a one-shot
+backfill builds it from the mic WAVs of recent existing recordings before passive learning takes
+over.
+
+**Because:** With live `You` attribution now in scope (PT-P8-D9), a cold profile would make the
+mode's first outing label the user's own speech `Guest ?` live — the worst first impression the
+feature could make, and entirely avoidable for established users whose disk already holds hours of
+single-voice mic audio. Fresh installs with no recordings still degrade gracefully (provisional
+labels until refine plus "this is me" seeds the profile); an explicit enrollment flow remains
+unnecessary (PT-P8-D2).
