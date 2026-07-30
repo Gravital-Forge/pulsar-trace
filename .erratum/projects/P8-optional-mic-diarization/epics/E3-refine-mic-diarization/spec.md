@@ -1,6 +1,6 @@
 # PT-P8-E3 · Mic diarization in the refine pass — Specification
 
-**Status:** Open · **Opened:** 2026-07-29
+**Status:** Frozen · **Opened:** 2026-07-29 · **Closed:** 2026-07-29
 
 ## Intent
 

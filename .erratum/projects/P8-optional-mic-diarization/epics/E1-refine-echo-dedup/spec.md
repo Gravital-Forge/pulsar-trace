@@ -1,6 +1,6 @@
 # PT-P8-E1 · Refine-side mic-echo dedup — Specification
 
-**Status:** Open · **Opened:** 2026-07-29
+**Status:** Frozen · **Opened:** 2026-07-29 · **Closed:** 2026-07-29
 
 ## Intent
 

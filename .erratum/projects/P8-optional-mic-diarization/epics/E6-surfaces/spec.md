@@ -1,6 +1,6 @@
 # PT-P8-E6 · Surfaces: settings, recordings pane, CLI, MCP — Specification
 
-**Status:** Open · **Opened:** 2026-07-29
+**Status:** Frozen · **Opened:** 2026-07-29 · **Closed:** 2026-07-30
 
 ## Intent
 
