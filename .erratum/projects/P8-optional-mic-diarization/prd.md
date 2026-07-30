@@ -11,7 +11,8 @@ microphone — their speech is silently merged into `You`. This project introduc
 **mic-diarization mode** that behaves exactly like the system channel already does: with the mode
 on, the live pass windows-diarizes the mic stream and shows provisional per-speaker labels in
 `live.md`, and the refine pass diarizes it globally, reconciles the clusters, and finalizes the
-labels in `final.md`. With the mode off — the default — behavior is byte-identical to today.
+labels in `final.md`. With the mode off — the default — behavior matches today's, with one
+deliberate exception: the refine pass gains the mic-echo dedup it is missing (PT-P8-R11).
 
 The mode is controlled at two levels. A **sticky settings toggle** ("diarize microphone", default
 off, the `systemAudioEnabled` precedent) governs new recordings: at record start the toggle's value
@@ -39,8 +40,9 @@ is fail-safe: with no profile or no confident match, no cluster is silently labe
 
 The machinery reuses what exists: the diarizer (PT-C3) gains a mic-stream entry point, the live
 pipeline (PT-C12/PT-C13) a second windowed diarizer over mic frames, the refinement pipeline
-(PT-C4) a conditional mic-diarization stage, the speaker library (PT-C5) an owner-profile store
-beside — never inside — the speaker table, and the merge/metadata tail per-cluster mic labels.
+(PT-C4) a conditional mic-diarization stage and an unconditional mic-echo dedup ahead of the merge
+(PT-P8-R11), the speaker library (PT-C5) an owner-profile store beside — never inside — the
+speaker table, and the merge/metadata tail per-cluster mic labels.
 Surfaces follow: the settings toggle and per-recording control in the app (PT-C16), `pulsartrace`
 record/refine overrides (PT-C9), the MCP surface (PT-C22), additive `metadata.json` fields
 (PT-C11), and events (PT-C6). Along the way the project closes KI-3 by identifying the owner/mic
@@ -49,9 +51,14 @@ speaker structurally instead of by the mutable display name `"You"` in the Speak
 
 Deliberately out of scope: cross-stream cluster stitching in the live pass (mic and system streams
 keep independent provisional label spaces; the refine pass's shared library reconciliation is where
-identities converge), explicit voice-enrollment UX (passive learning, backfill, and "this is me"
-cover bootstrap), and any change to echo dedup (PT-R19), which continues to apply unchanged before
-mic attribution in both passes.
+identities converge) and explicit voice-enrollment UX (passive learning, backfill, and "this is
+me" cover bootstrap). Echo dedup, by contrast, is deliberately **in** scope: today it exists only
+in the live pass — the refine pass re-admits every mic segment, including system-audio
+bleed-through — and with mic diarization on that gap would duplicate remote speech in `final.md`,
+contaminate mic clusters, and poison owner-profile learning. The refine pass therefore gains the
+mic-echo dedup the live pass already has, ahead of mic attribution and profile learning,
+superseding PT-R19 — whose body also states the inverse drop direction from what the
+implementation does (PT-P8-R11, PT-P8-D13).
 
 ## Project Requirements
 
@@ -70,8 +77,9 @@ and the refine pass diarizes it globally, reconciles, and finalizes labels in `f
 
 *Supersedes:* PT-R17 (mic never diarized) with "mic diarized only when the recording's
 mic-diarization stamp is on". *Acceptance:* a recording made and refined with the mode off yields
-`live.md`/`final.md`/`metadata.json` byte-equivalent (modulo timestamps) to today's output; with
-the mode on, both passes attribute mic speech per cluster.
+`live.md`/`final.md`/`metadata.json` byte-equivalent (modulo timestamps) to today's output, except
+that refine-side echo dedup (PT-P8-R11) may drop mic-side duplicates today's refine re-admits;
+with the mode on, both passes attribute mic speech per cluster.
 
 ### PT-P8-R2 · Functional · Introduce — Per-recording stamp in an options sidecar
 
@@ -94,13 +102,15 @@ space (PT-R112), pinned to the diarization model revision with the same archive-
 semantics as the speaker library (PT-R113). It is stored alongside the speaker library but is not a
 library speaker — it can never be listed, renamed, merged, delisted, or matched by the reconciler.
 It is updated by running mean from four sources: (a) passively, during refinement of
-non-mic-diarized recordings, from mic-stream speech that survived echo dedup, gated by an inlier
-check so a borrowed microphone does not poison the profile; (b) from the `You`-attributed cluster
-of a mic-diarized refine; (c) from explicit owner designation (PT-P8-R6); (d) from a one-shot
-backfill over the mic WAVs of recent existing recordings, run when the global toggle is first
-enabled and no profile exists, so `You` attribution works immediately for established users. With
-no profile present, passes proceed; only automatic `You` attribution is unavailable. The live pass
-reads the profile read-only, like the speaker library.
+non-mic-diarized recordings, from mic-stream speech that survives the refine pass's echo dedup
+(PT-P8-R11), gated by an inlier check so a borrowed microphone does not poison the profile — when
+the profile is empty the first sample seeds it and the gate applies from the second onward; (b)
+from the `You`-attributed cluster of a mic-diarized refine; (c) from explicit owner designation
+(PT-P8-R6); (d) from a one-shot backfill run when the global toggle is first enabled (PT-P8-R12)
+and no profile exists, processing existing recordings' mic WAVs newest-first until the centroid
+stabilizes, bounded by a fixed cap, so `You` attribution works immediately for established users.
+With no profile present, passes proceed; only automatic `You` attribution is unavailable. The live
+pass reads the profile read-only, like the speaker library.
 
 *Acceptance:* profile is created/updated across refines of ordinary recordings; first-enable with
 existing recordings produces a usable profile without user action; an embedding far from the
@@ -109,8 +119,10 @@ profile without failing any pass.
 
 ### PT-P8-R4 · Functional · Introduce — Fail-safe `You` attribution among mic clusters
 
-In a mic-diarized refine, the mic cluster whose embedding best matches the owner profile at or above
-the calibrated match threshold is labeled `You`. At most one cluster is `You`. If no owner profile
+In a mic-diarized refine, the mic cluster whose embedding best matches the owner profile at or
+above the owner-match threshold — a threshold of its own in the unified space, pinned by a
+calibration test like the library match threshold (PT-R112) — is labeled `You`. At most one cluster
+is `You`. If no owner profile
 exists, or no cluster reaches the threshold, **no cluster is auto-labeled `You`** — all mic clusters
 take the guest path (PT-P8-R5) and the user can designate the owner explicitly (PT-P8-R6). `You` is
 never assigned by guesswork (e.g. dominant-speaker heuristics). The same rule governs the live
@@ -125,7 +137,8 @@ speakers.
 Non-owner mic clusters are reconciled against the speaker library exactly as system-stream clusters
 are (PT-R22/PT-R23): matched speakers take their library names and refine their centroids; unmatched
 clusters mint `Unknown #N` placeholders. Mic-channel speakers get the full speaker-edit surface
-(rename, merge, split, delist, undelist) and are recognized across meetings and across channels —
+(rename, merge, split, delist, undelist — PT-R105) and are recognized across meetings and across
+channels —
 the same person reconciles to one library speaker whether they arrived via mic or system stream.
 
 *Acceptance:* a guest speaker recorded on the mic in one recording and on the system stream in
@@ -137,7 +150,8 @@ another reconciles to the same `spk_` id; speaker-edit operations on a mic-chann
 The speaker editor supports designating, per recording, a mic-channel speaker as the owner ("this is
 me"): the recording's lines for that speaker re-attribute to `You` via the retroactive `final.md`
 rewrite, the owner profile updates from that cluster's embedding, and a library speaker minted
-solely from that misattribution is removed. The inverse ("not me") demotes a recording's `You`
+solely from that misattribution — one whose only recorded appearance is this recording's — is
+removed. The inverse ("not me") demotes a recording's `You`
 mic-channel attribution to an ordinary library speaker. Both emit paired cause + `final_md_rewritten`
 events in causal order.
 
@@ -153,7 +167,9 @@ speaker's transcript label is fixed. The delist guard keys on the structural mar
 (renaming can no longer make the mic speaker delistable, and a guest named `You` is impossible).
 
 *Acceptance:* the KI-3 scenarios (rename mic speaker then delist; name a guest `You`) are rejected
-or impossible; KI-3 is removed from the known-issues register at close-out.
+or impossible; every display-name-keyed guard site keys on the structural marker (the engine's
+Speaker Edit Service and the app's speaker-editor view model both carry one today); KI-3 is
+removed from the known-issues register at close-out.
 
 ### PT-P8-R8 · Functional · Introduce — Settings toggle and per-recording control in the app
 
@@ -181,10 +197,11 @@ recording queries reflect it.
 
 ### PT-P8-R10 · Technical · Introduce — Output-contract evolution
 
-`metadata.json` reports mic diarization additively: a field recording whether the pass diarized the
-mic stream, and per-speaker `is_microphone` loosened to mean "attributed to the microphone stream"
-(so several speakers may carry it; `You` keeps `speaker_id: null`, mic guests carry their `spk_`
-ids). Changes follow the sidecar's existing SemVer rule (additive fields are non-breaking). The
+`metadata.json` reports mic diarization: a field recording whether the pass diarized the mic
+stream, and per-speaker `is_microphone` loosened to mean "attributed to the microphone stream" (so
+several speakers may carry it; `You` keeps `speaker_id: null`, mic guests carry their `spk_` ids).
+The new field is additive, but loosening `is_microphone` from exactly-one to possibly-many is a
+semantic change to a public contract, so `schema_version` bumps and consumers can key on it. The
 `live.md` contract documents the provisional mic label family (PT-P8-R13). New owner-profile and
 owner-reassignment events join the events log in causal order and respect the non-content rule
 (PT-R84).
@@ -193,15 +210,23 @@ owner-reassignment events join the events log in causal order and respect the no
 mic-diarized refine and an owner reassignment appear in documented causal order with no
 content/path leakage.
 
-### PT-P8-R11 · Constraint · Introduce — Echo dedup precedes mic attribution
+### PT-P8-R11 · Functional · Supersede(PT-R19) — Microphone-echo dedup in both passes
 
-Enabling mic diarization must not weaken microphone-echo dedup (PT-R19) in either pass: mic
-utterances that duplicate system-stream speech are dropped before mic clusters are attributed, so
-hybrid meetings (remote participants on the system stream, several people in the room) do not
-attribute system-audio bleed-through to a mic speaker.
+Mic utterances that duplicate system-stream speech are dropped — the system stream is the
+authoritative source of remote speech — in the live pass (today's behavior, unchanged) and, newly,
+in the refine pass, where dedup runs before mic segments are attributed (mode on or off) and before
+any owner-profile learning (PT-P8-R3). This closes the gap where the refine pass re-admits
+bleed-through the live pass dropped — a gap mic diarization makes load-bearing: without it, hybrid
+meetings (remote participants on the system stream, several people in the room) would duplicate
+remote speech in `final.md` and attribute system-audio bleed-through to mic speakers and the owner
+profile.
 
-*Acceptance:* on a paired mic+system fixture with overlapping speech, dedup behavior with the mode
-on matches behavior with it off, in both passes.
+*Supersedes:* PT-R19, whose body states the inverse drop direction ("a system-side duplicate of
+microphone speech is dropped") from what the implementation does and this project needs; the
+superseding requirement states the direction correctly and extends coverage to the refine pass.
+*Acceptance:* on a paired mic+system fixture with overlapping speech, mic-side duplicates are
+absent from `final.md` with the mode off and with it on; mic clusters and owner-profile updates
+derive only from mic speech that survived dedup.
 
 ### PT-P8-R12 · Functional · Introduce — Sticky global mode toggle
 

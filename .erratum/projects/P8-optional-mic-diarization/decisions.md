@@ -1,6 +1,7 @@
 # PT-P8 · Optional Microphone-Channel Diarization — Decision Log
 
-The reasoning behind this project's choices, recorded as each was taken.
+The choices behind the opt-in mic-diarization mode — where the option lives, how `You` stays
+canonical via the owner voice profile, and what the mode covers — recorded as each was taken.
 
 ## Decisions
 
@@ -175,3 +176,28 @@ feature could make, and entirely avoidable for established users whose disk alre
 single-voice mic audio. Fresh installs with no recordings still degrade gracefully (provisional
 labels until refine plus "this is me" seeds the profile); an explicit enrollment flow remains
 unnecessary (PT-P8-D2).
+
+### PT-P8-D13 · Extend echo dedup to the refine pass; supersede PT-R19's inverted wording
+
+*2026-07-29*
+
+**Decision:** The refine pass gains mic-echo dedup ahead of mic attribution and owner-profile
+learning, applied whether or not the recording's mic-diarization stamp is on. PT-P8-R11 changes
+from a Constraint on existing behavior to a Functional Supersede(PT-R19) that states the drop
+direction correctly (mic-side duplicates dropped; system stream authoritative).
+
+**Because:** Design-record verification against the codebase found the PRD's premise wrong: echo
+dedup exists only in the live pass (`MicEchoDedup` in the streaming layer), while the refine pass
+appends every mic segment unconditionally — and the PRD simultaneously forbade dedup changes in its
+out-of-scope list while resting owner-profile purity on refine-side dedup ("speech that survived
+echo dedup"). The gap is load-bearing for this feature: without refine-side dedup, speaker-audio
+bleed-through in hybrid meetings duplicates remote speech in `final.md`, mints or contaminates mic
+guest clusters, and poisons passive profile learning. Alternatives rejected: constraining the dedup
+story to the live pass and defending the profile with the inlier gate alone (duplicated `final.md`
+lines and phantom guests would undermine the feature's core promise exactly in the hybrid case it
+exists for); introducing a separate refine-side requirement while leaving PT-R19 untouched (PT-R19's
+body states the inverse drop direction from what the code does — carrying a knowingly-wrong product
+requirement past the project that touches exactly this behavior contradicts how this product
+handles drift; supersession at close-out is the correct repair). Dedup applies mode-on or off
+because the duplication bug is real either way — a mode-off refine that re-admits echo the live
+pass dropped is wrong today, not just wrong for P8.
