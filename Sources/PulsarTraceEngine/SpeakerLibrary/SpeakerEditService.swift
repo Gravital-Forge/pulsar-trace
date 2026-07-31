@@ -12,27 +12,54 @@ public actor SpeakerEditService {
     /// What an edit rewrote — the recording ids whose `final.md` changed.
     public struct EditResult: Sendable, Equatable {
         public let rewrittenRecordingIds: [String]
-        public init(rewrittenRecordingIds: [String]) {
+        /// PT-R140 — for `demoteOwner`, the library speaker the owner was
+        /// demoted to (reconciled or freshly minted). `nil` for every other
+        /// edit, so existing constructions compile unchanged. E5-T4's
+        /// demote-undo consumes it to designate the resolved speaker back.
+        public let resolvedSpeakerId: String?
+        public init(
+            rewrittenRecordingIds: [String],
+            resolvedSpeakerId: String? = nil
+        ) {
             self.rewrittenRecordingIds = rewrittenRecordingIds
+            self.resolvedSpeakerId = resolvedSpeakerId
         }
     }
 
     public enum EditError: Error, CustomStringConvertible, Equatable {
         case invalidName(String)
         case speakerNotFound
-        case cannotDelistMicrophone
+        /// PT-R141 — the transcript label `You` is the reserved owner label
+        /// and cannot be assigned to a library speaker (closes KI-3).
+        case reservedName(String)
+        /// PT-R140 — an owner reassignment needs the recording's
+        /// `mic-diarization.json` (E3) for the cluster embedding; the recording
+        /// predates E3 or was never mic-diarized.
+        case micDiarizationUnavailable
+        /// PT-R140 "not me" — the recording has no `You` mic row to demote, or
+        /// no sidecar cluster matches the owner profile.
+        case noOwnerAttribution
 
         public var description: String {
             switch self {
             case .invalidName(let message): return message
             case .speakerNotFound: return "speaker not found"
-            case .cannotDelistMicrophone:
-                return "The microphone speaker cannot be delisted."
+            case .reservedName(let name):
+                return "\"\(name)\" is reserved for the owner and cannot be a speaker name."
+            case .micDiarizationUnavailable:
+                return "This recording has no mic-diarization data — owner "
+                    + "reassignment is unavailable (it predates mic diarization "
+                    + "or the option was off)."
+            case .noOwnerAttribution:
+                return "This recording has no owner (You) attribution to change."
             }
         }
     }
 
-    /// The display name of the microphone speaker, which can never be delisted.
+    /// The reserved owner label — the microphone owner's transcript label
+    /// (`You`). Never a library speaker name (PT-R141): `SpeakerLibrary`
+    /// rejects it on create/rename, so the mic speaker is never an editable
+    /// library row.
     public static let microphoneSpeakerName = "You"
 
     /// Serializes the whole mutate→rewrite→emit sequence across ALL service
@@ -45,15 +72,21 @@ public actor SpeakerEditService {
     let library: SpeakerLibrary
     let events: EventWriter?
     let rewriter: FinalMarkdownRewriter
+    /// PT-R140 — the owner voice profile, updated by owner reassignment
+    /// ("this is me" adds the cluster sample, "not me" subtracts it). `nil`
+    /// disables the profile side of a reassignment (the rewrite still runs).
+    let ownerProfile: OwnerVoiceProfileStore?
 
     public init(
         library: SpeakerLibrary,
         events: EventWriter?,
-        rewriter: FinalMarkdownRewriter = FinalMarkdownRewriter()
+        rewriter: FinalMarkdownRewriter = FinalMarkdownRewriter(),
+        ownerProfile: OwnerVoiceProfileStore? = nil
     ) {
         self.library = library
         self.events = events
         self.rewriter = rewriter
+        self.ownerProfile = ownerProfile
     }
 
     /// The shared speaker-name rule. Rejects an empty/whitespace name and the
@@ -78,6 +111,12 @@ public actor SpeakerEditService {
     ) async throws -> EditResult {
         try await Self.editLock.run {
             try Self.validateName(newName)
+            // PT-R141: reject the reserved owner label here so every caller
+            // (menubar, MCP, CLL) surfaces the same `reservedName` error; the
+            // library also rejects it as defense-in-depth (closes KI-3).
+            guard newName != Self.microphoneSpeakerName else {
+                throw EditError.reservedName(newName)
+            }
             guard let current = try await library.speaker(id: speakerId) else {
                 throw EditError.speakerNotFound
             }
@@ -156,8 +195,9 @@ public actor SpeakerEditService {
     }
 
     /// Drop a speaker's label from past `final.md` (solo → `Unrecognized`,
-    /// co-attributed → lose the token). The microphone speaker can never be
-    /// delisted — that is enforced here for every caller.
+    /// co-attributed → lose the token). The mic owner (`You`) is never a
+    /// library speaker (PT-R141 reserves the name), so it can never reach a
+    /// delist — no name-based guard is needed here (closes KI-3).
     // PT-R123
     public func delist(
         speakerId: String, outputFolderRoots: [URL]
@@ -165,9 +205,6 @@ public actor SpeakerEditService {
         try await Self.editLock.run {
             guard let speaker = try await library.speaker(id: speakerId) else {
                 throw EditError.speakerNotFound
-            }
-            guard speaker.name != Self.microphoneSpeakerName else {
-                throw EditError.cannotDelistMicrophone
             }
             let name = speaker.name
             _ = try await library.delist(speakerId: speakerId, suppressEvent: true)
@@ -267,6 +304,229 @@ public actor SpeakerEditService {
             try await library.undelete(speakerId: speakerId)
             return EditResult(rewrittenRecordingIds: [])
         }
+    }
+
+    // MARK: - Owner reassignment (PT-R140)
+
+    /// PT-R140 — "this is me": re-attribute one recording's mic-channel guest
+    /// to the owner (`You`).
+    ///
+    /// Relabels the speaker's lines to `You` in **that recording only** (scoped
+    /// rewrite), sets the metadata mic row to `label: You, speaker_id: null`,
+    /// updates the owner profile from the recording's `mic-diarization.json`
+    /// cluster embedding, and either deletes a solely-mis-minted library speaker
+    /// (its only appearance was this recording) or removes just this
+    /// appearance. Throws `micDiarizationUnavailable` when the sidecar is absent.
+    ///
+    /// Sequence mirrors `delist` (Hard Invariant #8): mutate the library →
+    /// rewrite `final.md`/`metadata.json` → emit the cause (`owner_designated`,
+    /// then `owner_profile_updated`) → emit the `final_md_rewritten` effects.
+    public func designateOwner(
+        recordingId: String, speakerId: String, outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        try await Self.editLock.run {
+            guard let speaker = try await library.speaker(id: speakerId) else {
+                throw EditError.speakerNotFound
+            }
+            let appearances = try await library.appearances(of: speakerId)
+            guard let appearance = appearances.first(
+                where: { $0.recordingId == recordingId })
+            else { throw EditError.speakerNotFound }
+
+            // Cluster embedding from the sidecar (E3); required.
+            guard let folder = Self.locateFolder(
+                      named: appearance.recordingFolderName, in: outputFolderRoots),
+                  let micDiarization = MicDiarizationSidecar.read(from: folder)
+            else { throw EditError.micDiarizationUnavailable }
+            // The cluster whose reconciled identity is this speaker: the
+            // speaker's centroid is the guest cluster's running mean, so the
+            // nearest sidecar embedding is that cluster.
+            let embedding = micDiarization.embeddings
+                .max { a, b in
+                    Centroid.cosineSimilarity(a.vector, speaker.centroid)
+                        < Centroid.cosineSimilarity(b.vector, speaker.centroid)
+                }?.vector
+
+            // 1. Library first (a solo mint is soft-deleted; a returning guest
+            //    just loses this appearance). Soft-delete keeps `speaker.name`
+            //    readable for the rewrite below and is recoverable, consistent
+            //    with every other edit.
+            if appearances.count == 1 {
+                try await library.delete(speakerId: speakerId)
+            } else {
+                try await library.removeAppearance(
+                    speakerId: speakerId, recordingId: recordingId)
+            }
+            // 2. Rewrite the one recording: guest label → You, mic row's
+            //    speaker_id nulled.
+            let results = try await rewriter.rewrite(
+                oldName: speaker.name,
+                newName: Self.microphoneSpeakerName,
+                appearances: [appearance],
+                outputFolderRoots: outputFolderRoots,
+                reason: .ownerDesignated,
+                setMicOwnerSpeakerId: (matchLabel: Self.microphoneSpeakerName, id: nil))
+            // 3. Owner profile gains the cluster sample.
+            if let embedding, let ownerProfile {
+                _ = try? await ownerProfile.update(
+                    embedding: embedding, modelRevision: micDiarization.modelRevision)
+            }
+            // 4. Cause event, then the profile-updated cause, then the effects.
+            _ = try? await events?.append(OwnerDesignatedEvent(
+                recordingId: recordingId, speakerId: speakerId,
+                appliedToRecordings: results.map(\.recordingId)))
+            if let ownerProfile {
+                _ = try? await events?.append(OwnerProfileUpdatedEvent(
+                    source: "owner_designated",
+                    sampleCount: await ownerProfile.snapshot()?.sampleCount ?? 0))
+            }
+            await emitRewriteEvents(results, reason: .ownerDesignated)
+            return EditResult(rewrittenRecordingIds: results.map(\.recordingId))
+        }
+    }
+
+    /// PT-R140 — "not me": demote one recording's owner (`You`) back to a
+    /// library speaker.
+    ///
+    /// Reads the recording's `mic-diarization.json`, identifies the `You`
+    /// cluster (the sidecar embedding best-matching the owner profile — the same
+    /// rule that attributed it, PT-R138), reconciles that embedding against the
+    /// library (a match ≥ threshold folds into that speaker; otherwise a fresh
+    /// `Unknown #N` is minted via the reconciler's shared numbering), relabels
+    /// the recording's `You` lines to the resolved name (scoped), stamps the mic
+    /// metadata row with the resolved `spk_` id (keeping `is_microphone: true`),
+    /// and subtracts the sample from the owner profile.
+    ///
+    /// Throws `micDiarizationUnavailable` without the sidecar; throws
+    /// `noOwnerAttribution` when the recording has no `You` mic row in metadata
+    /// or no sidecar cluster matches the profile.
+    public func demoteOwner(
+        recordingId: String, outputFolderRoots: [URL]
+    ) async throws -> EditResult {
+        try await Self.editLock.run {
+            guard let folder = Self.locateFolder(
+                      recordingId: recordingId, in: outputFolderRoots),
+                  let micDiarization = MicDiarizationSidecar.read(from: folder)
+            else { throw EditError.micDiarizationUnavailable }
+            // Metadata must carry a You mic row (PT-R140 inverse precondition).
+            guard let metadata = try? JSONDecoder().decode(
+                      RefinementMetadata.self,
+                      from: Data(contentsOf: folder.appendingPathComponent(
+                          RecordingFolder.FileName.metadata))),
+                  metadata.speakers.contains(where: {
+                      $0.isMicrophone && $0.label == Self.microphoneSpeakerName })
+            else { throw EditError.noOwnerAttribution }
+
+            // The You cluster = sidecar embedding best-matching the profile.
+            guard let ownerProfile,
+                  let ownerEmbedding = await Self.bestOwnerEmbedding(
+                      in: micDiarization, profile: ownerProfile)
+            else { throw EditError.noOwnerAttribution }
+
+            // Reconcile-or-mint the demoted speaker.
+            let resolved: Speaker
+            if let match = try await library.bestMatch(
+                   for: ownerEmbedding, modelRevision: micDiarization.modelRevision) {
+                resolved = try await library.recordAppearance(
+                    speakerId: match.speaker.id, centroid: ownerEmbedding,
+                    modelRevision: micDiarization.modelRevision,
+                    recordingId: recordingId,
+                    recordingFolderName: folder.lastPathComponent)
+            } else {
+                resolved = try await library.createSpeaker(
+                    name: try await SpeakerReconciler.nextUnknownName(in: library),
+                    centroid: ownerEmbedding,
+                    modelRevision: micDiarization.modelRevision,
+                    recordingId: recordingId,
+                    recordingFolderName: folder.lastPathComponent)
+            }
+
+            try await ownerProfile.remove(embedding: ownerEmbedding)
+
+            guard let appearance = try await library.appearances(of: resolved.id)
+                .first(where: { $0.recordingId == recordingId })
+            else { throw EditError.speakerNotFound }
+            let results = try await rewriter.rewrite(
+                oldName: Self.microphoneSpeakerName,
+                newName: resolved.name,
+                appearances: [appearance],
+                outputFolderRoots: outputFolderRoots,
+                reason: .ownerDemoted,
+                setMicOwnerSpeakerId: (matchLabel: resolved.name, id: resolved.id))
+            _ = try? await events?.append(OwnerDemotedEvent(
+                recordingId: recordingId, speakerId: resolved.id,
+                appliedToRecordings: results.map(\.recordingId)))
+            await emitRewriteEvents(results, reason: .ownerDemoted)
+            return EditResult(
+                rewrittenRecordingIds: results.map(\.recordingId),
+                resolvedSpeakerId: resolved.id)
+        }
+    }
+
+    /// The sidecar embedding that best matches the owner profile — the `You`
+    /// cluster (PT-R138, the same rule that attributed it). Returns `nil` when
+    /// no embedding matches at/above the owner threshold (or the profile is
+    /// empty / revision-mismatched), so `demoteOwner` fails safe with
+    /// `noOwnerAttribution` rather than demoting a guest.
+    static func bestOwnerEmbedding(
+        in micDiarization: DiarizationResult,
+        profile: OwnerVoiceProfileStore
+    ) async -> [Float]? {
+        var best: (vector: [Float], similarity: Double)?
+        for embedding in micDiarization.embeddings {
+            guard let similarity = await profile.match(
+                embedding: embedding.vector,
+                modelRevision: micDiarization.modelRevision)
+            else { return nil }   // empty or revision-mismatch: no owner match at all
+            if similarity >= OwnerVoiceProfileStore.matchThreshold,
+               similarity > (best?.similarity ?? -1) {
+                best = (embedding.vector, similarity)
+            }
+        }
+        return best?.vector
+    }
+
+    // MARK: - Folder resolution (shared with the rewriter's basename scan)
+
+    /// Find the first subdirectory of any `root` whose `lastPathComponent`
+    /// equals `name`. Mirrors `FinalMarkdownRewriter`'s basename scan so an
+    /// owner reassignment locates the same folder the rewrite will.
+    static func locateFolder(named name: String, in roots: [URL]) -> URL? {
+        let fm = FileManager.default
+        for root in roots {
+            let candidate = root.appendingPathComponent(name, isDirectory: true)
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: candidate.path, isDirectory: &isDir),
+               isDir.boolValue {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    /// Find the recording folder whose `metadata.json` carries `recordingId`,
+    /// scanning each root's immediate subdirectories. The metadata-based variant
+    /// of `locateFolder(named:in:)` — used by `demoteOwner`, which has only a
+    /// recording id (no library appearance to read a folder basename from).
+    static func locateFolder(recordingId: String, in roots: [URL]) -> URL? {
+        let fm = FileManager.default
+        for root in roots {
+            let entries = (try? fm.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+            for entry in entries {
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: entry.path, isDirectory: &isDir),
+                      isDir.boolValue else { continue }
+                let metadataURL = entry.appendingPathComponent(
+                    RecordingFolder.FileName.metadata)
+                guard let data = try? Data(contentsOf: metadataURL),
+                      let metadata = try? JSONDecoder().decode(
+                          RefinementMetadata.self, from: data)
+                else { continue }
+                if metadata.recordingId == recordingId { return entry }
+            }
+        }
+        return nil
     }
 
     /// Emit one `final_md_rewritten` event per rewritten recording, after the

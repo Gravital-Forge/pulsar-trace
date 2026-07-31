@@ -2,7 +2,8 @@ import Foundation
 import PulsarTraceEngine
 
 /// `pulsartrace refine PATH [--model large-v3-turbo|large-v3-whisperkit]
-/// [--language CODE]` — the v0.1 offline command (PT-R48). Drives
+/// [--language CODE] [--diarize-mic on|off]` — the v0.1 offline command
+/// (PT-R48). Drives
 /// `RefinementPipeline`: an audio file or recording folder →
 /// `final.md` + `metadata.json`.
 ///
@@ -16,6 +17,10 @@ enum RefineCommand {
         let inputPath: URL
         let modelName: String
         let language: String?
+        /// PT-R143 — the mic-diarization override, tri-state: `nil` = respect
+        /// the existing stamp (default); `true`/`false` = persist that stamp to
+        /// `options.json` before refining, so subsequent refines agree.
+        let diarizeMicOverride: Bool?
     }
 
     enum ArgError: Error, CustomStringConvertible {
@@ -25,6 +30,8 @@ enum RefineCommand {
         case missingLanguageValue
         case unexpectedArgument(String)
         case missingModelValue
+        case missingDiarizeMicValue
+        case invalidDiarizeMicValue(String)
 
         var description: String {
             switch self {
@@ -42,6 +49,10 @@ enum RefineCommand {
             case .missingModelValue:
                 return "refine: --model needs a value ("
                     + WhisperKitModelCatalog.all.map(\.name).joined(separator: "|") + ")"
+            case .missingDiarizeMicValue:
+                return "refine: --diarize-mic needs a value (on|off)"
+            case .invalidDiarizeMicValue(let v):
+                return "refine: --diarize-mic expects on|off, got '\(v)'"
             }
         }
     }
@@ -57,8 +68,28 @@ enum RefineCommand {
             options = try parse(args)
         } catch {
             err("\(error)")
-            err("usage: pulsartrace refine PATH [--model large-v3-turbo|large-v3-whisperkit] [--language CODE]")
+            err("usage: pulsartrace refine PATH [--model large-v3-turbo|large-v3-whisperkit] [--language CODE] [--diarize-mic on|off]")
             return 2
+        }
+
+        // PT-R143: the override persists — subsequent refines agree with this
+        // one. Written to the SAME directory the pipeline reads its
+        // `options.json` stamp from (`RecordingFolder.resolve(...).directory`),
+        // so the flag and the sidecar can never disagree. Omitted flag leaves
+        // any existing stamp untouched.
+        if let override = options.diarizeMicOverride {
+            do {
+                let directory = try RecordingFolder.resolve(
+                    inputPath: options.inputPath).directory
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true)
+                var recordingOptions = RecordingOptions.read(from: directory)
+                recordingOptions.diarizeMic = override
+                try recordingOptions.write(to: directory)
+            } catch {
+                err("refine: could not write the mic-diarization stamp — \(error)")
+                return 1
+            }
         }
 
         do {
@@ -94,6 +125,15 @@ enum RefineCommand {
         var path: String?
         var model = WhisperKitModelCatalog.defaultModel.name
         var language: String?
+        var diarizeMicOverride: Bool?
+
+        func parseDiarizeMic(_ raw: String) throws -> Bool {
+            switch raw.lowercased() {
+            case "on": return true
+            case "off": return false
+            default: throw ArgError.invalidDiarizeMicValue(raw)
+            }
+        }
 
         var i = 0
         while i < args.count {
@@ -112,6 +152,14 @@ enum RefineCommand {
                 i += 2
             case let a where a.hasPrefix("--language="):
                 language = String(a.dropFirst("--language=".count))
+                i += 1
+            case "--diarize-mic":
+                guard i + 1 < args.count else { throw ArgError.missingDiarizeMicValue }
+                diarizeMicOverride = try parseDiarizeMic(args[i + 1])
+                i += 2
+            case let a where a.hasPrefix("--diarize-mic="):
+                diarizeMicOverride = try parseDiarizeMic(
+                    String(a.dropFirst("--diarize-mic=".count)))
                 i += 1
             case let a where a.hasPrefix("-"):
                 throw ArgError.unexpectedArgument(a)
@@ -137,7 +185,8 @@ enum RefineCommand {
         return Options(
             inputPath: URL(fileURLWithPath: path),
             modelName: model,
-            language: language?.lowercased())
+            language: language?.lowercased(),
+            diarizeMicOverride: diarizeMicOverride)
     }
 
     // MARK: - Output helpers

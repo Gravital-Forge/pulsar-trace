@@ -132,7 +132,8 @@ final class LiveRunner: Sendable {
         micTranscriber: (any WindowTranscribing)?,
         systemSource: some AudioFrameSource,
         micSource: (any AudioFrameSource)?,
-        liveDiarizer: (any LiveDiarizing)?
+        liveDiarizer: (any LiveDiarizing)?,
+        micDiarizer: (any LiveDiarizing)? = nil
     ) async throws -> StreamingPipeline.Output {
 
         let sink = LiveSink(
@@ -205,6 +206,23 @@ final class LiveRunner: Sendable {
         /// Bounds outstanding live-diarization work to a single window in
         /// flight (Fix B) and lets the run hand off any in-flight task at exit.
         let diarGate = DiarGate()
+
+        // PT-R147 — the mic channel's own, fully independent diarization
+        // state: its own window buffer, gate, and accumulated-span state, with
+        // the same 10 s/5 s geometry as the system stream. No cross-stream
+        // stitching — the mic `LiveDiarizer` and this `micDiarState` share
+        // nothing with the system stream's. Present only when a mic diarizer is
+        // configured (mode on).
+        var micDiarBuffers = DiarBufferManager(
+            stepSamples: diarStep, windowSamples: diarWindow)
+        let micDiarState = DiarState()
+        let micDiarGate = DiarGate()
+        // The owner-profile snapshot for the mic `You` attribution (read once —
+        // no per-utterance actor hop), and the resolved library-name map for the
+        // mic diarizer's centroids (populated lazily inside the worker, mirroring
+        // the system stream's per-utterance library lookup but memoized per key).
+        let ownerCentroid = configuration.ownerProfile?.centroid
+        let ownerRevision = configuration.ownerProfile?.modelRevision
 
         var systemDone = false
         var micDone = !hasMic
@@ -351,7 +369,17 @@ final class LiveRunner: Sendable {
                     await workerResult.noteProgress()
                     for utt in utterances {
                         if isMic {
-                            await sink.appendMicUtterance(utt, realElapsed: elapsed)
+                            // PT-R147: with a mic diarizer configured the label
+                            // resolves owner → library → Guest; otherwise the
+                            // path is unchanged (LiveSink defaults to "You").
+                            let micLabel = micDiarizer == nil ? nil
+                                : await self.resolveMicLabel(
+                                    for: utt, diarState: micDiarState,
+                                    diarizer: micDiarizer,
+                                    ownerCentroid: ownerCentroid,
+                                    ownerRevision: ownerRevision)
+                            await sink.appendMicUtterance(
+                                utt, realElapsed: elapsed, label: micLabel)
                         } else {
                             let label = await self.resolveSystemLabel(
                                 for: utt, diarState: diarState, diarizer: liveDiarizer)
@@ -366,8 +394,15 @@ final class LiveRunner: Sendable {
                     await workerResult.noteProgress()
                     for utt in utterances {
                         if isMic {
+                            let micLabel = micDiarizer == nil ? nil
+                                : await self.resolveMicLabel(
+                                    for: utt, diarState: micDiarState,
+                                    diarizer: micDiarizer,
+                                    ownerCentroid: ownerCentroid,
+                                    ownerRevision: ownerRevision)
                             await sink.appendMicUtterance(
-                                utt, realElapsed: elapsed, isFlush: true)
+                                utt, realElapsed: elapsed, label: micLabel,
+                                isFlush: true)
                         } else {
                             let label = await self.resolveSystemLabel(
                                 for: utt, diarState: diarState, diarizer: liveDiarizer)
@@ -495,6 +530,27 @@ final class LiveRunner: Sendable {
                     await sink.appendGap(.resumed(micFrameNow - lastMicActivity))
                 }
                 lastMicActivity = micFrameNow
+                // PT-R147 — feed the mic diarizer on the same 10 s/5 s cadence
+                // as the system stream, off the run loop's critical path (Fix B):
+                // a detached task runs `diarizeWindow` then merges into the mic's
+                // own `micDiarState`. At most one window in flight per the mic
+                // gate. Fully independent of the system stream's diarization.
+                if let micDiarizer {
+                    if let req = micDiarBuffers.append(frame.samples) {
+                        phase.set("await-micDiarGate-tryAcquire")
+                        if await micDiarGate.tryAcquire() {
+                            let windowStart = samplesToDuration(req.startSampleIndex)
+                            Task.detached {
+                                let spans = await micDiarizer.diarizeWindow(
+                                    samples: req.samples, windowStart: windowStart)
+                                await micDiarState.merge(spans)
+                                await micDiarGate.release()
+                            }
+                        }
+                    }
+                } else {
+                    _ = micDiarBuffers.append(frame.samples)   // trim behavior unchanged
+                }
                 if let micQueue {
                     phase.set("enqueue-mic")
                     micQueue.enqueue(frame)
@@ -600,6 +656,9 @@ final class LiveRunner: Sendable {
         // bounded, so a wedged diarizer cannot make the run hang on exit.
         phase.set("await-diarGate-drain")
         await diarGate.drain(timeout: .seconds(2))
+        // PT-R147 — same bounded hand-off for the mic diarizer's in-flight
+        // window (a no-op when the mic gate was never acquired / mode off).
+        await micDiarGate.drain(timeout: .seconds(2))
         phase.set("await-readers-value")
         _ = await readers.value
         // Propagate the language the backend reported for the system stream so
@@ -718,6 +777,128 @@ final class LiveRunner: Sendable {
             }
         }
         return "\(key)?"
+    }
+
+    /// PT-R147 — the mic twin of `resolveSystemLabel`: owner → library →
+    /// Guest-family provisional. Same shape as the system path (dominant span
+    /// over the utterance range → label), but the mic channel resolves against
+    /// the owner voice profile first (a `You` attribution as strong as a library
+    /// match — no `?`), then the library (name with the PT-R16 `?` suffix, exactly
+    /// as `resolveSystemLabel` renders it), then the provisional Guest key with
+    /// the `?` suffix. No diarization coverage → the neutral `Speaker?` fallback,
+    /// identical to the system twin.
+    ///
+    /// The owner centroid + revision arrive as plain values (a snapshot loaded
+    /// once at pipeline start): the live pass never hops to
+    /// `OwnerVoiceProfileStore` per utterance and stays read-only against the
+    /// profile. The owner centroid is usable only when its model revision equals
+    /// the live diarizer's (`spanRevision`) — PT-R112/PT-R113 revision scoping;
+    /// a mismatch falls through to the provisional label rather than a false
+    /// `You`. `static` (like `resolveSystemLabel` is `internal`) so the four
+    /// behaviors are directly testable — see `LiveMicLabelTests`.
+    static func resolveMicLabel(
+        spans: [LiveSpeakerSpan],
+        utteranceStart: Duration, utteranceEnd: Duration,
+        ownerCentroid: [Float]?, ownerRevision: String?, spanRevision: String?,
+        libraryMatches: [String: String]
+    ) -> String {
+        // No coverage (§2b): neutral marker, and SKIP owner/library lookup — the
+        // same reason `resolveSystemLabel` skips PT-R18 on no coverage.
+        guard let dominant = dominantSpan(
+            spans: spans, start: utteranceStart, end: utteranceEnd)
+        else { return "\(Self.noCoverageLabel)?" }
+
+        // Owner first — a `You` attribution is as strong as a library match, so
+        // it carries no `?`. Revision-guarded: the profile centroid is only
+        // comparable in the live diarizer's own embedding space.
+        if let ownerCentroid, !ownerCentroid.isEmpty, !dominant.embedding.isEmpty,
+           let ownerRevision, let spanRevision, ownerRevision == spanRevision,
+           Centroid.cosineSimilarity(ownerCentroid, dominant.embedding)
+               >= OwnerVoiceProfileStore.matchThreshold {
+            return "You"
+        }
+        // Library name — apply the system twin's `?` rule verbatim.
+        if let name = libraryMatches[dominant.provisionalKey] {
+            return "\(name)?"
+        }
+        // Provisional Guest-family key with the PT-R16 `?` suffix.
+        return "\(dominant.provisionalKey)?"
+    }
+
+    /// PT-R147 — resolve one committed mic utterance's label by assembling the
+    /// inputs for the pure `resolveMicLabel`: the mic channel's accumulated
+    /// provisional spans (`micDiarState`), the read-only library-name map for the
+    /// dominant span's key (mirroring `resolveSystemLabel`'s per-utterance PT-R18
+    /// lookup — read-only, revision-scoped), the owner snapshot values, and the
+    /// mic diarizer's model revision (for owner/library revision scoping).
+    ///
+    /// The library and owner profile are both read-only here (invariant #5 +
+    /// PT-R147): `bestMatch` is a pure read, and the owner centroid arrives as
+    /// a snapshot value — no write, no per-utterance store hop.
+    func resolveMicLabel(
+        for utterance: CommittedUtterance,
+        diarState: DiarState,
+        diarizer: (any LiveDiarizing)?,
+        ownerCentroid: [Float]?,
+        ownerRevision: String?
+    ) async -> String {
+        let spans = await diarState.allSpans()
+        let spanRevision = await diarizer?.modelRevision()
+
+        // Only the dominant span's key needs a library lookup — resolve it (and
+        // only it) to keep the read-only PT-R18 lookup off the no-coverage path.
+        var libraryMatches: [String: String] = [:]
+        if let library, let diarizer, let spanRevision, !spanRevision.isEmpty,
+           let dominant = Self.dominantSpan(
+               spans: spans, start: utterance.start, end: utterance.end) {
+            let centroids = await diarizer.centroids()
+            if let centroid = centroids[dominant.provisionalKey], !centroid.isEmpty,
+               let match = try? await library.bestMatch(
+                   for: centroid,
+                   modelRevision: spanRevision,
+                   threshold: SpeakerLibrary.defaultMatchThreshold) {
+                libraryMatches[dominant.provisionalKey] = match.speaker.name
+            }
+        }
+
+        return Self.resolveMicLabel(
+            spans: spans,
+            utteranceStart: utterance.start, utteranceEnd: utterance.end,
+            ownerCentroid: ownerCentroid, ownerRevision: ownerRevision,
+            spanRevision: spanRevision,
+            libraryMatches: libraryMatches)
+    }
+
+    /// The `LiveSpeakerSpan` whose provisional key overlaps `[start, end]` the
+    /// most — a representative span (its embedding) for that key. Mirrors
+    /// `DiarState.dominantKey`'s overlap accumulation and tie-break (largest
+    /// total overlap; ties broken toward the lexicographically smaller key), then
+    /// returns a span carrying that key so the caller has its embedding. `nil`
+    /// when no span overlaps the range (no coverage).
+    static func dominantSpan(
+        spans: [LiveSpeakerSpan], start: Duration, end: Duration
+    ) -> LiveSpeakerSpan? {
+        let range = start.seconds...max(start.seconds, end.seconds)
+        var overlapByKey: [String: Double] = [:]
+        for span in spans {
+            let lo = max(span.start.seconds, range.lowerBound)
+            let hi = min(span.end.seconds, range.upperBound)
+            let overlap = max(0, hi - lo)
+            if overlap > 0 {
+                overlapByKey[span.provisionalKey, default: 0] += overlap
+            }
+        }
+        guard let winningKey = overlapByKey.max(by: {
+            $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key
+        })?.key else { return nil }
+        // The representative span for the winner: prefer one that actually
+        // overlaps the range (so its embedding reflects the utterance), falling
+        // back to any span with that key.
+        return spans.first {
+            $0.provisionalKey == winningKey
+                && min($0.end.seconds, range.upperBound)
+                   > max($0.start.seconds, range.lowerBound)
+        } ?? spans.first { $0.provisionalKey == winningKey }
     }
 
     // MARK: - Helpers

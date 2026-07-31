@@ -66,6 +66,13 @@ final class CaptureSocketServer: @unchecked Sendable {
     private var queue: [AudioStreamEvent] = []
     private var finished = false
 
+    /// Test observation hook — fired synchronously inside `enqueue` for every
+    /// event, in enqueue order, before the write thread ever sees it. Used by
+    /// `StallRecoveryTests` to assert the `.resumed` marker is enqueued ahead
+    /// of the first post-recovery frame (Hard Invariant #8 ordering) without
+    /// reading raw bytes off the socket. `nil` in production.
+    var onEnqueueForTest: (@Sendable (AudioStreamEvent) -> Void)?
+
     init(socketPath: URL) {
         self.socketPath = socketPath.path
     }
@@ -145,6 +152,7 @@ final class CaptureSocketServer: @unchecked Sendable {
     /// Hand an event to the write thread. Dropped silently once the stream has
     /// been finished (`stop()` called).
     func enqueue(_ event: AudioStreamEvent) {
+        onEnqueueForTest?(event)
         cond.lock()
         if !finished { queue.append(event) }
         cond.signal()

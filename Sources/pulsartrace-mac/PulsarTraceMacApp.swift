@@ -72,6 +72,14 @@ struct PulsarTraceMacApp: App {
                         settings: environment.settings,
                         recording: environment.recording)
                 }
+                // PT-R146 / PT-R137 (d): observe the sticky mic-diarization
+                // toggle here — the MenuBarExtra is always mounted, so the
+                // first-enable owner-profile backfill fires even when the
+                // Settings window was never opened. Kept in the composition
+                // root (via the environment) rather than the Settings view.
+                .onChange(of: environment.settings.diarizeMicEnabled) { _, newValue in
+                    environment.diarizeMicToggled(newValue)
+                }
         } label: {
             MenuBarLabel(
                 status: environment.recording.status,

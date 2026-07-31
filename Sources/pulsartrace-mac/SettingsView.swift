@@ -42,6 +42,19 @@ struct SettingsView: View {
                 .accessibilityIdentifier(A11yID.Settings.micPicker)
                 Toggle("Capture system audio", isOn: $settings.systemAudioEnabled)
                     .accessibilityIdentifier(A11yID.Settings.systemAudioToggle)
+                // PT-R146: sticky mic-diarization mode. Stamps NEW recordings
+                // only; the first enable backfills the owner voice profile from
+                // existing recordings (wired in the composition root's onChange).
+                Toggle("Diarize microphone (in-person meetings)",
+                       isOn: $settings.diarizeMicEnabled)
+                    .accessibilityIdentifier(A11yID.Settings.diarizeMicToggle)
+                Text("Splits your microphone into separate in-person speakers "
+                    + "on the next refine of each new recording — off means all "
+                    + "microphone speech is you. Changing this affects new "
+                    + "recordings only; use the per-recording checkbox to apply "
+                    + "it to an existing one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Transcription") {

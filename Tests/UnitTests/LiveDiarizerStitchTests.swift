@@ -46,4 +46,21 @@ struct LiveDiarizerStitchTests {
         let diarizer = LiveDiarizer(rawDiarizer: ScriptedRawDiarizer([], revision: "digest-xyz"))
         #expect(await diarizer.modelRevision() == "digest-xyz")
     }
+
+    @Test("a Guest-family diarizer mints Guest / Guest #2 keys (PT-R147)")
+    func guestFamilyKeys() async {
+        let window1 = DiarWindowResult(
+            spans: [.init(speaker: "S1", startMillis: 0, endMillis: 2000)],
+            embeddings: [.init(speaker: "S1", vector: emb(1.0))])
+        let window2 = DiarWindowResult(
+            spans: [.init(speaker: "S1", startMillis: 0, endMillis: 2000)],
+            embeddings: [.init(speaker: "S1", vector: emb(-1.0))])   // dissimilar → new key
+        let diarizer = LiveDiarizer(
+            rawDiarizer: ScriptedRawDiarizer([window1, window2]),
+            labelFamily: "Guest")
+        let first = await diarizer.diarizeWindow(samples: [], windowStart: .seconds(0))
+        let second = await diarizer.diarizeWindow(samples: [], windowStart: .seconds(5))
+        #expect(first[0].provisionalKey == "Guest")
+        #expect(second[0].provisionalKey == "Guest #2")
+    }
 }

@@ -75,6 +75,47 @@ struct SpeakerLibraryUnitTests {
         }
     }
 
+    // MARK: - Reserved owner label (PT-R141, closes KI-3)
+
+    @Test("the transcript label You is reserved — create and rename reject it (PT-R141)")
+    func youIsReserved() async throws {
+        let (library, dir) = try await makeLibrary()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await #expect(throws: (any Error).self) {
+            _ = try await library.createSpeaker(
+                name: "You", centroid: [Float](repeating: 0, count: 256),
+                modelRevision: "rev", recordingId: "rec_a", recordingFolderName: "a")
+        }
+        let speaker = try await library.createSpeaker(
+            name: "Unknown #1", centroid: [Float](repeating: 0, count: 256),
+            modelRevision: "rev", recordingId: "rec_a", recordingFolderName: "a")
+        await #expect(throws: (any Error).self) {
+            _ = try await library.rename(speakerId: speaker.id, to: "You")
+        }
+    }
+
+    // MARK: - Appearance removal (PT-R140 — designateOwner de-attribution)
+
+    @Test("removeAppearance deletes one appearance row and decrements the count")
+    func removeAppearanceDropsRow() async throws {
+        let (library, dir) = try await makeLibrary()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let speaker = try await library.createSpeaker(
+            name: "Unknown #1", centroid: syntheticEmbedding(axis: 1),
+            modelRevision: "rev", recordingId: "rec_a", recordingFolderName: "a")
+        _ = try await library.recordAppearance(
+            speakerId: speaker.id, centroid: syntheticEmbedding(axis: 1),
+            modelRevision: "rev", recordingId: "rec_b", recordingFolderName: "b")
+        #expect(try await library.appearances(of: speaker.id).count == 2)
+
+        try await library.removeAppearance(speakerId: speaker.id, recordingId: "rec_a")
+
+        let remaining = try await library.appearances(of: speaker.id)
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.recordingId == "rec_b")
+        #expect(try await library.speaker(id: speaker.id)?.appearanceCount == 1)
+    }
+
     // MARK: - Centroid math
 
     @Test("cosine similarity: identical vectors are 1, orthogonal are 0")

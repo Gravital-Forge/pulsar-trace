@@ -79,12 +79,18 @@ public struct RecordPlan: Sendable, Equatable {
     ///     spawn for such plans, and the engine reads the fixtures through its
     ///     realtime `--source fixture` source. `nil` (the default) is the
     ///     unchanged device-capture path.
+    ///   - diarizeMic: PT-R147 — the recording's mic-diarization stamp. When
+    ///     `true` the engine is launched with `--diarize-mic`, which turns on the
+    ///     second windowed diarizer over the mic stream (owner → library → Guest
+    ///     labels) instead of the flat `You`. The engine also honors the same
+    ///     stamp from `options.json`; the flag is the direct-launch path.
     public static func make(
         outputFolder: URL,
         paths: AppPaths,
         micDeviceID: String?,
         systemAudioEnabled: Bool,
         allowedLanguages: [String] = [],
+        diarizeMic: Bool = false,
         fixtures: Fixtures? = nil
     ) -> RecordPlan {
         let recordingId = RecordingFolder.recordingId(
@@ -140,6 +146,9 @@ public struct RecordPlan: Sendable, Equatable {
         if !allowedLanguages.isEmpty {
             engineArgs += ["--allowed-languages",
                            allowedLanguages.joined(separator: ",")]
+        }
+        if diarizeMic {
+            engineArgs.append("--diarize-mic")   // PT-R147
         }
 
         return RecordPlan(

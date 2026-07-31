@@ -253,12 +253,22 @@ public final class RecordingViewModel {
         }
         currentRecordingFolder = outputFolder
 
+        // PT-R136/PT-R146: stamp the recording at start from the sticky
+        // setting; the stamp — not the current toggle — governs every later
+        // refine. Written right after the folder exists so a refine can never
+        // see the folder without its sidecar. Best-effort: a write failure
+        // leaves the sidecar absent (reads as diarize off), never blocks record.
+        var recordingOptions = RecordingOptions.defaults
+        recordingOptions.diarizeMic = settings.diarizeMicEnabled
+        try? recordingOptions.write(to: outputFolder)
+
         let plan = RecordPlan.make(
             outputFolder: outputFolder,
             paths: paths,
             micDeviceID: settings.selectedMicDeviceID,
             systemAudioEnabled: settings.systemAudioEnabled,
             allowedLanguages: settings.allowedLanguages,
+            diarizeMic: settings.diarizeMicEnabled,
             fixtures: fixtures)
 
         let orchestrator = orchestratorFactory(plan, binaryURLResolver)

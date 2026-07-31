@@ -311,6 +311,28 @@ public final class RecordingsPaneModel {
         await scanner.refresh()
     }
 
+    /// PT-R142 — set the per-recording mic-diarization stamp via the
+    /// `options.json` sidecar, then rescan so the row/detail pick up the new
+    /// `diarizeMicStamp`. Mirrors `rename`'s write-then-refresh shape (a full
+    /// `scanner.refresh()` is the pane's only single-row refresh path). The
+    /// post-hoc apply/revert is: tick this, then Refine. Allowed on any
+    /// non-live recording; the engine never reads the sidecar mid-recording.
+    public func setDiarizeMic(recordingId: String, enabled: Bool) async {
+        guard let row = rows.first(where: { $0.id == recordingId }), !row.isLive
+        else { return }
+        do {
+            var options = RecordingOptions.read(from: row.entry.folderURL)
+            options.diarizeMic = enabled
+            try options.write(to: row.entry.folderURL)
+            lastActionError = nil
+        } catch {
+            lastActionError =
+                "Could not update the mic-diarization setting: \(error.localizedDescription)"
+            return
+        }
+        await scanner.refresh()
+    }
+
     /// Move a recording folder to the Trash (§4.1) — the Trash itself is the
     /// undo. Selection falls back per the auto-select rule.
     public func moveToTrash(recordingId: String) async {

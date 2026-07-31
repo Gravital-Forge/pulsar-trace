@@ -11,7 +11,7 @@ import PulsarTraceEngine
 /// was reconciled against the library, `nil` for `You` (the mic stream) and
 /// for system-stream speakers that were never reconciled (no library, or
 /// diarization skipped). `isMicrophone` flags the single "You" speaker — that
-/// stream is never diarized (PT-R17).
+/// stream is never diarized (PT-R135).
 public struct RecordingSpeaker: Identifiable, Sendable, Equatable, Hashable, Codable {
 
     /// Display label as it appears in `final.md` (e.g. `Steve`,
@@ -86,6 +86,11 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
     public let customTitle: String?
     /// The transcript language (`metadata.language`), `nil` when unrefined.
     public let language: String?
+    /// PT-R142 — the recording's mic-diarization stamp, decoded from the
+    /// `options.json` sidecar (PT-R136). Surfaced on the entry so the
+    /// recordings-pane checkbox renders without re-reading disk per frame.
+    /// Defaults off when the sidecar is absent or malformed.
+    public let diarizeMicStamp: Bool
 
     public init(
         id: String,
@@ -95,7 +100,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
         speakers: [RecordingSpeaker],
         isRefined: Bool,
         customTitle: String? = nil,
-        language: String? = nil
+        language: String? = nil,
+        diarizeMicStamp: Bool = false
     ) {
         self.id = id
         self.recordingStart = recordingStart
@@ -105,6 +111,7 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
         self.isRefined = isRefined
         self.customTitle = customTitle
         self.language = language
+        self.diarizeMicStamp = diarizeMicStamp
     }
 
     /// The display name shown in the list — the recording folder's basename.
@@ -204,7 +211,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
             },
             isRefined: isRefined,
             customTitle: RecordingTitleStore.read(folderURL: folderURL),
-            language: metadata.language)
+            language: metadata.language,
+            diarizeMicStamp: RecordingOptions.read(from: folderURL).diarizeMic)
     }
 
     /// Surface a recording folder that has **no** `metadata.json` — a
@@ -235,7 +243,8 @@ public struct RecordingEntry: Identifiable, Sendable, Equatable {
             durationSeconds: 0,
             speakers: [],
             isRefined: false,
-            customTitle: RecordingTitleStore.read(folderURL: folderURL))
+            customTitle: RecordingTitleStore.read(folderURL: folderURL),
+            diarizeMicStamp: RecordingOptions.read(from: folderURL).diarizeMic)
     }
 
     /// Parse a `yyyy-MM-dd-HHmmss` recording-folder basename into a `Date`.

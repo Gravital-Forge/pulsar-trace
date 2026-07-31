@@ -19,17 +19,6 @@ the evidence that it is pre-existing are documented in full in `CLAUDE.md`; that
 the detail. In practice verification uses the narrow per-area filters, and there is no
 single-command green run of the full suite.
 
-## KI-3 · Microphone speaker identified by display name
-
-**Status:** Accepted — deferred.
-
-The rule "the microphone speaker can never be delisted" is enforced by comparing the speaker's
-display name to the constant `"You"` (`SpeakerEditService.cannotDelistMicrophone`). Display names
-are mutable, so the guard keys on a value that can change: renaming the microphone speaker to a real
-name makes it delistable again, and naming a guest `"You"` makes that guest un-delistable. This is
-one ordinary rename away, not an exotic edge case. It manifests in the Speaker Edit Service (PT-C23)
-over the Speaker Library (PT-C5).
-
 ## KI-4 · Long output-folder names break the capture socket
 
 **Status:** Accepted — deferred.

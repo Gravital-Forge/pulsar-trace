@@ -84,12 +84,21 @@ public actor LiveDiarizer: LiveDiarizing {
 
     /// Test seam: a diarizer with no raw backend — `diarizeWindow` returns `[]`;
     /// `_seedForTesting` + `centroids()`/`modelRevision()` only.
-    init(testSeamLogger logger: Logger = Logger(label: LogSubsystem.engine)) {
+    init(
+        labelFamily: String = "Them",
+        testSeamLogger logger: Logger = Logger(label: LogSubsystem.engine)
+    ) {
         self.rawDiarizer = nil
+        self.labelFamily = labelFamily
         self.logger = logger
     }
 
     private let rawDiarizer: (any RawWindowDiarizing)?
+    /// PT-R147 — the provisional label family this instance mints keys in:
+    /// `"Them"` for the system stream (default, zero behavior change) and
+    /// `"Guest"` for a mic-channel instance. `provisionalKey(index:)` derives
+    /// `Them`, `Them #2`, … or `Guest`, `Guest #2`, … from it (PT-P8-D11).
+    private let labelFamily: String
     private let logger: Logger
     private var windowCounter = 0
 
@@ -104,9 +113,11 @@ public actor LiveDiarizer: LiveDiarizing {
 
     public init(
         rawDiarizer: any RawWindowDiarizing,
+        labelFamily: String = "Them",     // PT-R147: mic instances pass "Guest"
         logger: Logger = Logger(label: LogSubsystem.engine)
     ) {
         self.rawDiarizer = rawDiarizer
+        self.labelFamily = labelFamily
         self.logger = logger
     }
 
@@ -185,7 +196,7 @@ public actor LiveDiarizer: LiveDiarizing {
             return s.key
         }
         // A new voice.
-        let key = Self.provisionalKey(index: liveSpeakers.count)
+        let key = provisionalKey(index: liveSpeakers.count)
         liveSpeakers.append(LiveSpeaker(
             key: key, centroid: embedding, appearances: 1))
         return key
@@ -196,16 +207,19 @@ public actor LiveDiarizer: LiveDiarizing {
     private var fallbackByRaw: [String: String] = [:]
     private func fallbackKey(forRawLabel raw: String) -> String {
         if let existing = fallbackByRaw[raw] { return existing }
-        let key = Self.provisionalKey(index: liveSpeakers.count
+        let key = provisionalKey(index: liveSpeakers.count
             + fallbackByRaw.count)
         fallbackByRaw[raw] = key
         return key
     }
 
-    /// The Nth provisional speaker key: `Them`, `Them #2`, `Them #3`, …
-    /// (PT-R16 — the `?` suffix is added by `LiveRunner.resolveSystemLabel`).
-    public static func provisionalKey(index: Int) -> String {
-        index == 0 ? "Them" : "Them #\(index + 1)"
+    /// The Nth provisional speaker key in this instance's label family:
+    /// `Them`, `Them #2`, … for the system stream and `Guest`, `Guest #2`, …
+    /// for a mic-channel instance (PT-R147 / PT-P8-D11). The `?` suffix is
+    /// added downstream by `LiveRunner.resolveSystemLabel` / `resolveMicLabel`
+    /// (PT-R16).
+    func provisionalKey(index: Int) -> String {
+        index == 0 ? labelFamily : "\(labelFamily) #\(index + 1)"
     }
 
     /// The live-speaker centroids, for a read-only speaker-library lookup

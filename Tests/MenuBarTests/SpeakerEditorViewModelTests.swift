@@ -641,29 +641,32 @@ struct SpeakerEditorViewModelTests {
         #expect(!delistedLine.contains("rec_solo"))
     }
 
-    @Test("delist rejects the mic speaker (name 'You')")
-    func delistRejectsMicSpeaker() async throws {
+    // PT-R141 (closes KI-3): the mic speaker can no longer be a library
+    // speaker named "You" — the name is reserved (`createSpeaker`/`rename`
+    // reject it), so no delistable row is ever named "You". The old name-based
+    // mic-delist guard is removed; this test now asserts the reservation that
+    // made it dead — a rename to "You" surfaces the reserved-name error and the
+    // library name is unchanged (the reservation-based equivalent).
+    @Test("rename to the reserved 'You' label is rejected (PT-R141)")
+    func renameToReservedYouRejected() async throws {
         let root = MenuBarFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let library = try await SpeakerLibrary(
             databaseURL: root.appendingPathComponent("speakers.sqlite"))
-        // A library speaker literally named "You" — the mic identity. In
-        // production this shouldn't exist (the mic is never in the library);
-        // the guard is defense-in-depth.
-        let you = try await library.createSpeaker(
-            name: "You", centroid: centroid(0.5), modelRevision: "rev1",
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.5), modelRevision: "rev1",
             recordingId: "rec_x", recordingFolderName: "x")
 
         let vm = SpeakerEditorViewModel(
             library: library, settings: try settings(outputRoot: root))
         await vm.reload()
-        await vm.delist(speakerId: you.id)
+        await vm.rename(speakerId: steve.id, to: "You")
 
         #expect(vm.lastError != nil)
-        // The library row is untouched — still live, not delisted.
+        // The library name is unchanged.
         let live = try await library.liveSpeakers()
-        #expect(live.first(where: { $0.id == you.id })?.isDelisted == false)
+        #expect(live.first(where: { $0.id == steve.id })?.name == "Steve")
     }
 
     @Test("delist surfaces an undo toast whose action restores via undelist")

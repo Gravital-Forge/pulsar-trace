@@ -150,7 +150,7 @@ public struct WAVReader {
     /// chunk headers alone.
     ///
     /// Used by `Diarizer` to scale its subprocess timeout to recording length
-    /// — see `Diarizer.diarizeSystemStream`. Cheap because it reads only a
+    /// — see `Diarizer.diarizeStream`. Cheap because it reads only a
     /// small window of bytes regardless of file size (a 4 KB cap is plenty
     /// for the `fmt ` and `data` chunk headers in any normal WAV).
     public static func probeDurationSeconds(at url: URL) -> Double? {

@@ -17,7 +17,7 @@ project requirement), the epic that implemented it, and its current status.
 | PT-R54d | PT-P1-R3  | PT-P1-E2       | Superseded | —          | PT-R109       |
 | PT-R54e | PT-P1-R4  | PT-P1-E2       | Active     | —          | —             |
 | PT-R15a | PT-P1-R5  | PT-P1-E3       | Superseded | —          | PT-R111       |
-| PT-R17  | PT-P1-R5  | PT-P1-E3       | Active     | —          | —             |
+| PT-R17  | PT-P1-R5  | PT-P1-E3       | Superseded | —          | PT-R135       |
 | PT-R29  | PT-P1-R5  | PT-P1-E3       | Superseded | —          | PT-R112       |
 | PT-R20  | PT-P1-R6  | PT-P1-E4       | Active     | —          | —             |
 | PT-R21  | PT-P1-R6  | PT-P1-E4       | Active     | —          | —             |
@@ -68,7 +68,7 @@ project requirement), the epic that implemented it, and its current status.
 | PT-R16  | PT-P2-R2  | PT-P2-E1       | Active     | —          | —             |
 | PT-R18  | PT-P2-R2  | PT-P2-E1       | Active     | —          | —             |
 | PT-R32  | PT-P2-R2  | PT-P2-E1       | Active     | —          | —             |
-| PT-R19  | PT-P2-R3  | PT-P2-E1       | Active     | —          | —             |
+| PT-R19  | PT-P2-R3  | PT-P2-E1       | Superseded | —          | PT-R145       |
 | PT-R1   | PT-P2-R4  | PT-P2-E2       | Active     | —          | —             |
 | PT-R2   | PT-P2-R4  | PT-P2-E2       | Active     | —          | —             |
 | PT-R3   | PT-P2-R4  | PT-P2-E2       | Active     | —          | —             |
@@ -138,3 +138,16 @@ project requirement), the epic that implemented it, and its current status.
 | PT-R132 | PT-P7-R7  | PT-P7-E5       | Active     | —          | —             |
 | PT-R133 | PT-P7-R8  | PT-P7-E6       | Active     | —          | —             |
 | PT-R134 | PT-P7-R9  | PT-P7-E2       | Active     | —          | —             |
+| PT-R135 | PT-P8-R1  | PT-P8-E3       | Active     | PT-R17     | —             |
+| PT-R136 | PT-P8-R2  | PT-P8-E2       | Active     | —          | —             |
+| PT-R137 | PT-P8-R3  | PT-P8-E2       | Active     | —          | —             |
+| PT-R138 | PT-P8-R4  | PT-P8-E3       | Active     | —          | —             |
+| PT-R139 | PT-P8-R5  | PT-P8-E3       | Active     | —          | —             |
+| PT-R140 | PT-P8-R6  | PT-P8-E5       | Active     | —          | —             |
+| PT-R141 | PT-P8-R7  | PT-P8-E5       | Active     | —          | —             |
+| PT-R142 | PT-P8-R8  | PT-P8-E6       | Active     | —          | —             |
+| PT-R143 | PT-P8-R9  | PT-P8-E6       | Active     | —          | —             |
+| PT-R144 | PT-P8-R10 | PT-P8-E3       | Active     | —          | —             |
+| PT-R145 | PT-P8-R11 | PT-P8-E1       | Active     | PT-R19     | —             |
+| PT-R146 | PT-P8-R12 | PT-P8-E6       | Active     | —          | —             |
+| PT-R147 | PT-P8-R13 | PT-P8-E4       | Active     | —          | —             |

@@ -98,6 +98,13 @@ public final class MenuBarSettings {
         didSet { save() }
     }
 
+    /// PT-R146 — sticky mic-diarization mode; stamps NEW recordings only.
+    /// Default `false`. Flipping this never rewrites existing recordings'
+    /// `options.json`; it only changes what the next record-start stamps.
+    public var diarizeMicEnabled: Bool {
+        didSet { save() }
+    }
+
     /// Filesystem paths of previously-used output folders, so the recordings
     /// list can still surface recordings made before the folder was changed.
     public var previousFolderPaths: [String] {
@@ -172,6 +179,7 @@ public final class MenuBarSettings {
         static let legacyOutputFolderBookmark = "outputFolderBookmark"
         static let globalHotkey = "globalHotkey"
         static let systemAudioEnabled = "systemAudioEnabled"
+        static let diarizeMicEnabled = "diarizeMicEnabled"
         static let previousFolderPaths = "previousFolderPaths"
         /// Legacy bookmark-array key (pre-D30) — read once to migrate.
         static let legacyPreviousFolderBookmarks = "previousFolderBookmarks"
@@ -230,6 +238,10 @@ public final class MenuBarSettings {
         self.systemAudioEnabled = store.object(forKey: Key.systemAudioEnabled)
             as? Bool ?? true
 
+        // PT-R146: sticky mic-diarization mode, default off.
+        self.diarizeMicEnabled = store.object(forKey: Key.diarizeMicEnabled)
+            as? Bool ?? false
+
         // Same PT-P2-D12 migration for the previous-folders list.
         if let paths = store.array(
             forKey: Key.previousFolderPaths) as? [String] {
@@ -279,6 +291,7 @@ public final class MenuBarSettings {
         defaults.set(refineModelName, forKey: Key.refineModelName)
         defaults.set(outputFolderPath, forKey: Key.outputFolderPath)
         defaults.set(systemAudioEnabled, forKey: Key.systemAudioEnabled)
+        defaults.set(diarizeMicEnabled, forKey: Key.diarizeMicEnabled)
         defaults.set(previousFolderPaths, forKey: Key.previousFolderPaths)
         defaults.set(allowedLanguages, forKey: Key.allowedLanguages)
         defaults.set(mcpServerEnabled, forKey: Key.mcpServerEnabled)

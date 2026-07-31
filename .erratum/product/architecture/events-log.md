@@ -35,6 +35,10 @@ Each significant operation emits exactly one event (PT-R82):
 - **File operations** — the final-transcript write/rewrite events.
 - **Speaker library** — new/matched counts on refinement completion, and the speaker-mutation family
   (rename / merge / split / delete), each paired with a final-transcript-rewrite event.
+- **Owner voice profile** — `owner_profile_updated` when the owner voiceprint changes (passive
+  learning, a mic-diarized refine, first-enable backfill), and the microphone-owner reassignment pair
+  `owner_designated` / `owner_demoted`, each emitted before its paired final-transcript-rewrite event
+  in causal order. These carry only counts and ids — never embedding values (PT-R84, PT-R144).
 - **Recording lifecycle** — `recording_started`, `recording_paused`, `recording_resumed`,
   `recording_stopped` (pause/resume carry a reason, e.g. sleep, device change, or stall recovery).
 - **Live transcript** — `live_md_started`, and `live_md_replaced_by_final` at refinement.

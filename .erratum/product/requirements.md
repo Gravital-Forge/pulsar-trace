@@ -71,10 +71,6 @@ Stored audio is 16 kHz mono 16-bit PCM WAV.
 The system stream is diarized offline, in-process on the Apple Neural Engine, into speaker turns.
 *Acceptance:* a refine diarizes the system stream in-process with no diarization subprocess.
 
-### PT-R17 · Functional — Microphone is never diarized
-
-Microphone-origin speech is always attributed to the local speaker, never sent to diarization.
-
 ### PT-R112 · Technical — Unified speaker-embedding space
 
 Per-speaker voice embeddings are produced by one diarization model shared across the live pass, the
@@ -281,11 +277,6 @@ The live transcript is appended atomically, with no torn writes or partial UTF-8
 Live labels mark the microphone speaker as the local speaker and system speakers as a generic or
 named other party.
 
-### PT-R19 · Functional — Microphone-echo dedup
-
-A system-side duplicate of microphone speech is dropped by text similarity within a small time
-window.
-
 ### PT-R35 · Functional — Human- and tool-readable live transcript
 
 The live transcript is plain Markdown, readable by a person and by an automated tool.
@@ -328,6 +319,123 @@ still marked provisional.
 ### PT-R32 · Constraint — Library read-only during the live pass
 
 The speaker library is read-only during the live pass; only the post-pass writes it.
+
+## Microphone diarization
+
+### PT-R135 · Functional — Opt-in per-recording microphone diarization
+
+By default, microphone-origin speech is attributed to the local speaker `You` and is never sent to
+diarization. When a recording's mic-diarization stamp is on, its microphone stream is diarized in
+both passes exactly as the system stream is: the live pass windows-diarizes it and writes
+provisional per-speaker labels (PT-R147), and the refine pass diarizes it globally, reconciles the
+clusters, and finalizes labels. *Acceptance:* a recording made and refined with the mode off is
+byte-equivalent (modulo timestamps, and modulo the refine-side echo dedup of PT-R145) to the
+single-`You` output; with the mode on, both passes attribute mic speech per cluster.
+
+### PT-R136 · Functional — Per-recording options sidecar
+
+The mic-diarization state is a per-recording input persisted as an `options.json` sidecar in the
+recording folder: stamped at record start from the global toggle (PT-R146), read by the live engine
+at start and by every refine pass, and editable afterward through the app, CLI, and MCP. Refines
+follow the recording's own stamp, never the ambient global toggle, and toggling the stamp and
+re-refining converges the recording's outputs to it — disabling it restores the single-`You`
+transcript from the persisted WAVs. A missing or malformed sidecar means mic diarization off and
+never fails a pass; `metadata.json` remains a pure refinement output.
+
+### PT-R137 · Technical — Owner voice profile
+
+The engine maintains a persistent owner voice profile: a centroid in the unified speaker-embedding
+space (PT-R112), pinned to the diarization model revision with the same archive-and-reset migration
+as the speaker library (PT-R113), stored beside the library but never itself a library speaker (it
+can never be listed, renamed, merged, delisted, or matched by the reconciler). It updates by running
+mean from passive learning over the mic speech of non-mic-diarized recordings (inlier-gated), from a
+mic-diarized refine's `You` cluster, from explicit owner designation (PT-R140), and from a one-shot
+first-enable backfill. With no profile present, passes proceed and only automatic `You` attribution
+is unavailable; the live pass reads it read-only.
+
+### PT-R138 · Functional — Fail-safe `You` attribution among mic clusters
+
+In a mic-diarized pass, the mic cluster whose embedding best matches the owner profile at or above
+the owner-match threshold — pinned by a calibration test like the library match threshold (PT-R112)
+— is labeled `You`, and at most one cluster is. With no profile, or no cluster over the threshold,
+no cluster is auto-labeled `You`: all take the guest path (PT-R139) and the user may designate the
+owner explicitly (PT-R140). `You` is never assigned by guesswork.
+
+### PT-R139 · Functional — Mic guests are ordinary library speakers
+
+Non-owner microphone clusters reconcile against the speaker library exactly as system-stream
+clusters do (PT-R22, PT-R23): matched speakers take their library names and refine their centroids,
+unmatched clusters mint placeholders. Mic-channel speakers get the full speaker-edit surface
+(PT-R105) and are recognized across meetings and across channels — the same person reconciles to one
+library speaker whether heard on the microphone or the system stream.
+
+### PT-R140 · Functional — Explicit owner reassignment
+
+The speaker editor can designate, per recording, a mic-channel speaker as the owner ("this is me") —
+re-attributing that recording's lines to `You`, updating the owner profile from that cluster, and
+removing a library speaker minted solely from the misattribution — and the inverse ("not me") demotes
+a recording's `You` mic attribution to an ordinary library speaker. Both drive the retroactive
+`final.md` rewrite (PT-R90) and emit paired cause + `final_md_rewritten` events in causal order.
+
+### PT-R141 · Functional — Structural owner identity
+
+The owner/microphone speaker is identified by a structural marker, never by comparing a mutable
+display name to `You`. The label `You` is reserved — the reconciler and the speaker-edit surface
+never let a library speaker carry it — and the microphone-delist guard keys on the structural marker.
+*Acceptance:* renaming the microphone speaker cannot make it delistable, and a guest named `You` is
+impossible.
+
+### PT-R142 · Functional — Settings toggle and per-recording control in the app
+
+The Settings pane carries the sticky mic-diarization toggle (PT-R146); the recordings detail view
+shows the recording's stamp as an editable control alongside Refine, so flipping it and re-refining
+applies — or reverts — mic diarization after the fact. During a stamp-on recording the live
+transcript window shows the provisional mic labels (PT-R147), and mic-channel guests carry the same
+pills and editor affordances as system speakers.
+
+### PT-R143 · Functional — CLI and MCP mic-diarization surfaces
+
+`pulsartrace record` and `pulsartrace refine` accept an explicit mic-diarization override that
+persists to the recording's sidecar; the MCP surface exposes the same capability on its record and
+refine tools and reports the recording's mic-diarization state — the pending stamp and whether the
+current `final.md` reflects it — in its metadata responses.
+
+### PT-R144 · Technical — Microphone diarization in the output contracts
+
+`metadata.json` reports whether the pass diarized the microphone stream and loosens per-speaker
+`is_microphone` to mean "attributed to the microphone stream" — several speakers may carry it, `You`
+keeps `speaker_id: null`, and mic guests carry their `spk_` ids. That semantic loosening bumps the
+metadata schema version, while the added field is additive so pre-existing consumers parse post-mode
+files unchanged. The `live.md` contract documents the provisional mic label family (PT-R147), and
+owner-profile and owner-reassignment events join the events log in causal order under the content
+rule (PT-R84).
+
+### PT-R145 · Functional — Microphone-echo dedup in both passes
+
+Microphone utterances that duplicate system-stream speech are dropped — the system stream is the
+authoritative source of remote speech — in the live pass and, newly, in the refine pass, where dedup
+runs before mic segments are attributed (mode on or off) and before any owner-profile learning
+(PT-R137). *Acceptance:* on a paired mic+system fixture with overlapping speech, mic-side duplicates
+are absent from `final.md` with the mode off and with it on; mic clusters and owner-profile updates
+derive only from mic speech that survived dedup.
+
+### PT-R146 · Functional — Sticky global mic-diarization toggle
+
+A persisted, default-off Settings toggle governs new recordings: its value at record start is stamped
+onto the recording (PT-R136), and it never retroactively affects existing recordings — their stamps
+change only through the per-recording surfaces (PT-R142, PT-R143). First enabling it triggers the
+owner-profile backfill (PT-R137).
+
+### PT-R147 · Functional — Live-pass microphone diarization
+
+With a recording's stamp on, the live pass runs windowed diarization over the microphone stream
+mirroring the system stream: the cluster matching the owner profile (read-only) is labeled `You`,
+clusters matching library speakers (read-only) surface their names with the provisional `?` suffix,
+and remaining clusters take a provisional `Guest` family distinct from the system stream's `Them`
+family so hybrid transcripts read unambiguously. The live pass stays read-only against the library
+and the owner profile, and `live.md` remains append-only. *Acceptance:* on a two-speaker mic fixture
+with a seeded owner profile, `live.md` carries `You` and a `Guest`-family label; with the stamp off,
+`live.md` is unchanged from today.
 
 ## Capture
 

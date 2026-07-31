@@ -237,20 +237,42 @@ struct SpeakerEditServiceTests {
         #expect(log.range(of: "speaker_delisted")!.lowerBound < log.range(of: "final_md_rewritten")!.lowerBound)
     }
 
-    @Test("delist refuses the microphone speaker and leaves the library unchanged")
-    func delistRejectsMicrophone() async throws {
+    // PT-R141 (closes KI-3): the mic speaker can no longer be a library
+    // speaker named "You" — the name is reserved, so `createSpeaker(name: "You")`
+    // throws before a delist could ever reach it. The old
+    // `cannotDelistMicrophone` guard is dead code and removed; this test now
+    // asserts the reservation that made it dead (the reservation-based
+    // equivalent of the deleted mic-delist guard).
+    @Test("the reserved You label cannot be created as a library speaker (PT-R141)")
+    func reservedYouCannotBeCreated() async throws {
         let root = tempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         let library = try await SpeakerLibrary(databaseURL: root.appendingPathComponent("speakers.sqlite"))
-        let you = try await library.createSpeaker(
-            name: "You", centroid: centroid(0.5), modelRevision: "rev1",
+
+        await #expect(throws: (any Error).self) {
+            _ = try await library.createSpeaker(
+                name: "You", centroid: centroid(0.5), modelRevision: "rev1",
+                recordingId: "rec_x", recordingFolderName: "x")
+        }
+        #expect(try await library.liveSpeakers().isEmpty)
+    }
+
+    // MARK: - T1 (PT-P8): reserved owner label
+
+    @Test("rename to You surfaces EditError.reservedName (PT-R141, closes KI-3)")
+    func renameToYouRejected() async throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = try await SpeakerLibrary(
+            databaseURL: root.appendingPathComponent("speakers.sqlite"))
+        let steve = try await library.createSpeaker(
+            name: "Steve", centroid: centroid(0.1), modelRevision: "rev1",
             recordingId: "rec_x", recordingFolderName: "x")
         let service = SpeakerEditService(library: library, events: nil)
-
-        await #expect(throws: SpeakerEditService.EditError.cannotDelistMicrophone) {
-            _ = try await service.delist(speakerId: you.id, outputFolderRoots: [root])
+        await #expect(throws: SpeakerEditService.EditError.reservedName("You")) {
+            _ = try await service.rename(
+                speakerId: steve.id, to: "You", outputFolderRoots: [root])
         }
-        #expect(try await library.liveSpeakers().first { $0.id == you.id }?.isDelisted == false)
     }
 
     @Test("undelist restores the label, emitting speaker_undelisted first")

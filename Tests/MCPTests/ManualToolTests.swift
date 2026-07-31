@@ -12,6 +12,9 @@ struct ManualToolTests {
         #expect(text.contains("Speaker") || text.contains("speaker"))
         #expect(text.contains("rename_speaker"))
         #expect(text.contains("request_refine"))
+        // PT-R143/PT-R144: the mic-diarization mode paragraph.
+        #expect(text.contains("diarize_mic"))
+        #expect(text.contains("mic_diarized"))
 
         let forbidden = ["Claude", "Codex", "OpenAI", "Anthropic", "ChatGPT", "Cursor", "Cowork"]
         for name in forbidden { #expect(!text.contains(name), "manual must not name \(name)") }

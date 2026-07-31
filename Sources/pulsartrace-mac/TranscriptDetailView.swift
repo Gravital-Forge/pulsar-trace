@@ -10,8 +10,17 @@ struct TranscriptDetailView: View {
     let queueVM: RefinementJobQueueViewModel
     let settings: MenuBarSettings
 
+    /// Shared app environment — the single speaker library + events writer the
+    /// owner-reassignment view model is built over (PT-R140). Optional so the
+    /// previews/tests that construct this view without an environment still
+    /// render (the owner controls just stay hidden).
+    @Environment(AppEnvironment.self) private var environment: AppEnvironment?
+
     @State private var autoScroll = AutoScrollController()
     @State private var find = TranscriptFindActivator()
+    /// The owner-reassignment view model (PT-R140), built lazily from the
+    /// shared environment when a mic-diarized recording is shown.
+    @State private var ownerVM: SpeakerEditorViewModel?
 
     var body: some View {
         if let row = detailModel.shown {
@@ -78,8 +87,100 @@ struct TranscriptDetailView: View {
             if !row.entry.speakers.isEmpty {
                 SpeakerPillsView(speakers: row.entry.speakers)
             }
+            diarizeMicControl(row)
+            ownerReassignmentControls(row)
         }
         .padding(12)
+        // Build the owner-reassignment VM once the environment is available
+        // (PT-R140). Built once, shared across recordings — the VM is
+        // recording-agnostic (recording ids are passed per action, and the
+        // sidecar gate reads the shown folder on each render).
+        .task(id: detailModel.shown?.id) { await buildOwnerVM() }
+    }
+
+    // MARK: Per-recording mic-diarization stamp (PT-R142)
+
+    /// The per-recording "Diarize microphone" checkbox. Reflects the recording's
+    /// `options.json` stamp (`diarizeMicStamp`); toggling writes the sidecar and
+    /// rescans so the row/detail pick up the change. The post-hoc flow is
+    /// checkbox → Refine (the Refine affordance is unchanged). Disabled for a
+    /// live recording — the engine never re-reads the sidecar mid-recording.
+    @ViewBuilder
+    private func diarizeMicControl(_ row: RecordingRow) -> some View {
+        Toggle("Diarize microphone", isOn: Binding(
+            get: { row.entry.diarizeMicStamp },
+            set: { newValue in
+                // Mirror the rename flow's write-then-refresh, owned by the
+                // pane model (which holds the scanner). Without an environment
+                // (previews) there is nothing to refresh; do nothing.
+                guard let environment else { return }
+                Task {
+                    await environment.paneModel.setDiarizeMic(
+                        recordingId: row.entry.id, enabled: newValue)
+                }
+            }))
+            .toggleStyle(.checkbox)
+            .disabled(row.isLive)
+            .font(.caption)
+            .accessibilityIdentifier(A11yID.Recordings.diarizeMicCheckbox)
+            .help("Applies on the next refine. Tick, then click Refine, to "
+                + "split in-person speakers on your microphone — untick and "
+                + "refine to undo.")
+    }
+
+    // MARK: Owner reassignment ("This is me" / "Not me", PT-R140)
+
+    /// The owner-reassignment affordances, shown only for a mic-diarized
+    /// recording (its `mic-diarization.json` exists): "Not me" on the `You` mic
+    /// row, "This is me" on each mic-channel guest row (`isMicrophone` +
+    /// `speakerId != nil`). Earlier recordings — no sidecar — show nothing.
+    @ViewBuilder
+    private func ownerReassignmentControls(_ row: RecordingRow) -> some View {
+        if let ownerVM, ownerVM.canReassignOwner(folderURL: row.entry.folderURL) {
+            let micGuests = row.entry.speakers.filter {
+                $0.isMicrophone && $0.speakerId != nil
+            }
+            let hasOwner = row.entry.speakers.contains {
+                $0.isMicrophone && $0.label == SpeakerEditService.microphoneSpeakerName
+            }
+            if hasOwner || !micGuests.isEmpty {
+                HStack(spacing: 8) {
+                    if hasOwner {
+                        Button("Not me") {
+                            Task { await ownerVM.demoteOwner(recordingId: row.entry.id) }
+                        }
+                        .accessibilityIdentifier(A11yID.SpeakerEditor.notMe)
+                        .help("This mic speaker isn't you — demote it to a "
+                            + "regular speaker.")
+                    }
+                    ForEach(micGuests) { guest in
+                        Button("This is me") {
+                            guard let speakerId = guest.speakerId else { return }
+                            Task {
+                                await ownerVM.designateOwner(
+                                    recordingId: row.entry.id, speakerId: speakerId)
+                            }
+                        }
+                        .accessibilityIdentifier(A11yID.SpeakerEditor.thisIsMe)
+                        .help("Attribute “\(guest.label)” on the mic channel to you.")
+                    }
+                }
+                .font(.caption)
+                .disabled(ownerVM.isRewriting)
+            }
+        }
+    }
+
+    /// Build the owner-reassignment VM from the shared environment (the single
+    /// speaker-library writer + events + owner profile). No-op without an
+    /// environment (previews) or before the library opens.
+    private func buildOwnerVM() async {
+        guard ownerVM == nil, let environment,
+              let library = await environment.sharedSpeakerLibrary()
+        else { return }
+        ownerVM = await SpeakerEditorViewModel.using(
+            library: library, events: environment.events, settings: settings,
+            ownerProfile: environment.ownerProfileStore())
     }
 
     private func liveStartedAt(_ row: RecordingRow) -> Date {

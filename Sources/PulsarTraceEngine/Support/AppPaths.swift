@@ -61,6 +61,11 @@ public struct AppPaths: Sendable {
         applicationSupport.appendingPathComponent("speakers.sqlite", isDirectory: false)
     }
 
+    /// PT-R137 — owner voice profile sidecar (beside the library, never in it).
+    public var ownerProfileURL: URL {
+        applicationSupport.appendingPathComponent("owner-profile.json", isDirectory: false)
+    }
+
     /// The owner-only file holding the MCP server's bearer token (PT-R116).
     public var mcpTokenURL: URL {
         applicationSupport.appendingPathComponent("mcp-token", isDirectory: false)

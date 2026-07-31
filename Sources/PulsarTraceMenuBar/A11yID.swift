@@ -47,6 +47,8 @@ public enum A11yID {
         public static func row(_ folderName: String) -> String {
             "pt.recordings.row.\(folderName)"
         }
+        /// PT-R142 — the detail pane's per-recording mic-diarization checkbox.
+        public static let diarizeMicCheckbox = "pt.recordings.detail.diarizeMicCheckbox"
     }
 
     /// Speakers pane (`SpeakerEditorView`).
@@ -74,6 +76,16 @@ public enum A11yID {
         public static let undoButton = "pt.speakers.undoButton"
     }
 
+    /// Speaker editor owner-reassignment actions (PT-R140). Kept under a
+    /// dedicated `speakerEditor` surface per the task's convention
+    /// (`pt.speakerEditor.thisIsMe` / `pt.speakerEditor.notMe`).
+    public enum SpeakerEditor {
+        /// "This is me" — designates a mic-channel guest as the owner.
+        public static let thisIsMe = "pt.speakerEditor.thisIsMe"
+        /// "Not me" — demotes the owner (`You`) back to a library speaker.
+        public static let notMe = "pt.speakerEditor.notMe"
+    }
+
     /// Settings pane (`SettingsView`).
     public enum Settings {
         public static let micPicker = "pt.settings.micPicker"
@@ -81,6 +93,8 @@ public enum A11yID {
         public static let outputFolderField = "pt.settings.outputFolderField"
         public static let chooseFolderButton = "pt.settings.chooseFolderButton"
         public static let systemAudioToggle = "pt.settings.systemAudioToggle"
+        /// PT-R146 — the sticky mic-diarization mode toggle.
+        public static let diarizeMicToggle = "pt.settings.diarizeMicToggle"
         public static let hotkeyRecorder = "pt.settings.hotkeyRecorder"
         public static let languageSection = "pt.settings.languageSection"
         public static let mcpToggle = "pt.settings.mcpToggle"

@@ -61,6 +61,18 @@ struct MenuBarSettingsTests {
         #expect(reloaded.mcpServerPort == 9001)
     }
 
+    @Test("diarizeMicEnabled defaults false and persists (PT-R146)")
+    func diarizeMicPersists() {
+        let (defaults, suiteName) = tempSuite()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = MenuBarSettings(defaults: defaults)
+        #expect(settings.diarizeMicEnabled == false)
+        settings.diarizeMicEnabled = true
+        let reloaded = MenuBarSettings(defaults: defaults)
+        #expect(reloaded.diarizeMicEnabled == true)
+    }
+
     @Test("a fresh suite yields the documented defaults")
     func defaults() {
         let (defaults, suiteName) = tempSuite()
@@ -69,6 +81,7 @@ struct MenuBarSettingsTests {
         let settings = MenuBarSettings(defaults: defaults)
         #expect(settings.refineModelName == MenuBarSettings.defaultRefineModelName)
         #expect(settings.systemAudioEnabled == true)
+        #expect(settings.diarizeMicEnabled == false)
         #expect(settings.selectedMicDeviceID == nil)
         #expect(settings.outputFolderPath == nil)
         // No *stored* path, but `outputFolderURL` falls back to the default

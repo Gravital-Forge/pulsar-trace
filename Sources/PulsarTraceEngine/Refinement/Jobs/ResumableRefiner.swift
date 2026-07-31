@@ -35,6 +35,10 @@ public actor ResumableRefiner {
     /// (PT-R22, PT-R23). `nil` keeps the raw `Speaker_N` labels — the queue's
     /// `makeStandard` opens a real library and passes it in for production.
     private let library: SpeakerLibrary?
+    /// PT-R137 (a) — passive owner-profile learning store. `nil` disables
+    /// learning; the production queue passes a store rooted at
+    /// `AppPaths.standard.ownerProfileURL`.
+    private let ownerProfile: OwnerVoiceProfileStore?
     /// Decode tunables threaded into every region decode (`allowedLanguages`
     /// drives the language policy; a forced `language` pins it).
     private let options: TranscriptionOptions
@@ -48,6 +52,7 @@ public actor ResumableRefiner {
         pauseGate: PauseGate,
         events: EventWriter?,
         library: SpeakerLibrary? = nil,
+        ownerProfile: OwnerVoiceProfileStore? = nil,
         options: TranscriptionOptions = .init(),
         onStageUpdate: StageReporter? = nil,
         logger: Logger = Logger(label: LogSubsystem.engine)
@@ -58,6 +63,7 @@ public actor ResumableRefiner {
         self.pauseGate = pauseGate
         self.events = events
         self.library = library
+        self.ownerProfile = ownerProfile
         self.options = options
         self.reportState = onStageUpdate
         self.logger = logger
@@ -88,6 +94,21 @@ public actor ResumableRefiner {
             try await advance(&progress, to: .diarizing, folder: folder)
             let diarization = try await runDiarization(folder: folder, progress: &progress)
 
+            // PT-R135: mic diarization — per-recording opt-in via options.json.
+            // Runs as its own checkpointed stage; the result is persisted to
+            // `mic-diarization.json` and threaded into the merge (T2/T3).
+            var micDiarization: DiarizationResult?
+            let recordingOptions = RecordingOptions.read(from: job.folderURL)
+            if recordingOptions.diarizeMic, let micStream = folder.micStream {
+                try await advance(&progress, to: .diarizingMic, folder: folder)
+                micDiarization = try await runMicDiarization(
+                    micWav: micStream.url, folder: folder, progress: &progress)
+                if let micDiarization {
+                    try? MicDiarizationSidecar.write(
+                        micDiarization, to: folder.directory)
+                }
+            }
+
             try await advance(&progress, to: .transcribingMic, folder: folder)
             if folder.micStream != nil {
                 try await transcribeMicStream(folder: folder, progress: &progress)
@@ -97,7 +118,9 @@ public actor ResumableRefiner {
             try await advance(&progress, to: .writingFinal, folder: folder)
             try await advance(&progress, to: .writingMetadata, folder: folder)
             let assembled = try await mergeAndWrite(
-                folder: folder, progress: progress, diarization: diarization, job: job)
+                folder: folder, progress: progress, diarization: diarization,
+                micDiarization: micDiarization, recordingOptions: recordingOptions,
+                job: job)
 
             let wallSeconds = Date().timeIntervalSince(startedAt)
             _ = try? await events?.append(RefinementCompletedEvent(
@@ -323,6 +346,25 @@ public actor ResumableRefiner {
         }
     }
 
+    /// PT-R135 — diarize the mic WAV (stamp on). Same D-Q7 cancel-retry
+    /// posture as `runDiarization`: a pause cancels the in-flight run and the
+    /// loop re-runs when the gate reopens; other errors propagate.
+    private func runMicDiarization(
+        micWav: URL,
+        folder: RecordingFolder,
+        progress: inout RefinementProgress
+    ) async throws -> DiarizationResult? {
+        while true {
+            await pauseGate.waitOpen()
+            do {
+                return try await diarize(micWav)
+            } catch let e as Diarizer.DiarizeError {
+                if case .cancelled = e { continue }
+                throw e
+            }
+        }
+    }
+
     // MARK: - Final assembly
 
     @discardableResult
@@ -330,6 +372,8 @@ public actor ResumableRefiner {
         folder: RecordingFolder,
         progress: RefinementProgress,
         diarization: DiarizationResult?,
+        micDiarization: DiarizationResult?,
+        recordingOptions: RecordingOptions,
         job: RefinementJob
     ) async throws -> TranscriptAssembly.AssembleResult {
         let system = progress.systemSegments.map {
@@ -346,11 +390,43 @@ public actor ResumableRefiner {
         }
         let folderName = folder.directory.lastPathComponent
         let recordingStart = RecordingFolderTimestamp.parse(folderName) ?? Date()
+
+        // PT-R137 (a): passive owner-profile learning — ordinary recordings
+        // only. `recordingOptions` is read once per pass in `run` and passed in.
+        if !recordingOptions.diarizeMic,
+           let micStream = folder.micStream,
+           let ownerProfile {
+            await OwnerProfileLearner.learn(
+                micWav: micStream.url,
+                dedupedMicSegments: TranscriptAssembly.dedupedMicSegments(
+                    mic, against: system),
+                diarize: diarize,
+                store: ownerProfile,
+                events: events,
+                logger: logger)
+        }
+
+        // PT-R138/R5: attribute the mic clusters when the stamp was on (a mic
+        // diarization exists). Owner → `You`, guests through the shared library.
+        var micAttribution: MicChannelAttribution.Outcome?
+        if let micDiarization {
+            micAttribution = try await MicChannelAttribution.attribute(
+                micDiarization: micDiarization,
+                ownerProfile: ownerProfile,
+                library: library,
+                recordingId: folder.recordingId,
+                recordingFolderName: folder.directory.lastPathComponent,
+                events: events,
+                logger: logger)
+        }
+
         return try await TranscriptAssembly.assembleAndWrite(
             folder: folder,
             systemSegments: system,
             micSegments: mic,
             diarization: diarization,
+            micDiarization: micDiarization,
+            micAttribution: micAttribution,
             language: progress.language ?? "unknown",
             whisperModelName: job.modelName,
             whisperModelSHA256: job.modelSHA256,

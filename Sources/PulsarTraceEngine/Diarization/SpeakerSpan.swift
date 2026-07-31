@@ -3,8 +3,10 @@ import Foundation
 /// One diarized speaker turn: a label active over `[start, end]` of the
 /// recording.
 ///
-/// `start`/`end` are offsets from the start of the **system-stream** recording
-/// (PT-R17 — only the system stream is diarized; the mic stream is always "You").
+/// `start`/`end` are offsets from the start of the recording (both streams share
+/// the recording clock). The mic stream is diarized only when the recording's
+/// mic-diarization stamp is on; otherwise its speech is attributed to "You"
+/// (PT-R135).
 /// pyannote's raw labels are `SPEAKER_00`, `SPEAKER_01`, … — PulsarTrace
 /// re-renders them as `Speaker_0`, `Speaker_1`, … for the transcript
 /// (see `DiarizationResult.displayLabel(for:)`).
@@ -109,5 +111,88 @@ extension Duration {
     var seconds: Double {
         let c = components
         return Double(c.seconds) + Double(c.attoseconds) / 1e18
+    }
+}
+
+// MARK: - Codable (PT-R135)
+
+/// PT-R135 — `DiarizationResult` and its parts are `Codable` so the mic-stream
+/// result can be persisted as `mic-diarization.json` (`MicDiarizationSidecar`)
+/// and reloaded by E5's owner-reassignment edits without re-diarizing.
+///
+/// The on-disk shape mirrors the committed diarization JSON fixtures
+/// (`Tests/Fixtures/diarization/*.json`, decoded test-side by
+/// `DiarizationFixtureDecoder`): `model_revision`, `audio_duration` in seconds,
+/// spans with second offsets, and `embeddings` as a `label → [Float]` object.
+/// A single, symmetric encoding — not a second wire format.
+extension SpeakerSpan: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case speaker, start, end
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let speaker = try c.decode(String.self, forKey: .speaker)
+        let start = try c.decode(Double.self, forKey: .start)
+        let end = try c.decode(Double.self, forKey: .end)
+        self.init(
+            speaker: speaker,
+            start: .milliseconds(Int((start * 1000).rounded())),
+            end: .milliseconds(Int((end * 1000).rounded())))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(speaker, forKey: .speaker)
+        try c.encode(start.seconds, forKey: .start)
+        try c.encode(end.seconds, forKey: .end)
+    }
+}
+
+extension DiarizationResult: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case model
+        case modelRevision = "model_revision"
+        case audioDuration = "audio_duration"
+        case speakers
+        case spans
+        case embeddings
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let model = try c.decode(String.self, forKey: .model)
+        let modelRevision =
+            try c.decodeIfPresent(String.self, forKey: .modelRevision) ?? ""
+        let audioDuration = try c.decode(Double.self, forKey: .audioDuration)
+        let speakers = try c.decode([String].self, forKey: .speakers)
+        let spans = try c.decode([SpeakerSpan].self, forKey: .spans)
+        // `embeddings` is a `label → vector` object (fixture shape); flatten to
+        // the internal array form, sorted by label for deterministic round-trip.
+        let embeddingMap =
+            try c.decode([String: [Float]].self, forKey: .embeddings)
+        let embeddings = embeddingMap
+            .map { SpeakerEmbedding(speaker: $0.key, vector: $0.value) }
+            .sorted { $0.speaker < $1.speaker }
+        self.init(
+            model: model,
+            modelRevision: modelRevision,
+            audioDuration: .milliseconds(Int((audioDuration * 1000).rounded())),
+            speakers: speakers,
+            spans: spans,
+            embeddings: embeddings)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(model, forKey: .model)
+        try c.encode(modelRevision, forKey: .modelRevision)
+        try c.encode(audioDuration.seconds, forKey: .audioDuration)
+        try c.encode(speakers, forKey: .speakers)
+        try c.encode(spans, forKey: .spans)
+        let embeddingMap = Dictionary(
+            embeddings.map { ($0.speaker, $0.vector) },
+            uniquingKeysWith: { first, _ in first })
+        try c.encode(embeddingMap, forKey: .embeddings)
     }
 }

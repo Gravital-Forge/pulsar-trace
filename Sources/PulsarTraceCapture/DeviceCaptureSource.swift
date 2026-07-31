@@ -68,7 +68,16 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     /// - `streamError`: `SCStream.didStopWithError` fired — the stream is
     ///   dead now, regardless of how recently the engine was installed. The
     ///   recency guard must NOT apply.
-    internal enum StallCause: Sendable { case watchdog, streamError }
+    /// - `noFramesAfterInstall`: the post-install verification check found no
+    ///   frame delivered since a fresh engine was installed (initial start or
+    ///   `handleWake`). Like `streamError`, this is by construction about the
+    ///   *fresh* engine itself — the check runs +1s past the stream's own stall
+    ///   threshold, so a wedged device that returned from `start()` yet never
+    ///   produced audio is caught. The recency guard must NOT apply: the guard
+    ///   exists to filter stale watchdog callbacks aimed at a healthy fresh
+    ///   engine, but here the fresh engine is precisely the one that never
+    ///   delivered.
+    internal enum StallCause: Sendable { case watchdog, streamError, noFramesAfterInstall }
 
     private let configuration: Configuration
     private let systemServer: CaptureSocketServer
@@ -82,19 +91,50 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     private let restartQueue = DispatchQueue(label: "com.pulsartrace.capture.restart")
 
     private let lock = NSLock()
-    private var micEngine: MicCaptureEngine?
-    private var systemEngine: SystemAudioCaptureEngine?
+    private var micEngine: (any MicCapturing)?
+    private var systemEngine: (any SystemAudioCapturing)?
     private var paused = false
     /// Streams with a stall restart in flight — guards against a watchdog on
     /// the *fresh* engine firing again before the restart settles, and against
-    /// re-entering `handleStall` for a stream already being rebuilt.
+    /// re-entering `handleStall` for a stream already being rebuilt. Held from
+    /// the moment `handleStall` accepts a stall until recovery is *frame-
+    /// verified* (or the sequence is abandoned) — across every failed `start()`
+    /// AND across the awaiting-first-frame window of a `start()` that returned
+    /// but delivered nothing.
     private var restartingStreams: Set<Stream> = []
+    /// Streams whose fresh engine has been installed by a stall restart but has
+    /// not yet delivered its first frame. Recovery is *not* announced
+    /// (`recording_resumed`, `.resumed` marker, membership release) until a
+    /// real frame proves the new engine is actually producing audio: a wedged
+    /// CoreAudio/USB device lets `start()` return successfully yet delivers no
+    /// buffers, so a `start()` that returns is not evidence of recovery. The
+    /// no-frame timeout (`restartQueue.asyncAfter`) owns the fallback retry.
+    /// Incident: rec_2026-07-30-133002 — a USB mic wedged ~72 s in; a restart's
+    /// `start()` succeeded silently and the old code announced a recovery that
+    /// never happened, leaving the mic dead for 59 min.
+    private var awaitingFirstFrame: Set<Stream> = []
+    /// Wall-clock time of the *original* stall for each stream awaiting its
+    /// first frame — used to size the `.resumed` gap when a frame finally
+    /// verifies recovery, so the gap covers the whole stall-to-recovery span
+    /// (same as the pre-fix behavior) regardless of how many restart attempts
+    /// it took.
+    private var stallWallByStream: [Stream: Date] = [:]
     /// Wall-clock time each stream's *current* engine was installed (initial
     /// start, `handleWake`, or a successful `handleStall` install). A stall
     /// callback dispatched just before an engine was replaced (e.g. across a
     /// sleep/wake) is stale: if the live engine is younger than its stall
     /// threshold, it cannot have genuinely stalled, so `handleStall` skips.
     private var engineInstalledAt: [Stream: Date] = [:]
+    /// Wall-clock time each stream last delivered a (non-dropped) frame through
+    /// `route()`. The post-install verification check (`checkFramesAfterInstall`)
+    /// reads this to decide whether a freshly-installed engine — from initial
+    /// start or `handleWake` — has produced any audio since install: a wedged
+    /// CoreAudio/USB device lets `start()` return yet delivers no buffers, and
+    /// its one-shot watchdog can fire inside `handleStall`'s recency window and
+    /// be swallowed as stale, leaving the stream silently dead. Written under
+    /// `lock` inside `route()` on the same critical section that already decides
+    /// frame verification, so the hot path takes no extra lock.
+    private var lastFrameAt: [Stream: Date] = [:]
     /// Set once `stopCapture()` begins. A sleep/wake handler that fires during
     /// or after teardown is a no-op — it must not resurrect engines or enqueue
     /// onto a closing socket.
@@ -103,10 +143,46 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     private var pauseWall: Date?
     private var resolvedMicName = "none"
 
-    public init(configuration: Configuration) {
+    /// Engine factories — default to the real engines and are swapped out only
+    /// by `StallRecoveryTests` to inject fakes through the production wiring
+    /// path (`makeMicEngine` / `makeSystemEngine`). Every constructed engine —
+    /// initial start, sleep/wake rebuild, stall restart — flows through these.
+    private let micEngineFactory: @Sendable () -> any MicCapturing
+    private let systemEngineFactory: @Sendable () -> any SystemAudioCapturing
+
+    /// How long a restart that has installed a fresh engine but seen no frame
+    /// waits before being declared dead and retried. When `nil` (production),
+    /// the stream's `stallThreshold + 1s` is used; tests inject a small
+    /// absolute value so the no-frame retry is observable on sub-second timers
+    /// (mirrors how `FrameWatchdog` tests inject short thresholds).
+    private let noFrameTimeoutOverride: Duration?
+
+    public convenience init(configuration: Configuration) {
+        self.init(
+            configuration: configuration,
+            micEngineFactory: nil,
+            systemEngineFactory: nil,
+            noFrameTimeoutOverride: nil)
+    }
+
+    /// Designated initializer with the internal test seams. Production callers
+    /// use `init(configuration:)`, which passes `nil` for every seam so the
+    /// real engines and the production timeout are used.
+    internal init(
+        configuration: Configuration,
+        micEngineFactory: (@Sendable () -> any MicCapturing)?,
+        systemEngineFactory: (@Sendable () -> any SystemAudioCapturing)?,
+        noFrameTimeoutOverride: Duration?
+    ) {
         self.configuration = configuration
         self.systemServer = CaptureSocketServer(socketPath: configuration.systemSocketPath)
         self.micServer = CaptureSocketServer(socketPath: configuration.micSocketPath)
+        let micDeviceID = configuration.micDeviceID
+        self.micEngineFactory = micEngineFactory
+            ?? { MicCaptureEngine(deviceID: micDeviceID) }
+        self.systemEngineFactory = systemEngineFactory
+            ?? { SystemAudioCaptureEngine(filter: .allApps) }
+        self.noFrameTimeoutOverride = noFrameTimeoutOverride
     }
 
     /// Create the socket directory and `bind()` + `listen()` both sockets.
@@ -138,6 +214,12 @@ public final class DeviceCaptureSource: @unchecked Sendable {
             resolvedMicName = mic.deviceName
             engineInstalledAt[.mic] = Date()
         }
+        // Verify the initial mic engine actually delivers audio: a wedged device
+        // at session start returns from start() yet produces no frames, and its
+        // watchdog fire would be swallowed by handleStall's recency window,
+        // leaving a silent no-audio session. This check routes that into stall
+        // recovery. (Same zero-frame hole as handleWake.)
+        scheduleFrameCheckAfterInstall(stream: .mic)
 
         if configuration.systemAudioEnabled {
             let system = makeSystemEngine()
@@ -146,6 +228,7 @@ public final class DeviceCaptureSource: @unchecked Sendable {
                 systemEngine = system
                 engineInstalledAt[.system] = Date()
             }
+            scheduleFrameCheckAfterInstall(stream: .system)
         }
 
         sleepWake.onSleep = { [weak self] in self?.handleSleep() }
@@ -193,17 +276,18 @@ public final class DeviceCaptureSource: @unchecked Sendable {
 
     // `internal` (not `private`) so `StallRecoveryTests` can construct the
     // engines via the production wiring path and assert that the watchdog /
-    // stream-error callbacks are assigned. The tests don't start the engines —
-    // they just inspect the closure slots.
-    internal func makeMicEngine() -> MicCaptureEngine {
-        let engine = MicCaptureEngine(deviceID: configuration.micDeviceID)
+    // stream-error callbacks are assigned, and inject fake engines through the
+    // factory closures. The engines are built through the injectable factories
+    // so a test's fakes flow through exactly this wiring.
+    internal func makeMicEngine() -> any MicCapturing {
+        let engine = micEngineFactory()
         engine.onEvent = { [weak self] event in self?.route(event, .mic) }
         engine.onStall = { [weak self] in self?.handleStall(stream: .mic) }
         return engine
     }
 
-    internal func makeSystemEngine() -> SystemAudioCaptureEngine {
-        let engine = SystemAudioCaptureEngine(filter: .allApps)
+    internal func makeSystemEngine() -> any SystemAudioCapturing {
+        let engine = systemEngineFactory()
         engine.onEvent = { [weak self] event in self?.route(event, .system) }
         engine.onStall = { [weak self] in self?.handleStall(stream: .system) }
         // A hard `SCStream` failure (e.g. TCC revoked mid-session, display
@@ -228,10 +312,51 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     /// Route a captured event to its socket. Frames are dropped while paused
     /// so no audio from a sleep window leaks onto the wire; everything is
     /// dropped once teardown has begun.
+    ///
+    /// The first frame of a stream that is *awaiting first frame* after a stall
+    /// restart is what proves the fresh engine is actually producing audio — a
+    /// returning `start()` is not evidence, since a wedged device lets it
+    /// succeed silently. That frame drives frame-verified recovery: enqueue the
+    /// `.resumed` marker BEFORE forwarding the frame (the engine must never see
+    /// post-resume audio ahead of its resume marker), forward the frame, then
+    /// announce `recording_resumed` off the hot path. The awaiting flag is
+    /// cleared atomically so racing delivery-queue frames cannot double-fire.
     private func route(_ event: AudioStreamEvent, _ stream: Stream) {
-        let (isPaused, isStopped) = lock.withLock { (paused, stopped) }
-        if isStopped { return }
-        if isPaused, case .frame = event { return }
+        // Decide first-frame recovery under the same lock that reads paused /
+        // stopped, so exactly one frame wins the awaiting→verified transition.
+        let decision = lock.withLock { () -> (drop: Bool, verify: Date?) in
+            if stopped { return (true, nil) }
+            if case .frame = event {
+                if paused { return (true, nil) }
+                // Record delivery for the post-install verification check
+                // (`checkFramesAfterInstall`). Folded into the frame-verification
+                // critical section so the hot path takes no extra lock; only
+                // non-dropped frames (past the stopped/paused gates) count as
+                // proof the engine is producing audio.
+                lastFrameAt[stream] = Date()
+                if awaitingFirstFrame.remove(stream) != nil {
+                    // This frame verifies recovery — pair it with the stall's
+                    // wall time to size the resume gap, then fall through to
+                    // enqueue .resumed ahead of the frame below.
+                    let wall = stallWallByStream[stream]
+                    stallWallByStream[stream] = nil
+                    return (false, wall ?? Date())
+                }
+            }
+            return (false, nil)
+        }
+        if decision.drop { return }
+
+        // Frame-verified recovery: resume marker precedes the verifying frame.
+        if let stallWall = decision.verify {
+            let gap = Date().timeIntervalSince(stallWall)
+            server(for: stream).enqueue(.resumed(gap: .seconds(gap)))
+            server(for: stream).enqueue(event)
+            // Announce off the hot delivery path; membership released there.
+            restartQueue.async { [self] in announceRecovery(stream: stream) }
+            return
+        }
+
         switch stream {
         case .system: systemServer.enqueue(event)
         case .mic: micServer.enqueue(event)
@@ -284,6 +409,16 @@ public final class DeviceCaptureSource: @unchecked Sendable {
                 if stopped || paused { return true }
                 paused = true
                 pauseWall = Date()
+                // A stall restart in flight (failed-start backoff, or an
+                // awaiting-first-frame window) is moot now: sleep tears down
+                // the engines and the wake path rebuilds both fresh. Release
+                // the restart membership so a stream is never left permanently
+                // in `restartingStreams` — that would block all future stall
+                // recovery. The pending `asyncAfter` retry / no-frame timeout
+                // still fires but sees `paused` and bails via `bailIfInactive`.
+                restartingStreams.removeAll()
+                awaitingFirstFrame.removeAll()
+                stallWallByStream.removeAll()
                 return false
             }
             guard !skip else { return }
@@ -317,11 +452,18 @@ public final class DeviceCaptureSource: @unchecked Sendable {
                 // Fresh engine instances — the capture sessions were torn down
                 // on sleep — feeding the same socket servers.
                 let mic = makeMicEngine()
+                // `try?` swallows a thrown start() deliberately: the wake event
+                // flow (recording_resumed(sleep) emitted immediately below) is
+                // unchanged, and the post-install frame check scheduled after
+                // this block catches a start() that threw exactly like one that
+                // returned silently — no frame ever arrives, the check fires,
+                // and handleStall runs a full stop+retry loop. No watchdog is
+                // armed on a thrown start(), so this check is the only signal.
                 try? mic.start()
-                var system: SystemAudioCaptureEngine?
+                var system: (any SystemAudioCapturing)?
                 if configuration.systemAudioEnabled {
                     let engine = makeSystemEngine()
-                    try? await engine.start()
+                    try? await engine.start()  // see the try? note above
                     system = engine
                 }
                 // Teardown may have begun while the engines were starting — if
@@ -355,6 +497,21 @@ public final class DeviceCaptureSource: @unchecked Sendable {
                 }
                 await emit(RecordingResumedEvent(
                     recordingId: configuration.recordingId, reason: "sleep"))
+
+                // Verify the rebuilt engines actually deliver audio. A wedged
+                // device (or a thrown start() the try? above swallowed) returns
+                // with no frames; its watchdog fire would be swallowed by
+                // handleStall's recency window, leaving the stream silently dead.
+                // Scheduled only after `paused = false` (so the check body does
+                // not early-return on paused) and after install (engineInstalledAt
+                // set in the abort block). recording_resumed(sleep) stays emitted
+                // immediately above; a dead stream then gets its own
+                // recording_paused(stall_recovery) a few seconds later — the same
+                // observable sequence as a device stalling right after wake.
+                scheduleFrameCheckAfterInstall(stream: .mic)
+                if configuration.systemAudioEnabled {
+                    scheduleFrameCheckAfterInstall(stream: .system)
+                }
             }
         }
     }
@@ -382,6 +539,14 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         restartQueue.async { [self] in
             // Bail if teardown began, a sleep is in progress (the wake rebuilds
             // both engines anyway), or this stream is already being restarted.
+            // The `restartingStreams` membership is held from a stall's start
+            // through frame-verified recovery — including the awaiting-first-
+            // frame window — so a *fresh* restart engine's own watchdog firing
+            // during that window is ignored here and the no-frame timeout owns
+            // the retry. A genuine stall *after* recovery is still caught: the
+            // verifying frame reset the engine's watchdog and released the
+            // membership, so a later silence re-enters this path cleanly (see
+            // `announceRecovery`).
             //
             // For the watchdog path only: also bail if this stream's engine was
             // installed more recently than its stall threshold ago. A watchdog
@@ -395,6 +560,15 @@ public final class DeviceCaptureSource: @unchecked Sendable {
             // permission inconsistency or ScreenCaptureKit abort can fire
             // within the first second of start(); suppressing that would leave
             // capture silently dead.
+            //
+            // Nor does it apply to `.noFramesAfterInstall`: the post-install
+            // check only ever runs +1s past the stream's own stall threshold and
+            // fires precisely because the *fresh* engine produced no frame since
+            // install. Applying the recency guard (which asks whether install was
+            // longer ago than the threshold) would defeat the check's purpose —
+            // the check already established the fresh engine is the dead one.
+            // Only `.watchdog` — which can be a genuinely stale callback aimed at
+            // a healthy fresh engine — is guarded.
             let proceed = lock.withLock { () -> Bool in
                 guard !stopped, !paused, !restartingStreams.contains(stream)
                 else { return false }
@@ -448,85 +622,250 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         let category: String
     }
 
-    /// One restart attempt for a stalled stream. Runs on `restartQueue`. On
-    /// success, installs the fresh engine, resumes, and clears the
-    /// `restartingStreams` membership. On failure, re-schedules itself on
-    /// `restartQueue` after `backoff` (the queue stays free meanwhile) with
-    /// the next, doubled backoff. The `restartingStreams` membership is held
-    /// across the whole sequence and cleared only when it ends.
+    /// One restart attempt for a stalled stream. Runs on `restartQueue`. A
+    /// `start()` that returns is NOT treated as recovery: a wedged CoreAudio /
+    /// USB device lets `startRunning()` succeed yet delivers no buffers
+    /// (incident rec_2026-07-30-133002). On a returning `start()` the fresh
+    /// engine is installed and the stream is marked *awaiting its first frame*;
+    /// recovery (`.resumed` marker, `recording_resumed`, membership release) is
+    /// announced only when `route()` sees a real frame prove the engine is
+    /// producing audio. A no-frame timeout re-enters this loop if none arrives.
+    /// On a thrown `start()` the attempt re-schedules itself after `backoff`.
+    /// The `restartingStreams` membership is held across the whole sequence —
+    /// every failed `start()` and every awaiting-first-frame window — and
+    /// released only when recovery is frame-verified or the sequence is
+    /// abandoned (teardown / sleep).
     private func attemptStallRestart(
         stream: Stream, stallWall: Date, backoff: Duration
     ) {
-        // `stopCapture` may have latched `stopped` between attempts — abandon
-        // the sequence and release the membership if so.
-        if lock.withLock({ stopped }) {
-            lock.withLock { _ = restartingStreams.remove(stream) }
-            return
-        }
+        // Ownership check FIRST: `restartingStreams` membership is this chain's
+        // ownership token. A sleep landing between attempts calls
+        // `restartingStreams.removeAll()` and rebuilds both engines on wake — so
+        // if this stream is no longer a member, a still-pending `scheduleRetry`
+        // block has been *orphaned*. It must NOT proceed: doing so would install
+        // a second engine over the healthy wake-rebuilt one (two live engines on
+        // one stream) and its first frame would emit an unpaired
+        // `recording_resumed`. The sleep path already stopped whatever this
+        // chain had installed, so there is nothing to release or stop here —
+        // just return. (This is derived *before* the stopped/paused bail so the
+        // orphaned case does not touch membership that a sleep already cleared.)
+        let owned = lock.withLock { restartingStreams.contains(stream) }
+        guard owned else { return }
 
-        let startError: StartFailure? = runBlocking { [self] in
+        // `stopCapture` latched `stopped`, or a sleep latched `paused` while
+        // still holding membership, between attempts — abandon the sequence and
+        // release the membership. Leaving a stream in `restartingStreams` would
+        // block all future stall recovery; on sleep the wake path rebuilds both
+        // engines anyway.
+        if bailIfInactive(stream) { return }
+
+        let outcome: RestartOutcome = runBlocking { [self] in
             do {
                 switch stream {
                 case .system:
                     let fresh = makeSystemEngine()
                     try await fresh.start()
-                    // Re-check `stopped` before installing — teardown may have
-                    // begun while `start()` was in flight.
-                    let abort = lock.withLock { () -> Bool in
-                        guard !stopped else { return true }
+                    // Re-check active before installing — teardown or sleep may
+                    // have begun while `start()` was in flight.
+                    let installed = lock.withLock { () -> Bool in
+                        guard !stopped, !paused else { return false }
                         systemEngine = fresh
                         engineInstalledAt[.system] = Date()
-                        return false
+                        awaitingFirstFrame.insert(.system)
+                        stallWallByStream[.system] = stallWall
+                        return true
                     }
-                    if abort { await fresh.stop() }
+                    if !installed { await fresh.stop(); return .aborted }
+                    return .installed(AnyCapturing(system: fresh))
                 case .mic:
                     let fresh = makeMicEngine()
                     try fresh.start()
-                    let abort = lock.withLock { () -> Bool in
-                        guard !stopped else { return true }
+                    let installed = lock.withLock { () -> Bool in
+                        guard !stopped, !paused else { return false }
                         micEngine = fresh
                         resolvedMicName = fresh.deviceName
                         engineInstalledAt[.mic] = Date()
-                        return false
+                        awaitingFirstFrame.insert(.mic)
+                        stallWallByStream[.mic] = stallWall
+                        return true
                     }
-                    if abort { fresh.stop() }
+                    if !installed { fresh.stop(); return .aborted }
+                    return .installed(AnyCapturing(mic: fresh))
                 }
-                return nil
             } catch {
                 // Carry only the error's *type name* back across the task
                 // boundary — never the full description, which can render a
                 // filesystem path (Hard Invariant #7 / PT-R84).
-                return StartFailure(category: "\(type(of: error))")
+                return .failed(StartFailure(category: "\(type(of: error))"))
             }
         }
 
-        // Teardown won the race during `start()` — drop the membership and stop.
-        if lock.withLock({ stopped }) {
+        switch outcome {
+        case .aborted:
+            // Teardown or sleep won the race during `start()`. `installed`
+            // stayed false, so the awaiting/restarting state was never set for
+            // this fresh engine; still release the membership the sequence held.
             lock.withLock { _ = restartingStreams.remove(stream) }
             return
-        }
 
-        if let startError {
+        case .failed(let startError):
             // The error category was redacted to a bare type name at the
             // task boundary above — no filesystem path can reach this log.
             log("\(stream == .system ? "system audio" : "microphone")"
                 + " restart failed (\(startError.category))"
                 + " — retrying in \(backoff)")
-            let next = min(backoff * 2, DeviceCaptureSource.backoffCap)
-            restartQueue.asyncAfter(
-                deadline: .now() + secondsValue(backoff)
-            ) { [self] in
-                attemptStallRestart(
-                    stream: stream, stallWall: stallWall, backoff: next)
-            }
-            return
-        }
+            scheduleRetry(stream: stream, stallWall: stallWall, backoff: backoff)
 
-        // Started and installed. Announce the resume on this stream's socket
-        // and emit the lifecycle event; the gap is wall-clock elapsed since
-        // the watchdog fired. Release the membership last.
-        let gap = Date().timeIntervalSince(stallWall)
-        server(for: stream).enqueue(.resumed(gap: .seconds(gap)))
+        case .installed(let fresh):
+            // Started and installed, but NOT yet recovered: a returning
+            // `start()` is not evidence of audio (wedged-device signature).
+            // Recovery is announced by `route()` on the first real frame; if
+            // none arrives within the no-frame timeout, retry. The membership
+            // stays held throughout.
+            scheduleNoFrameTimeout(
+                stream: stream, engine: fresh,
+                stallWall: stallWall, backoff: backoff)
+        }
+    }
+
+    /// Outcome of one `attemptStallRestart` pass.
+    private enum RestartOutcome: Sendable {
+        /// Teardown or sleep interrupted the attempt before install.
+        case aborted
+        /// `start()` threw — retry after backoff.
+        case failed(StartFailure)
+        /// Fresh engine installed; awaiting its first frame to confirm recovery.
+        case installed(AnyCapturing)
+    }
+
+    /// Type-erased handle to whichever engine a restart installed, so the
+    /// no-frame timeout can stop *that specific* fresh engine on a dead restart
+    /// without re-reading `micEngine`/`systemEngine` (which a racing sleep/wake
+    /// could have replaced).
+    private struct AnyCapturing: @unchecked Sendable {
+        let stop: @Sendable () async -> Void
+        init(mic: any MicCapturing) { stop = { mic.stop() } }
+        init(system: any SystemAudioCapturing) { stop = { await system.stop() } }
+    }
+
+    /// Release the `restartingStreams` and `awaitingFirstFrame` membership and
+    /// return `true` when the stream is no longer active (teardown or sleep).
+    /// A stream must never be left permanently in `restartingStreams` — that
+    /// would block every future stall recovery for it.
+    private func bailIfInactive(_ stream: Stream) -> Bool {
+        lock.withLock { () -> Bool in
+            guard stopped || paused else { return false }
+            _ = restartingStreams.remove(stream)
+            _ = awaitingFirstFrame.remove(stream)
+            stallWallByStream[stream] = nil
+            return true
+        }
+    }
+
+    /// Re-schedule the next restart attempt after `backoff` (queue stays free),
+    /// carrying the next, doubled backoff.
+    private func scheduleRetry(
+        stream: Stream, stallWall: Date, backoff: Duration
+    ) {
+        let next = min(backoff * 2, DeviceCaptureSource.backoffCap)
+        restartQueue.asyncAfter(
+            deadline: .now() + secondsValue(backoff)
+        ) { [self] in
+            attemptStallRestart(
+                stream: stream, stallWall: stallWall, backoff: next)
+        }
+    }
+
+    /// After installing a fresh engine, wait `stallThreshold + 1s` (or the
+    /// injected override) for its first frame. If the stream is still awaiting
+    /// one (and neither stopped nor paused), the restart produced no audio —
+    /// stop the dead fresh engine and re-enter the retry loop with the next
+    /// doubled backoff. The membership is held across this exactly as across a
+    /// failed `start()`. `recording_resumed` is never emitted on this path
+    /// (Hard Invariant #8).
+    private func scheduleNoFrameTimeout(
+        stream: Stream, engine: AnyCapturing, stallWall: Date, backoff: Duration
+    ) {
+        let timeout = noFrameTimeoutOverride
+            ?? (stallThreshold(for: stream) + .seconds(1))
+        let deadline = secondsValue(timeout)
+        restartQueue.asyncAfter(deadline: .now() + deadline) { [self] in
+            // Ownership check FIRST (Gap 1): `restartingStreams` membership is
+            // this chain's ownership token. A sleep that landed during the
+            // window cleared the membership *and* already stopped the engine
+            // this timeout captured (it was the installed engine at sleep time),
+            // then the wake path rebuilt fresh engines. So an orphaned no-frame
+            // timeout must just return — NOT stop `engine` again: a second
+            // `stop()` would flush the converter tail (Gap 3 hazard) for an
+            // engine the sleep already tore down.
+            let owned = lock.withLock { restartingStreams.contains(stream) }
+            guard owned else { return }
+
+            // Sleep/teardown while still owning membership: release and stop the
+            // fresh engine (the wake path rebuilds both engines). `bailIfInactive`
+            // clears `awaitingFirstFrame` under the lock *before* we `stop()`, so
+            // the flush tail cannot fake-verify recovery.
+            if bailIfInactive(stream) {
+                runBlocking { await engine.stop() }
+                return
+            }
+            // A frame already verified recovery — nothing to do.
+            let stillAwaiting = lock.withLock {
+                awaitingFirstFrame.contains(stream)
+            }
+            guard stillAwaiting else { return }
+
+            // No frame arrived: the restart is dead. Path-free log line.
+            log(stream == .system
+                ? "system audio restart produced no frames — retrying"
+                : "microphone restart produced no frames — retrying")
+            // Gap 3 constraint: clear the awaiting/stall state BEFORE `stop()`.
+            // `MicCaptureEngine.stop()` flushes the converter and can emit a
+            // zero-padded partial *tail* frame through `route()`. If the stream
+            // were still `awaitingFirstFrame` when that tail arrived, the tail
+            // would win the awaiting→verified transition and announce a recovery
+            // for an engine we are killing precisely because it produced no
+            // frames — a second silent death mis-reported as a resume. Clearing
+            // first means the tail arrives at `route()` after the flag is gone
+            // and is treated as an ordinary (dropped/forwarded) frame.
+            lock.withLock {
+                _ = awaitingFirstFrame.remove(stream)
+                stallWallByStream[stream] = nil
+            }
+            runBlocking { await engine.stop() }
+            scheduleRetry(stream: stream, stallWall: stallWall, backoff: backoff)
+        }
+    }
+
+    /// Frame-verified recovery. Scheduled onto `restartQueue` from `route()`
+    /// after the first post-restart frame proved the fresh engine is producing
+    /// audio (the `.resumed` marker was already enqueued ahead of that frame).
+    /// Emits `recording_resumed` and releases the `restartingStreams`
+    /// membership last — so a genuine post-verification stall is caught: the
+    /// verified frame reset the engine's watchdog, so a later silence fires
+    /// ≥ threshold after that frame, and with the membership now released
+    /// `handleStall` proceeds (the recency guard passes, since ≥ threshold has
+    /// elapsed since install).
+    private func announceRecovery(stream: Stream) {
+        // Gap 2: a sleep (or teardown) may have latched between `route()`
+        // scheduling this block and it running on `restartQueue`. Both run on
+        // the serial `restartQueue`, so if `handleSleep` was scheduled first it
+        // has already emitted `recording_paused` (sleep) and cleared the
+        // membership. Emitting `recording_resumed` now would order the stream as
+        // paused(stall), paused(sleep), resumed(stall_recovery) — a resume while
+        // asleep. Invariant #8 requires paused-before-resumed, NOT a resumed for
+        // every paused: a stall `recording_paused` with no resumed is correct
+        // when recovery never completed. So if paused/stopped, release any
+        // membership still held and return WITHOUT emitting or logging.
+        let announce = lock.withLock { () -> Bool in
+            guard !stopped, !paused else {
+                _ = restartingStreams.remove(stream)
+                return false
+            }
+            return true
+        }
+        guard announce else { return }
+
         runBlocking { [self] in
             await emit(RecordingResumedEvent(
                 recordingId: configuration.recordingId,
@@ -554,6 +893,52 @@ public final class DeviceCaptureSource: @unchecked Sendable {
         }
     }
 
+    // MARK: - Post-install frame verification
+
+    /// Schedule a per-stream check that a freshly-installed engine (initial
+    /// `startCapture` or `handleWake`) actually delivered a frame. Both install
+    /// paths trust a returning `start()`, but a wedged CoreAudio/USB device lets
+    /// `start()` succeed silently: its one-shot watchdog then fires inside
+    /// `handleStall`'s recency window and is swallowed as stale, leaving the
+    /// stream silently dead. A thrown `start()` on wake is worse — `try?`
+    /// swallows it, no watchdog is ever armed. This check routes both into the
+    /// existing frame-verified stall recovery.
+    ///
+    /// The deadline mirrors `scheduleNoFrameTimeout`: `noFrameTimeoutOverride`
+    /// (tests) or `stallThreshold + 1s` (production). The +1s slack means the
+    /// engine's own watchdog — when it works — wins the race and this check
+    /// finds `restartingStreams` already occupied, so the check introduces no
+    /// new false-trigger class beyond what the watchdog already does in steady
+    /// state (the system watchdog fires after 6s of no frames regardless).
+    private func scheduleFrameCheckAfterInstall(stream: Stream) {
+        let timeout = noFrameTimeoutOverride
+            ?? (stallThreshold(for: stream) + .seconds(1))
+        restartQueue.asyncAfter(deadline: .now() + secondsValue(timeout)) {
+            [self] in checkFramesAfterInstall(stream: stream)
+        }
+    }
+
+    /// The post-install verification check body (runs on `restartQueue`). Under
+    /// `lock`: if stopped or paused, do nothing; if a restart is already in
+    /// flight for this stream (`restartingStreams`), do nothing — the stall path
+    /// already owns recovery, including the watchdog winning the +1s race above;
+    /// otherwise, if no frame has been delivered since this engine was installed
+    /// (`lastFrameAt` nil or earlier than `engineInstalledAt`), the fresh engine
+    /// produced no audio — route into the frame-verified stall recovery via
+    /// `.noFramesAfterInstall` (which bypasses the recency guard, since the
+    /// fresh engine itself is the dead one).
+    private func checkFramesAfterInstall(stream: Stream) {
+        let deadEngine = lock.withLock { () -> Bool in
+            if stopped || paused { return false }
+            if restartingStreams.contains(stream) { return false }
+            guard let installedAt = engineInstalledAt[stream] else { return false }
+            if let last = lastFrameAt[stream], last >= installedAt { return false }
+            return true
+        }
+        guard deadEngine else { return }
+        handleStall(stream: stream, cause: .noFramesAfterInstall)
+    }
+
     /// A `Duration` as a `TimeInterval` (seconds, fractional) for comparison
     /// against `Date` arithmetic.
     private func secondsValue(_ duration: Duration) -> TimeInterval {
@@ -577,6 +962,43 @@ public final class DeviceCaptureSource: @unchecked Sendable {
     /// restart without starting real hardware.
     internal var restartingStreamsForTest: Set<Stream> {
         lock.withLock { restartingStreams }
+    }
+
+    /// Streams whose fresh restart engine is installed but has not yet
+    /// delivered a frame. Exposed so `StallRecoveryTests` can observe that a
+    /// silent restart is held in the awaiting-first-frame state (recovery
+    /// unannounced) rather than falsely reported as resumed.
+    internal var awaitingFirstFrameForTest: Set<Stream> {
+        lock.withLock { awaitingFirstFrame }
+    }
+
+    /// Whether capture is currently paused (sleep or a stall in progress).
+    /// Exposed so `StallRecoveryTests` can confirm the wake path has completed
+    /// (`paused == false`) before probing an orphaned retry's behavior.
+    internal var pausedForTest: Bool {
+        lock.withLock { paused }
+    }
+
+    /// The socket server backing `stream`. Exposed so `StallRecoveryTests` can
+    /// attach `onEnqueueForTest` and assert the `.resumed` marker is enqueued
+    /// ahead of the first post-recovery frame.
+    internal func serverForTest(_ stream: Stream) -> CaptureSocketServer {
+        server(for: stream)
+    }
+
+    /// Drive the sleep path (`handleSleep`) through the production wiring.
+    /// Exposed so `StallRecoveryTests` can verify that a sleep landing during a
+    /// stall's awaiting-first-frame window releases the restart membership.
+    internal func simulateSleepForTest() {
+        handleSleep()
+    }
+
+    /// Drive the wake path (`handleWake`) through the production wiring, mirror
+    /// of `simulateSleepForTest`. Exposed so `StallRecoveryTests` can drive a
+    /// full short sleep→wake cycle and verify that a retry chain orphaned by the
+    /// sleep does not install a second engine over the wake-rebuilt one.
+    internal func simulateWakeForTest() {
+        handleWake()
     }
 
     /// Operational diagnostic to stderr — the daemon's log channel.

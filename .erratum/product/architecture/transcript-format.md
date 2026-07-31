@@ -17,13 +17,22 @@ crash cannot leave a truncated file; the prior input transcript is preserved as 
 ## Metadata sidecar
 
 Alongside the transcript, a JSON sidecar records the recording's id, durations, the speakers
-present, the model identities used, and a schema version (PT-R39).
+present, the model identities used, and a schema version (PT-R39). It also records whether the pass
+diarized the microphone stream (`mic_diarized`), and each speaker's `is_microphone` marks whether it
+was attributed to the microphone stream — several speakers may carry it when the recording is
+mic-diarized, `You` keeps a null `speaker_id`, and mic guests carry their `spk_` ids. Loosening
+`is_microphone` from exactly-one to possibly-many is a semantic change to this public contract, so the
+schema version bumps; the added `mic_diarized` field is additive, so a pre-mode consumer parses a
+post-mode sidecar unchanged (PT-R144, PT-R89).
 
 ## Speaker labels
 
 Speaker labels in the final transcript are resolved names from the speaker library, or stable
-cluster labels where no library identity matched. The microphone speaker is always the local speaker
-(PT-R17).
+cluster labels where no library identity matched. By default the microphone speaker is the local
+speaker `You`; when the recording's mic-diarization stamp is on, the microphone stream is diarized
+too, so its speech is attributed per cluster — the owner cluster stays `You` (fail-safe: never
+assigned by guesswork) and the remaining mic clusters are ordinary library speakers, exactly as on
+the system stream (PT-R135, PT-R138, PT-R139).
 
 ## The live transcript
 
@@ -32,7 +41,11 @@ session start with a live marker and a header (PT-R35a), is strictly append-only
 monotonically (PT-R36), and each line is appended atomically (PT-R12). It is human- and
 tool-readable (PT-R35) and carries a marker identifying it as provisional (PT-R37). Live speaker
 labels mark the microphone as the local speaker and system speakers as a generic or known-but-
-provisional other party (PT-R14, PT-R16, PT-R18); microphone-echo duplicates are dropped (PT-R19). A
+provisional other party (PT-R14, PT-R16, PT-R18); microphone-echo duplicates are dropped (PT-R145).
+When the recording's mic-diarization stamp is on, microphone speech is labeled per cluster instead of
+a flat `You`: the owner cluster is `You`, library matches show their names, and remaining mic clusters
+take a provisional `Guest` / `Guest #2` family — distinct from the system stream's `Them` family so a
+hybrid transcript stays unambiguous about who was in the room versus on the call (PT-R147). A
 provisional speaker is marked with a compact `?` suffix emitted by the engine at the source; an
 utterance the live pass cannot attribute to any tracked speaker takes a neutral `Speaker?` marker
 rather than a named or numbered party. The verbose `(provisional)` form is the prior schema version

@@ -69,18 +69,25 @@ public final class SpeakerEditorViewModel {
     ///   - events: events writer; `nil` disables event emission (unit tests
     ///     that do not assert on the log).
     ///   - settings: provides the output folder roots the rewriter scans.
+    ///   - ownerProfile: the owner voice profile store (PT-R140) — passed to
+    ///     the shared `SpeakerEditService` so "this is me" / "not me" update the
+    ///     profile. `nil` disables the profile side of a reassignment.
     ///   - toastLifetime: how long the undo toast stays up before
     ///     auto-dismissing (tests shrink it to milliseconds).
     public init(
         library: SpeakerLibrary,
         events: EventWriter? = nil,
         settings: MenuBarSettings,
+        ownerProfile: OwnerVoiceProfileStore? = nil,
         toastLifetime: Duration = .seconds(8)
     ) {
         self.library = library
         self.events = events
         self.settings = settings
-        self.service = SpeakerEditService(library: library, events: events)   // PT-R123
+        // PT-R123 / PT-R140: the shared edit service, now carrying the owner
+        // profile so owner reassignment updates it.
+        self.service = SpeakerEditService(
+            library: library, events: events, ownerProfile: ownerProfile)
         self.toastLifetime = toastLifetime
     }
 
@@ -89,10 +96,12 @@ public final class SpeakerEditorViewModel {
     /// uses. This never opens its own `SpeakerLibrary`, so the editor and the
     /// agent surface never drift across two caches.
     public static func using(
-        library: SpeakerLibrary, events: EventWriter?, settings: MenuBarSettings
+        library: SpeakerLibrary, events: EventWriter?, settings: MenuBarSettings,
+        ownerProfile: OwnerVoiceProfileStore? = nil
     ) async -> SpeakerEditorViewModel {
         let vm = SpeakerEditorViewModel(
-            library: library, events: events, settings: settings)
+            library: library, events: events, settings: settings,
+            ownerProfile: ownerProfile)
         await vm.reload()
         return vm
     }
@@ -214,22 +223,13 @@ public final class SpeakerEditorViewModel {
     /// matching, and rewrite past `final.md` files to drop their token
     /// (solo → `Unrecognized`, co-attribution → drop just the token).
     ///
-    /// Rejects the mic speaker (name `"You"`). The mic identity is per-recording
-    /// metadata, not a library attribute, so there is no clean
-    /// `Speaker.isMicrophone` to check — the matching surface is the name
-    /// `"You"`, which `SpeakerReconciler` documents as the never-in-library
-    /// mic label. A user-renamed library speaker happening to be called
-    /// `"You"` would still be rejected; that is the intended conservative
-    /// behaviour. TODO: surface an `isMicrophone` flag on `Speaker` once the
-    /// library carries one.
+    /// The mic owner (`You`) is never a library speaker — PT-R141 reserves the
+    /// name, so it never appears as an editable row here and no name-based
+    /// guard is needed (closes KI-3).
     public func delist(speakerId: String) async {
         guard let target = liveSpeakers.first(where: { $0.id == speakerId })
         else {
             lastError = "Speaker not found."
-            return
-        }
-        guard target.name != "You" else {
-            lastError = "The microphone speaker cannot be delisted."
             return
         }
         let name = target.name
@@ -271,6 +271,55 @@ public final class SpeakerEditorViewModel {
             _ = try await self.service.undelist(
                 speakerId: speakerId, outputFolderRoots: self.outputRoots())
         }
+    }
+
+    // MARK: - Owner reassignment ("This is me" / "Not me", PT-R140)
+
+    /// "This is me": re-attribute a recording's mic-channel guest to the owner
+    /// (`You`). Runs through the same `withRewrite` toast/undo frame as delist;
+    /// the undo is the inverse operation (`demoteOwner`).
+    public func designateOwner(recordingId: String, speakerId: String) async {
+        if await withRewrite({
+            _ = try await self.service.designateOwner(
+                recordingId: recordingId, speakerId: speakerId,
+                outputFolderRoots: self.outputRoots())
+        }) {
+            showToast(UndoToast(message: "Attributed to you") { [weak self] in
+                await self?.demoteOwner(recordingId: recordingId)
+            })
+        }
+    }
+
+    /// "Not me": demote a recording's owner (`You`) back to a
+    /// reconciled-or-minted library speaker. The undo of a demotion re-attributes
+    /// the resolved speaker to the owner — so the resolved id is captured from
+    /// the service result (`EditResult.resolvedSpeakerId`) rather than re-derived
+    /// from metadata in the UI.
+    public func demoteOwner(recordingId: String) async {
+        // A box so the `withRewrite` closure can write the resolved id back out;
+        // captured as a `let` into the toast's `@Sendable` closure below.
+        final class ResolvedBox: @unchecked Sendable { var id: String? }
+        let box = ResolvedBox()
+        if await withRewrite({
+            let result = try await self.service.demoteOwner(
+                recordingId: recordingId, outputFolderRoots: self.outputRoots())
+            box.id = result.resolvedSpeakerId
+        }) {
+            let resolvedSpeakerId = box.id
+            showToast(UndoToast(message: "No longer attributed to you") {
+                [weak self] in
+                guard let resolvedSpeakerId else { return }
+                await self?.designateOwner(
+                    recordingId: recordingId, speakerId: resolvedSpeakerId)
+            })
+        }
+    }
+
+    /// Sidecar gate for the owner-reassignment button visibility (PT-R140):
+    /// the buttons show only for a recording whose `mic-diarization.json` exists
+    /// (a mic-diarized recording — earlier recordings can't be reassigned).
+    public func canReassignOwner(folderURL: URL) -> Bool {
+        MicDiarizationSidecar.read(from: folderURL) != nil
     }
 
     /// Undo a merge (PT-R44): restore the merged-away speaker in the library AND

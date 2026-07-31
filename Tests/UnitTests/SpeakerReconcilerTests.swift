@@ -30,6 +30,23 @@ struct SpeakerReconcilerTests {
         #expect(SpeakerReconciler.unknownNumber(in: "Unknown #") == nil)
     }
 
+    // PT-R141 tripwire: the reconciler mints `Unknown #N` placeholders and
+    // never the reserved owner label `You` (the mic owner is excluded via
+    // `excludingSpeakers` and never enrolled). If someone ever changed the
+    // placeholder to `You`, the library reservation would reject it — this
+    // pins that the reserved name can never be a library speaker.
+    @Test("You is a reserved library name (PT-R141 tripwire)")
+    func reconcilerPlaceholderIsNeverReserved() async throws {
+        let (lib, dir) = try await library()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await #expect(throws: (any Error).self) {
+            _ = try await lib.createSpeaker(
+                name: "You", centroid: [Float](repeating: 0, count: 256),
+                modelRevision: "rev-1", recordingId: "rec_x",
+                recordingFolderName: "x")
+        }
+    }
+
     /// Build a minimal `DiarizationResult` with one embedding per raw label.
     private func diarization(
         embeddings: [String: [Float]], revision: String = "rev-1"
@@ -135,6 +152,19 @@ struct SpeakerReconcilerTests {
         // The next number is #3 — #1 and #2 are not reused even though their
         // speakers have aged out of the recoverable window.
         #expect(outcome.nameByRawLabel["SPEAKER_00"] == "Unknown #3")
+    }
+
+    @Test("excludingSpeakers skips the excluded cluster entirely")
+    func exclusionSkips() async throws {
+        let (lib, dir) = try await library()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outcome = try await SpeakerReconciler(library: lib).reconcile(
+            diarization: diarization(embeddings: [
+                "SPEAKER_00": axisVector(0), "SPEAKER_01": axisVector(9)]),
+            recordingId: "rec_a", recordingFolderName: "a",
+            excludingSpeakers: ["SPEAKER_00"])
+        #expect(outcome.nameByRawLabel["SPEAKER_00"] == nil)
+        #expect(outcome.newCount == 1)
     }
 
     @Test("reconcile: a cross-revision cluster never matches — becomes new")

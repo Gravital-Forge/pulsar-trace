@@ -14,6 +14,7 @@ public enum RefinementJobState: Codable, Equatable, Sendable {
         case resolvingInput
         case transcribingSystem
         case diarizing
+        case diarizingMic
         case transcribingMic
         case merging
         case writingFinal
@@ -26,6 +27,7 @@ public enum RefinementJobState: Codable, Equatable, Sendable {
             case .resolvingInput:      return "Loading audio"
             case .transcribingSystem:  return "Transcribing system"
             case .diarizing:           return "Diarizing"
+            case .diarizingMic:        return "Diarizing mic"
             case .transcribingMic:     return "Transcribing mic"
             case .merging:             return "Merging"
             case .writingFinal:        return "Writing transcript"

@@ -143,6 +143,23 @@ public enum EventRegistry {
             version: SpeakerCentroidUpdatedEvent.schemaVersion,
             category: .speakerLibrary
         ),
+        // PT-R137 / PT-R144 — owner voice profile changed (beside the library).
+        Entry(
+            type: OwnerProfileUpdatedEvent.eventType,
+            version: OwnerProfileUpdatedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        // PT-R140 — owner reassignment ("this is me" / "not me").
+        Entry(
+            type: OwnerDesignatedEvent.eventType,
+            version: OwnerDesignatedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
+        Entry(
+            type: OwnerDemotedEvent.eventType,
+            version: OwnerDemotedEvent.schemaVersion,
+            category: .speakerLibrary
+        ),
         // Speaker-library database health (system category).
         Entry(
             type: LibraryBackupCreatedEvent.eventType,

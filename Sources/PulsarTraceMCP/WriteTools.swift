@@ -216,7 +216,8 @@ public enum WriteTools {
         MCPTool(
             name: "delist_speaker",
             description: "Stop recognizing a speaker; drops its label from past final.md (solo lines "
-                + "become Unrecognized). The microphone speaker cannot be delisted.",
+                + "become Unrecognized). The mic owner (You) is never a library speaker, so it "
+                + "cannot be passed here.",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object(["speaker_id": stringSchema("the speaker id")]),

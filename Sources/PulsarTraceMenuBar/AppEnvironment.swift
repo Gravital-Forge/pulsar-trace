@@ -1,5 +1,6 @@
 // Sources/PulsarTraceMenuBar/AppEnvironment.swift
 import Foundation
+import Logging
 import PulsarTraceEngine
 import UserNotifications
 
@@ -212,6 +213,57 @@ public final class AppEnvironment {
     public func sharedSpeakerLibrary() async -> SpeakerLibrary? {
         await bootstrapTask?.value
         return speakerLibrary
+    }
+
+    /// The owner voice profile store (PT-R140), at the standard path beside the
+    /// speaker library. Built on demand — it is a stateless file-backed actor
+    /// (its own cache), so a fresh instance reads the same `owner-profile.json`.
+    /// The speaker editor passes this into `SpeakerEditService` so owner
+    /// reassignment ("this is me" / "not me") updates the profile.
+    public func ownerProfileStore() -> OwnerVoiceProfileStore {
+        OwnerVoiceProfileStore(fileURL: paths.ownerProfileURL)
+    }
+
+    /// PT-R137 (d) / PT-R146 — the sticky mic-diarization toggle changed.
+    /// On the first false→true transition, if no owner profile exists yet,
+    /// backfill it once in the background from existing (never-diarized)
+    /// recordings so live "You" works immediately. A profile already present
+    /// ⇒ no backfill; the toggle turning off ⇒ nothing to do here.
+    ///
+    /// The app's composition-root scene observes `settings.diarizeMicEnabled`
+    /// and calls this (never the Settings view — a CLI-less launch that flips
+    /// the stored default must still backfill). If a refine job is running the
+    /// backfill's diarizer competes for the ANE; the queue's PauseGate does not
+    /// govern this ad-hoc work — accepted for now (close-out follow-up).
+    public func diarizeMicToggled(_ enabled: Bool) {
+        guard enabled else { return }
+        let ownerURL = paths.ownerProfileURL
+        // Same roots the recordings pane scans: current + previously-used
+        // output folders, de-duplicated.
+        var roots = [settings.outputFolderURL].compactMap { $0 }
+        roots += settings.previousFolderURLs
+        var seen = Set<String>()
+        let outputRoots = roots.filter { seen.insert($0.path).inserted }
+        let events = self.events
+        let modelsCacheRoot = paths.modelsCacheDirectory
+        Task.detached(priority: .utility) {
+            let store = OwnerVoiceProfileStore(fileURL: ownerURL)
+            guard await store.snapshot() == nil else { return }
+            let logger = Logger(label: LogSubsystem.engine)
+            let diarizer = Diarizer(
+                configuration: .init(cacheRoot: modelsCacheRoot),
+                logger: logger)
+            let summary = try? await OwnerProfileBackfill.run(
+                outputRoots: outputRoots,
+                store: store,
+                diarize: { try await diarizer.diarizeStream(wavPath: $0) },
+                events: events,
+                logger: logger)
+            if let summary {
+                logger.notice(
+                    "owner-profile backfill: scanned \(summary.foldersScanned), accepted \(summary.samplesAccepted)")
+            }
+        }
     }
 
     /// Drive the `LiveTranscriptWatcher` off `recording.liveMarkdownURL` (FIX 1).

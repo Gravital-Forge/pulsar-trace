@@ -20,7 +20,7 @@ import Logging
 ///   whose centroid matches a known library speaker is shown by name. The live
 ///   pass **never writes** to the library — invariant #5.
 /// - `MicEchoDedup` — drops a mic utterance that is an echo of a system
-///   utterance (PT-R19).
+///   utterance (PT-R145).
 /// - `LiveMarkdownWriter` — strictly append-only `live.md` (PT-R12, PT-R35a, PT-R36).
 ///
 /// ## Stream mapping (single-pipe input)
@@ -30,7 +30,7 @@ import Logging
 /// bare-WAV rule (a lone stream is system audio) and the framing that the
 /// system stream is "the one or more Them-speakers". The mic stream is opt-in:
 /// when a paired mic source is supplied, its utterances are `You` and never
-/// diarized (PT-R17), and run through mic-echo dedup against the system stream.
+/// diarized (PT-R135), and run through mic-echo dedup against the system stream.
 public struct StreamingPipeline: Sendable {
 
     /// Inputs and tunables for one live run.
@@ -48,6 +48,16 @@ public struct StreamingPipeline: Sendable {
         /// `DiarizerEngine` actor.
         /// `nil` → no live diarization (no coverage → neutral `Speaker?`, §2b).
         public let liveRawDiarizer: (any RawWindowDiarizing)?
+        /// PT-R147 — windowed diarizer for the mic stream (nil = mode off →
+        /// byte-identical to today, every mic line `You`). Independent of the
+        /// system stream's diarizer — no cross-stream stitching.
+        public let micRawDiarizer: (any RawWindowDiarizing)?
+        /// PT-R147 — owner-profile snapshot for live `You` attribution on the
+        /// mic channel. A VALUE snapshot (read once at pipeline start), not the
+        /// `OwnerVoiceProfileStore` actor: the live pass stays read-only against
+        /// the profile and never hops to the store per utterance. `nil` → no
+        /// owner attribution (mic labels fall through to library / Guest).
+        public let ownerProfile: OwnerVoiceProfile?
         /// How often the system stream is handed to the live diarizer, and the
         /// window length it sees.
         public let diarizationStep: Duration
@@ -59,6 +69,8 @@ public struct StreamingPipeline: Sendable {
             recordingId: String,
             transcriberConfig: StreamingTranscriber.Configuration = .init(),
             liveRawDiarizer: (any RawWindowDiarizing)? = nil,
+            micRawDiarizer: (any RawWindowDiarizing)? = nil,
+            ownerProfile: OwnerVoiceProfile? = nil,
             diarizationStep: Duration = .seconds(5),
             diarizationWindow: Duration = .seconds(10)
         ) {
@@ -67,6 +79,8 @@ public struct StreamingPipeline: Sendable {
             self.recordingId = recordingId
             self.transcriberConfig = transcriberConfig
             self.liveRawDiarizer = liveRawDiarizer
+            self.micRawDiarizer = micRawDiarizer
+            self.ownerProfile = ownerProfile
             self.diarizationStep = diarizationStep
             self.diarizationWindow = diarizationWindow
         }
@@ -85,7 +99,7 @@ public struct StreamingPipeline: Sendable {
         public let bytesWritten: Int
         /// Utterance lines appended (excludes the marker + header).
         public let utteranceLines: Int
-        /// Mic utterances dropped as echoes of system audio (PT-R19).
+        /// Mic utterances dropped as echoes of system audio (PT-R145).
         public let micEchoesDropped: Int
         /// Median live transcription lag — the PT-R10 metric: the median gap
         /// between real time and a committed utterance's end, over mid-stream
@@ -147,6 +161,15 @@ public struct StreamingPipeline: Sendable {
         if let raw = configuration.liveRawDiarizer {
             liveDiarizer = LiveDiarizer(rawDiarizer: raw, logger: logger)
         }
+        // --- mic-channel diarization (PT-R147, opt-in per recording) -------
+        // A fully independent `LiveDiarizer` over the mic frames, minting a
+        // distinct `Guest` label family (PT-P8-D11). No cross-stream stitching:
+        // this instance shares no running-speaker state with the system one.
+        var micDiarizer: LiveDiarizer?
+        if let raw = configuration.micRawDiarizer {
+            micDiarizer = LiveDiarizer(
+                rawDiarizer: raw, labelFamily: "Guest", logger: logger)
+        }
         // --- run the streams ------------------------------------------------
         let runner = LiveRunner(
             configuration: configuration,
@@ -160,7 +183,8 @@ public struct StreamingPipeline: Sendable {
                 micTranscriber: micTranscriber,
                 systemSource: systemSource,
                 micSource: micSource,
-                liveDiarizer: liveDiarizer)
+                liveDiarizer: liveDiarizer,
+                micDiarizer: micDiarizer)
         } catch {
             // Always close the file, even on a throw. The in-process diarizer
             // holds no resources to release — no subprocess, no scratch WAVs.

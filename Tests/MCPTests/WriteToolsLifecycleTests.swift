@@ -38,19 +38,27 @@ struct WriteToolsLifecycleTests {
         #expect(try await lib.liveSpeakers().contains { $0.id == steve.id })
     }
 
-    @Test("delist_speaker refuses the microphone speaker")
-    func delistMicRefused() async throws {
+    // PT-R141 (closes KI-3): the mic owner (`You`) can no longer be a library
+    // speaker — the name is reserved, so it never appears as a delistable row.
+    // The old `cannotDelistMicrophone` guard (and the "You" library speaker this
+    // test used to construct) are gone; this now asserts the reservation via the
+    // shared MCP path: renaming any speaker to "You" is refused and leaves the
+    // library name unchanged (the reservation-based equivalent).
+    @Test("rename_speaker to the reserved 'You' label is refused (PT-R141)")
+    func renameToReservedYouRefused() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pt-wtl-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let lib = try await library(root)
-        let you = try await lib.createSpeaker(
-            name: "You", centroid: Array(repeating: 0.5, count: 256), modelRevision: "rev1",
+        let steve = try await lib.createSpeaker(
+            name: "Steve", centroid: Array(repeating: 0.5, count: 256), modelRevision: "rev1",
             recordingId: "rec_x", recordingFolderName: "x")
-        let tool = WriteTools.delistSpeaker(
+        let tool = WriteTools.renameSpeaker(
             service: SpeakerEditService(library: lib, events: nil),
             gate: RecordingGate(recordings: NoRecording()), outputRoots: { [root] })
 
-        #expect(await tool.handler(["speaker_id": .string(you.id)]).isError == true)
+        #expect(await tool.handler(
+            ["speaker_id": .string(steve.id), "to": .string("You")]).isError == true)
+        #expect(try await lib.liveSpeakers().first { $0.id == steve.id }?.name == "Steve")
     }
 }
